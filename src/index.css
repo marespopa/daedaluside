@@ -1,0 +1,63 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+:root {
+  --bg: #ffffff;
+  --fg: #0f172a;
+  --fg-muted: #64748b;
+  --border: #e2e8f0;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0a0a0a;
+    --fg: #e5e5e5;
+    --fg-muted: #8a8a8a;
+    --border: #262626;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0a0a0a;
+  --fg: #e5e5e5;
+  --fg-muted: #8a8a8a;
+  --border: #262626;
+  color-scheme: dark;
+}
+
+@theme {
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-sans: var(--font-mono);
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-xs--line-height: 1.5;
+  --text-sm--line-height: 1.6;
+  --text-base--line-height: 1.7;
+
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
+  --color-muted: var(--fg-muted);
+  --color-line: var(--border);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+}
