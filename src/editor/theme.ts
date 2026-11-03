@@ -55,12 +55,13 @@ const base = EditorView.theme({
     lineHeight: '1.65',
     overflow: 'auto',
   },
-  // Spec: centered column, max 72ch, padding py-12 px-8.
+  // Centered column whose width and gutters come from the breakpoints in index.css.
   '.cm-content': {
     caretColor: 'var(--accent)',
-    maxWidth: 'var(--editor-max-width, 72ch)',
+    boxSizing: 'border-box',
+    maxWidth: 'var(--editor-max-width)',
     margin: '0 auto',
-    padding: '3rem 2rem',
+    padding: '3rem var(--editor-gutter)',
   },
   // Faint, low-contrast gutter. Hidden in focus mode (see focusMode.ts, Phase 4).
   '.cm-gutters': {

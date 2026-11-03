@@ -175,7 +175,7 @@ export default function WorkspaceOpener() {
         style={GRID}
       />
 
-      <div className="relative mx-auto flex min-h-full w-full max-w-[560px] flex-col justify-center gap-8 px-6 py-12">
+      <div className="relative mx-auto flex min-h-full w-full max-w-[560px] 2xl:max-w-[720px] flex-col justify-center gap-8 px-6 py-12">
         <header className="space-y-3">
           <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-2.5 py-1 font-mono text-[11px] text-muted">
             <span

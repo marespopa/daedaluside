@@ -23,6 +23,41 @@
   --spacing-header: 2.5rem;
 }
 
+/*
+ * Editor column. Full width on phones, then widens in steps at the Tailwind
+ * breakpoints so large monitors are used rather than left as margins. The measure
+ * is in `ch`, so it follows the monospace font; gutters grow with the viewport.
+ * Read by the CodeMirror theme (editor/theme.ts) and the loading skeleton.
+ */
+:root {
+  --editor-max-width: 100%;
+  --editor-gutter: 1rem;
+}
+@media (min-width: 40rem) {
+  :root {
+    --editor-max-width: 80ch;
+    --editor-gutter: 1.5rem;
+  }
+}
+@media (min-width: 64rem) {
+  :root {
+    --editor-max-width: 100ch;
+    --editor-gutter: 2.5rem;
+  }
+}
+@media (min-width: 96rem) {
+  :root {
+    --editor-max-width: 130ch;
+    --editor-gutter: 3.5rem;
+  }
+}
+@media (min-width: 160rem) {
+  :root {
+    --editor-max-width: 160ch;
+    --editor-gutter: 4rem;
+  }
+}
+
 html,
 body,
 #root {

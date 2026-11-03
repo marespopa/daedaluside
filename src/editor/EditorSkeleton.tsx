@@ -12,7 +12,14 @@ export default function EditorSkeleton() {
       aria-hidden="true"
       className="pointer-events-none absolute inset-0 overflow-hidden bg-canvas"
     >
-      <div className="mx-auto max-w-[72ch] px-8 py-12">
+      <div
+        className="mx-auto py-12"
+        style={{
+          maxWidth: 'var(--editor-max-width)',
+          paddingInline: 'var(--editor-gutter)',
+          boxSizing: 'border-box',
+        }}
+      >
         {LINES.map((width, i) => (
           // 14 px font at leading 1.65, the same row height as the editor.
           <div key={i} className="flex h-[23px] items-center">
