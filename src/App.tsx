@@ -1,46 +1,53 @@
-import { useAtomValue } from 'jotai'
-import { useState } from 'react'
+import { useAtom, useAtomValue } from 'jotai'
 import CommandPalette from './editor/CommandPalette'
 import Editor from './editor/Editor'
 import { activeBufferAtom } from './state/editorAtoms'
+import { MOD_KEY_LABEL } from './lib/platform'
+import { sidebarOpenAtom } from './state/workspaceAtoms'
 import { IconButton, Kbd } from './ui'
+import FileTree from './workspace/FileTree'
+import Notice from './workspace/Notice'
+import OpenFolderButton from './workspace/OpenFolderButton'
+import SettingsDialog from './workspace/SettingsDialog'
+import Tabs from './workspace/Tabs'
+import { useWorkspaceLifecycle } from './workspace/useWorkspace'
 
 export default function App() {
-  const [sidebar, setSidebar] = useState(false)
+  useWorkspaceLifecycle()
+  const [sidebar, setSidebar] = useAtom(sidebarOpenAtom)
   const buffer = useAtomValue(activeBufferAtom)
   return (
     <div className="flex h-full bg-canvas text-text">
-      {sidebar && (
-        <aside
-          aria-label="Sidebar"
-          className="glass w-64 shrink-0 border-r border-line p-4 font-sans text-sm text-muted"
-        >
-          Files appear here once workspaces land.
-        </aside>
-      )}
+      <FileTree />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="group flex h-12 shrink-0 items-center gap-2 border-b border-transparent px-3 font-sans text-sm text-muted transition-colors hover:border-line focus-within:border-line">
+        <header className="flex h-header shrink-0 items-center gap-2 border-b border-transparent px-3 font-sans text-sm text-muted transition-colors duration-150 ease-out hover:border-line focus-within:border-line">
           <IconButton
-            label={sidebar ? 'Hide sidebar' : 'Show sidebar'}
+            label={sidebar ? 'Hide file tree' : 'Show file tree'}
+            icon="menu"
             aria-expanded={sidebar}
             onClick={() => setSidebar((s) => !s)}
-          >
-            ☰
-          </IconButton>
-          <nav aria-label="Breadcrumb" className="font-mono text-xs">
-            {buffer.name}
-            {buffer.dirty && <span aria-label="unsaved"> •</span>}
-          </nav>
-          <span className="ml-auto text-xs opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-            <Kbd>Ctrl</Kbd> <Kbd>K</Kbd>
+          />
+          <Tabs />
+          <span className="sr-only">
+            {buffer.name
+              ? `Editing ${buffer.name}${buffer.dirty ? ', unsaved' : ''}`
+              : ''}
           </span>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <span className="hidden text-xs text-muted sm:inline">
+              <Kbd>{MOD_KEY_LABEL}</Kbd> <Kbd>K</Kbd>
+            </span>
+            <OpenFolderButton />
+          </div>
         </header>
-        <main className="min-h-0 flex-1">
+        <main id="editor-pane" className="min-h-0 flex-1">
           <h1 className="sr-only">Daedalus IDE</h1>
           <Editor />
         </main>
       </div>
       <CommandPalette />
+      <SettingsDialog />
+      <Notice />
     </div>
   )
 }

@@ -1,43 +1,45 @@
-import { useSetAtom } from 'jotai'
+import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
-import { activeBufferAtom, editorHandleAtom, initialBuffer } from '../state/editorAtoms'
+import {
+  activePathAtom,
+  snapshotAtom,
+  workspaceStatusAtom,
+} from '../state/workspaceAtoms'
+import WorkspaceOpener from '../workspace/WorkspaceOpener'
+import { useController } from '../workspace/useWorkspace'
 import { createEditor } from './createEditor'
+import EditorSkeleton from './EditorSkeleton'
 
 export default function Editor() {
   const host = useRef<HTMLDivElement>(null)
-  const setBuffer = useSetAtom(activeBufferAtom)
-  const setHandle = useSetAtom(editorHandleAtom)
+  const controller = useController()
+  const activePath = useAtomValue(activePathAtom)
+  const status = useAtomValue(workspaceStatusAtom)
+  const snapshot = useAtomValue(snapshotAtom)
+  // Last session's file is being restored: show its place, not an empty editor.
+  const restoring = status.state === 'loading' && snapshot?.activeFile != null
 
   useEffect(() => {
     const el = host.current
     if (!el) return
     const handle = createEditor({
       parent: el,
-      filename: initialBuffer.name,
-      onUpdate: (u) => {
-        if (!u.docChanged && !u.selectionSet) return
-        const head = u.state.selection.main.head
-        const line = u.state.doc.lineAt(head)
-        // Only metadata goes to Jotai, never the document text.
-        setBuffer((b) => ({
-          ...b,
-          dirty: b.dirty || u.docChanged,
-          line: line.number,
-          column: head - line.from + 1,
-          length: u.state.doc.length,
-        }))
-      },
+      // Only metadata goes to Jotai; the controller owns buffer text and states.
+      onUpdate: (u) => controller.onEditorUpdate(u),
     })
-    setHandle(handle)
-    void handle
-      .setLanguage(initialBuffer.name)
-      .then((language) => setBuffer((b) => ({ ...b, language })))
-    handle.view.focus()
+    controller.attach(handle)
     return () => {
-      setHandle(null)
+      controller.detach()
       handle.destroy()
     }
-  }, [setBuffer, setHandle])
+  }, [controller])
 
-  return <div ref={host} className="h-full" data-testid="editor" />
+  return (
+    <div className="relative h-full">
+      <div ref={host} className="h-full" data-testid="editor" />
+      {restoring && <EditorSkeleton />}
+      {/* Not while storage is starting: the workspace is about to open a file. */}
+      {activePath === null && status.state !== 'loading' && <WorkspaceOpener />}
+    </div>
+  )
 }

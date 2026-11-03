@@ -1,0 +1,109 @@
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { createStore, Provider } from 'jotai'
+import {
+  activePathAtom,
+  sidebarOpenAtom,
+  treeAtom,
+  workspaceStatusAtom,
+} from '../state/workspaceAtoms'
+import FileTree from './FileTree'
+import { ROW_HEIGHT } from './treeRows'
+import type { Entry } from './types'
+
+const flatFiles = (n: number): Entry[] =>
+  Array.from({ length: n }, (_, i) => ({
+    name: `f${i}.ts`,
+    path: `f${i}.ts`,
+    kind: 'file' as const,
+    size: 1,
+  }))
+
+function mountTree(entries: Entry[]) {
+  const store = createStore()
+  store.set(sidebarOpenAtom, true)
+  store.set(workspaceStatusAtom, { state: 'ready', backend: 'idb' })
+  store.set(treeAtom, entries)
+  render(
+    <Provider store={store}>
+      <FileTree />
+    </Provider>,
+  )
+  return store
+}
+
+const rowButtons = () => document.querySelectorAll<HTMLElement>('[data-tree-row]')
+const scrollerOf = () => screen.getByRole('tree').parentElement!
+
+describe('file tree virtualization', () => {
+  it('renders only the rows near the viewport, not the whole folder', () => {
+    mountTree(flatFiles(20_000))
+    expect(rowButtons().length).toBeGreaterThan(0)
+    expect(rowButtons().length).toBeLessThan(60)
+    // The list keeps the full height so the scrollbar reflects every row.
+    expect(screen.getByRole('tree').style.height).toBe(`${20_000 * ROW_HEIGHT}px`)
+  })
+
+  it('renders the rows at the new position after scrolling', () => {
+    mountTree(flatFiles(20_000))
+    const scroller = scrollerOf()
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      value: ROW_HEIGHT * 15_000,
+    })
+    fireEvent.scroll(scroller)
+    expect(screen.getByRole('button', { name: 'f15000.ts' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'f0.ts' })).toBeNull()
+    expect(rowButtons().length).toBeLessThan(60)
+  })
+
+  it('positions each row by its index and reports set size for assistive tech', () => {
+    mountTree(flatFiles(200))
+    const item = screen.getByRole('button', { name: 'f3.ts' }).closest('li')!
+    expect(item.style.top).toBe(`${3 * ROW_HEIGHT}px`)
+    expect(item).toHaveAttribute('aria-setsize', '200')
+    expect(item).toHaveAttribute('aria-posinset', '4')
+    expect(item).toHaveAttribute('aria-level', '1')
+  })
+
+  it('moves focus with the arrow keys past the rendered window', async () => {
+    const user = userEvent.setup()
+    mountTree(flatFiles(300))
+    await user.click(screen.getByRole('button', { name: 'f0.ts' }))
+    for (let i = 0; i < 60; i++) await user.keyboard('{ArrowDown}')
+
+    const focused = document.activeElement as HTMLElement
+    expect(focused.dataset.rowKey).toBe('f60.ts')
+    expect(within(scrollerOf()).getByRole('button', { name: 'f60.ts' })).toBe(focused)
+    // Only the focused row is in the tab order.
+    expect(
+      [...rowButtons()].filter((el) => el.tabIndex === 0).map((el) => el.dataset.rowKey),
+    ).toEqual(['f60.ts'])
+  })
+
+  it('Home and End jump to the first and last rows', async () => {
+    const user = userEvent.setup()
+    mountTree(flatFiles(300))
+    await user.click(screen.getByRole('button', { name: 'f0.ts' }))
+    await user.keyboard('{End}')
+    expect((document.activeElement as HTMLElement).dataset.rowKey).toBe('f299.ts')
+    expect(screen.getByRole('button', { name: 'f299.ts' })).toBeInTheDocument()
+    await user.keyboard('{Home}')
+    expect((document.activeElement as HTMLElement).dataset.rowKey).toBe('f0.ts')
+  })
+
+  it('keeps the active file reachable by scrolling it into view', () => {
+    const store = createStore()
+    store.set(sidebarOpenAtom, true)
+    store.set(workspaceStatusAtom, { state: 'ready', backend: 'idb' })
+    store.set(treeAtom, flatFiles(5_000))
+    store.set(activePathAtom, 'f4000.ts')
+    render(
+      <Provider store={store}>
+        <FileTree />
+      </Provider>,
+    )
+    expect(screen.getByRole('button', { name: 'f4000.ts' })).toBeInTheDocument()
+    expect(rowButtons().length).toBeLessThan(60)
+  })
+})

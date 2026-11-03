@@ -1,0 +1,43 @@
+import { atom } from 'jotai'
+import type { WorkspaceMeta } from '../workspace/manager'
+import type { Entry } from '../workspace/types'
+
+export interface OpenBuffer {
+  path: string
+  /** Pinned tabs sit first in the strip and show as a compact icon. */
+  pinned: boolean
+  dirty: boolean
+  /** Last save failed; the buffer stays dirty and will be retried. */
+  saveError: boolean
+}
+
+export type WorkspaceStatus =
+  | { state: 'loading' }
+  | { state: 'ready'; backend: 'opfs' | 'idb' }
+  | { state: 'error'; message: string }
+
+/**
+ * What the last session looked like, saved in localStorage so the first paint can
+ * show the same names while storage starts. Paths and names only, never contents.
+ */
+export interface SessionSnapshot {
+  workspaceId: string
+  name: string
+  tree: { path: string; kind: 'file' | 'dir' }[]
+  openFiles: string[]
+  activeFile: string | null
+}
+
+export const workspaceStatusAtom = atom<WorkspaceStatus>({ state: 'loading' })
+/** Null when there is no saved session. Only read while the status is `loading`. */
+export const snapshotAtom = atom<SessionSnapshot | null>(null)
+export const workspacesAtom = atom<WorkspaceMeta[]>([])
+export const currentWorkspaceIdAtom = atom<string | null>(null)
+/** Every entry of the current workspace, flat; the tree UI derives hierarchy from paths. */
+export const treeAtom = atom<Entry[]>([])
+export const openBuffersAtom = atom<OpenBuffer[]>([])
+export const activePathAtom = atom<string | null>(null)
+export const sidebarOpenAtom = atom(false)
+export const settingsOpenAtom = atom(false)
+/** Transient message (errors, import results). */
+export const noticeAtom = atom<{ kind: 'info' | 'error'; text: string } | null>(null)

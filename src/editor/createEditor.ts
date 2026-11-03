@@ -13,9 +13,17 @@ import {
 import { bracketMatching, foldKeymap, indentOnInput } from '@codemirror/language'
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
-import { drawSelection, EditorView, keymap, type ViewUpdate } from '@codemirror/view'
+import {
+  drawSelection,
+  EditorView,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  keymap,
+  lineNumbers,
+  type ViewUpdate,
+} from '@codemirror/view'
 import { loadLanguage } from './languages'
-import { monochromeTheme } from './theme'
+import { editorTheme } from './theme'
 
 export interface EditorOptions {
   parent: HTMLElement
@@ -30,6 +38,10 @@ export interface EditorHandle {
   view: EditorView
   /** Lazily loads and applies a language. Resolves to its name, or null if unknown. */
   setLanguage(nameOrFile: string | null): Promise<string | null>
+  /** Builds a fresh state with the standard extensions, for multi-buffer use. */
+  createState(doc: string): EditorState
+  /** Swaps the whole state (document, history, selection). Language is not carried over. */
+  setState(state: EditorState): void
   destroy(): void
 }
 
@@ -43,37 +55,38 @@ export function createEditor({
   const language = new Compartment()
   let langRequest = 0
 
-  const view = new EditorView({
-    parent,
-    state: EditorState.create({
-      doc,
-      extensions: [
-        history(),
-        drawSelection(),
-        indentOnInput(),
-        bracketMatching(),
-        closeBrackets(),
-        autocompletion(),
-        highlightSelectionMatches(),
-        EditorState.allowMultipleSelections.of(true),
-        EditorView.lineWrapping,
-        keymap.of([
-          ...closeBracketsKeymap,
-          ...defaultKeymap,
-          ...searchKeymap,
-          ...historyKeymap,
-          ...foldKeymap,
-          ...completionKeymap,
-          indentWithTab,
-        ]),
-        language.of([]),
-        monochromeTheme,
-        EditorView.contentAttributes.of({ 'aria-label': 'Editor', spellcheck: 'false' }),
-        EditorView.updateListener.of((u) => onUpdate?.(u)),
-        ...extensions,
-      ],
-    }),
-  })
+  const baseExtensions: Extension[] = [
+    history(),
+    drawSelection(),
+    lineNumbers(),
+    highlightActiveLine(),
+    highlightActiveLineGutter(),
+    indentOnInput(),
+    bracketMatching(),
+    closeBrackets(),
+    autocompletion(),
+    highlightSelectionMatches(),
+    EditorState.allowMultipleSelections.of(true),
+    EditorView.lineWrapping,
+    keymap.of([
+      ...closeBracketsKeymap,
+      ...defaultKeymap,
+      ...searchKeymap,
+      ...historyKeymap,
+      ...foldKeymap,
+      ...completionKeymap,
+      indentWithTab,
+    ]),
+    language.of([]),
+    editorTheme,
+    EditorView.contentAttributes.of({ 'aria-label': 'Editor', spellcheck: 'false' }),
+    EditorView.updateListener.of((u) => onUpdate?.(u)),
+    ...extensions,
+  ]
+  const createState = (d: string) =>
+    EditorState.create({ doc: d, extensions: baseExtensions })
+
+  const view = new EditorView({ parent, state: createState(doc) })
 
   const setLanguage = async (nameOrFile: string | null) => {
     const req = ++langRequest
@@ -86,5 +99,14 @@ export function createEditor({
 
   if (filename) void setLanguage(filename)
 
-  return { view, setLanguage, destroy: () => view.destroy() }
+  return {
+    view,
+    setLanguage,
+    createState,
+    setState: (state) => {
+      langRequest++ // a pending language load belongs to the old state
+      view.setState(state)
+    },
+    destroy: () => view.destroy(),
+  }
 }

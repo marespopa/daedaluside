@@ -321,25 +321,40 @@ The look combines the typographic focus of iA Writer, macOS/iOS-style materials,
 
 **Tokens.** Colors are defined once as CSS variables in `src/styles/tokens.css` (`:root` for light, `.dark` for dark) and mapped to Tailwind through `@theme`. Components use semantic names (`bg-canvas`, `text-muted`, `border-line`, `bg-accent`), never raw hex values. Dark mode is class-based, with the system preference as default.
 
-| Token | Light (Paper) | Dark (Deep Slate) | Usage |
+| Token | Light | Dark | Usage |
 | --- | --- | --- | --- |
-| `canvas` | `#f5f6f6` | `#0f172a` | Editor background |
-| `surface` | `#ffffff` | `#1e293b` | Panels, modals, popovers, active tree item |
-| `text` | `#242424` | `#f8fafc` | Code and primary text |
-| `muted` | `#757575` | `#64748b` | Line numbers, metadata, paths |
-| `line` | `#e2e4e4` | `#334155` | Hairline borders and dividers |
-| `accent` | `#007aff` (iA Blue) | `#06b6d4` (Electric Cyan) | Cursor, selection tint, primary actions, active plan node |
-| `diff-add` | bg `#e6f4ea`, fg `#137333` | to be defined (dark variants) | Added lines |
-| `diff-remove` | bg `#fce8e6`, fg `#c5221f` | to be defined (dark variants) | Removed lines |
+| `canvas` | `#FFFFFF` | `#121212` | Editor background, sidebar |
+| `surface` | `#F8F9FA` | `#1A1A1A` | Popovers, command palette, active tree row (`bg-accent/10` tints it) |
+| `text` | `#18181B` | `#E4E4E7` | Code and primary text |
+| `muted` | `#71717A` | `#8E8E96` | Metadata, paths, status bar, chevrons. Passes AA on canvas and surface. The spec values (`#A1A1AA` / `#52525B`, about 2.5:1) fail AA. |
+| `line` | `#E4E4E7` | `#27272A` | Hairlines and dividers. Tree guide lines use `line` at 40% opacity. |
+| `accent` | `#2563EB` | `#60A5FA` | Active tab underline, cursor, selection tint, active tree tint, modified-file dot |
+| `diff-add` | bg `color-mix(#16A34A 14%, canvas)`, fg `#15803D` | bg `color-mix(#4ADE80 16%, canvas)`, fg `#4ADE80` | Added lines |
+| `diff-remove` | bg `color-mix(#DC2626 12%, canvas)`, fg `#B91C1C` | bg `color-mix(#F87171 16%, canvas)`, fg `#F87171` | Removed lines |
 
-The dark-mode diff colors and the secondary text shade used for prose in dark mode (`#94a3b8`) are not in the source spec, so choose them in M6 and check contrast. `#64748b` on `#0f172a` and `#757575` on `#f5f6f6` are close to the WCAG AA limit for small text. Verify in M6 and darken or lighten `muted` if needed.
+Contrast is checked by a token test (see IMPLEMENTATION_PLAN.md, Testing Strategy), not by eye. The spec's solid `#16A34A` on white is 3.3:1, so it is used only as a background tint or a non-text mark.
+
+Diff colors and prose secondary shades are set in the design-revision tasks (IMPLEMENTATION_PLAN.md, M6b) and checked by the contrast test.
 
 **Typography**
-- Editor and code: `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`, optionally preceded by a self-hosted iA Writer Mono or JetBrains Mono (`font-display: swap`).
-- UI and controls: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif`. If Inter is used it must be self-hosted (CSP `font-src 'self'`). File names, paths and breadcrumbs in chrome stay monospace.
-- Editor column: `max-w-[72ch]` (about 70–80 characters), centered, `leading-relaxed`. Width and line height are user-adjustable in settings.
+- Editor and code: self-hosted IBM Plex Mono (`@fontsource`, `font-display: swap`), then `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`. The spec lists JetBrains Mono or Fira Code as examples; IBM Plex Mono is already bundled, so it stays unless the user asks for a swap.
+- Base size 14 px, line height 1.65 (`leading-relaxed`), user-adjustable in settings (default 15 px allowed).
+- UI and controls: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif`. Tree names and workspace name are 13 px; status bar is 11 px monospace.
+- Editor column: `max-w-[72ch]` (about 70–80 characters), centered, padding `py-12 px-8`. Width and line height are user-adjustable in settings.
 
-**Layout.** Full-viewport flex row: collapsible sidebar (`w-64`, translucent canvas, hairline right border, blur) and a main column with a 48 px header and a scrolling, centered editor viewport. The header's bottom border is transparent until hover. The sidebar is the file tree overlay and the header holds the breadcrumb and a phase chip (e.g. "Plan Mode"). The active file item uses `surface` with a small accent dot.
+**Layout.** Full-viewport flex row with three regions:
+- **Sidebar (worktree):** 240 px fixed, flush left (200 px compact option in settings). Contains the worktree tree only, with New File and New Folder in a small toolbar. Workspace switching and archive (zip) actions are not in the sidebar. Switching happens from the workspace opener, and zip import is a drop onto the opener. Translucent canvas with a hairline right border.
+- **Center canvas:** `flex-1`, centered editor column. Padding `py-12 px-8`.
+- **Top buffer:** 40 px high (36 px compact). Tab bar on the left, breadcrumb centered, status and actions on the right. Border-bottom is transparent until hover or focus-within.
+
+The sidebar is the file tree overlay. The active file item uses `surface` with a `bg-accent/10` tint and `font-medium`.
+
+**Conflict resolutions** (spec vs. earlier sections of this document):
+- Sidebar `w-64` (256 px) → 240 px. Header 48 px → 40 px. The spec value wins.
+- Gutter line numbers: the spec shows them faintly and hides them in focus mode. Earlier text said "no visible chrome". Resolution: the gutter is shown in `muted` at 70% opacity, hidden in focus mode. Provisional; confirm with the user.
+- `Mod-K` in focus mode: the spec says it restores chrome, but `Mod-K` opens the command palette. Resolution: chrome is restored by pointer movement, `Esc`, or any keyboard focus inside chrome. `Mod-K` only opens the palette.
+- `Mod-W` (close tab): browsers reserve it, so pages cannot reliably intercept it. Resolution (provisional): close via the tab `x`, middle-click, and a palette command. The keyboard shortcut is `Mod-Alt-W` until a better one is chosen.
+- Tree single-key shortcuts (`A`, `Shift+A`, `F2`) only apply when the tree has focus. They must never type into the editor.
 
 **Interactions**
 - **Focus mode (chrome):** while typing, non-essential chrome fades out (`opacity-0`, 300 ms) and returns on pointer movement. This is separate from the editor's line/paragraph dimming in §5.1. Both are disabled under `prefers-reduced-motion` (instant, no transition), and chrome stays visible when it holds keyboard focus.
@@ -349,6 +364,7 @@ The dark-mode diff colors and the secondary text shade used for prose in dark mo
 **Implementation notes**
 - The CodeMirror theme reads the same CSS variables (`var(--color-accent)` etc.), so one token change updates the editor and the UI together.
 - Shared primitives live in `src/ui/`. Feature modules compose them and don't redefine colors.
+- **Buttons:** every action button uses `Button` (`src/ui/Button.tsx`) with `variant` (`primary`, `secondary`, `ghost`, `danger`), `size` (`sm`, `md`), and an optional `icon`. Icon-only actions use `IconButton`, which is `Button` with a required `label` for the accessible name and tooltip. Feature code must not write button classes. List rows, tabs and cards are not action buttons and keep their own layout.
 - Tailwind's `dark:` variant is only needed for exceptions, since tokens already switch with the theme class.
 - Backdrop blur and inline styles need no CSP changes.
 
@@ -360,7 +376,7 @@ The dark-mode diff colors and the secondary text shade used for prose in dark mo
 | --- | --- | --- |
 | `settings` | `'app'` | theme, typography, router config, budgets |
 | `vault` | provider id | `{ salt, iterations, iv, ciphertext }` |
-| `workspaces` | workspace id | name, created/updated, last open files |
+| `workspaces` | workspace id | name, created/updated, last open files, source key (hash of the imported folder or zip name and file layout; re-opening the same key switches to the existing workspace instead of duplicating it) |
 | `runs` | run id | serialized workflow state (task, plan, patches, usage) |
 | `snapshots` | run id | pre-apply file contents for undo |
 | `fs-fallback` | `workspaceId:path` | file contents (only when OPFS unavailable) |

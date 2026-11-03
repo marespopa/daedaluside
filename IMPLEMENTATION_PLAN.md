@@ -11,6 +11,7 @@ The **MVP ships with Google Gemini as the only AI provider** and no backend (M0�
 | M4        | Model router + Plan → Review workflow                                   | M2, M3     | MVP      |
 | M5        | Execute → Diff review → Apply                                           | M4         | MVP      |
 | M6        | UX polish, focus mode, theming, accessibility                           | M1         | MVP      |
+| M6b       | iA Writer workspace redesign (layout, tree, tabs, status, focus)        | M1; M2 for tree and tabs | MVP |
 | M7        | Hardening, testing, docs, **MVP release `v0.1.0`**                      | M0–M6      | MVP      |
 | M8        | Direct providers: Anthropic, local Ollama; cross-provider fallback      | M7         | Post-MVP |
 | M9        | LLM proxy (Edge Function) + Ollama Cloud + OpenCode                     | M8         | Post-MVP |
@@ -49,7 +50,7 @@ The **MVP ships with Google Gemini as the only AI provider** and no backend (M0�
 - [x] Apply the design system (§5.8): CodeMirror theme driven by CSS variables; 2 px accent cursor and accent selection tint; editor column `max-w-[72ch]`, `leading-relaxed`; app shell layout (collapsible translucent sidebar, 48 px header with transparent border until hover, breadcrumb); command palette as a glass panel.
 - [x] `src/ui/` primitives: `Panel`, `GlassPopover`, `Chip`, `IconButton`, `Kbd`, with an opaque fallback when `backdrop-filter` is unsupported.
 
-**Status:** all items are implemented, including the design system shell and `src/ui/` primitives. Typecheck, lint, Prettier, unit tests and build pass. The Playwright smoke test (CSP + palette) has not yet passed because Chromium crashes in the Termux dev environment; run it in CI. Known: main bundle is 624 kB (200 kB gzip), over the M7 budget of 250 KB gzip; revisit in M7.
+**Status (2026-11-03):** complete. Line numbers and active-line fill were added in M6b Phase 1, and the shell now uses the 40 px header from §5.8. Typecheck, lint, Prettier, and unit tests (117/117) pass, and `vite build` succeeds. The Playwright smoke test (CSP + palette) still fails because Chromium's GPU process crashes in the Termux dev environment; run it in CI. Main bundle is 689 kB (221 kB gzip), under the M7 budget of 250 KB gzip. Re-check in M7.
 
 **Done when:** the user can open the app, type code with highlighting, switch themes, and use the palette, with no visible chrome.
 
@@ -59,15 +60,19 @@ The **MVP ships with Google Gemini as the only AI provider** and no backend (M0�
 
 **Goal:** persistent, multi-file workspaces stored on the device.
 
-- [ ] `fs.worker.ts`: OPFS operations using `createSyncAccessHandle` (list/read/write/remove/rename/mkdir).
-- [ ] Typed RPC client (`fs.ts`), using Comlink or a small hand-written wrapper.
-- [ ] Atomic writes (temp file + replace).
-- [ ] `fallback-idb.ts` implementing the same `WorkspaceFS` interface; capability detection at startup.
-- [ ] Workspace manager: create, rename, delete, switch. Metadata in IndexedDB.
-- [ ] File tree overlay (toggle with `Mod-B`): create, rename, delete, open.
-- [ ] Multiple open buffers, dirty tracking, autosave (debounced) + `Mod-S`.
-- [ ] Import from folder or `.zip` (`fflate`); export to `.zip`.
-- [ ] Call `navigator.storage.persist()` and show quota usage in settings.
+- [x] `fs.worker.ts`: OPFS operations using `createSyncAccessHandle` (list/read/write/remove/rename/mkdir).
+- [x] Typed RPC client (`fs.ts`, `rpc.ts`), hand-written wrapper (`RpcBackend`).
+- [x] Atomic writes (temp file + replace, native move with copy fallback).
+- [x] `fallback-idb.ts` implementing the same `WorkspaceFS` interface; capability detection at startup (`createBackend`: OPFS worker probe, else IndexedDB).
+- [x] Workspace manager: create, rename, delete, switch. Metadata in IndexedDB (`manager.ts`, `db.ts`).
+- [x] File tree overlay (toggle with `Mod-B`): create, rename, delete, open (`FileTree.tsx`).
+- [x] Multiple open buffers (`Tabs.tsx`), dirty tracking, autosave (800 ms debounce) + `Mod-S`.
+- [x] Import from folder or `.zip` (`fflate`); zip import is a drop onto the opener. Export to `.zip` is implemented (`archive.ts`, `controller.exportCurrentZip`) but no longer exposed in the UI after the 2026-11-03 sidebar cleanup. Re-expose it in Settings if needed.
+- [x] `navigator.storage.persist()` requested at startup; storage details and quota in settings.
+
+**Status (2026-11-03):** code complete and restored from `git stash@{1}` ("pre-iA-redesign", applied, not popped). The shared FS contract runs against IndexedDB, OPFS with native move, OPFS with copy fallback, and OPFS through the worker RPC. Controller tests cover the workspace flows, reload restore, zip drop, and error notices. Not verified in a real browser: OPFS persistence across a browser restart, and the worker path under real `createSyncAccessHandle`. Verify manually or in CI. Keep `stash@{1}` until M2 is committed. Drop it only after that.
+
+**Re-opening a folder:** a folder or zip is identified by its name and file layout (`sourceKey`). Opening the same one again switches to the existing workspace and shows a notice. It does not re-import, so later changes in the source folder are not picked up. To re-import, delete the workspace from Recent workspaces (each row has a Delete action with a second click to confirm). Changing the layout (adding or removing files) counts as a different folder and creates a new entry.
 
 **Done when:** a workspace with nested folders survives reloads and browser restarts, and zip import followed by export reproduces the same file tree. FS unit tests pass against both the OPFS and IDB backends.
 
@@ -145,6 +150,67 @@ Can run alongside M3–M5.
 - [ ] Minimal status line (file, dirty flag, phase, session cost) that fades when idle.
 - [ ] Accessibility: focus outlines, ARIA on overlays/dialogs, `prefers-reduced-motion`, contrast checks for the monochrome themes.
 - [ ] First-run onboarding: create vault → add Gemini key (with a link to Google AI Studio) → sample workspace.
+
+---
+
+## M6b: iA Writer Workspace Redesign
+
+**Goal:** Implement the layout, token, and interaction spec in ARCHITECTURE.md §5.8: a 3-column shell with a 72ch editor column, a worktree sidebar, a borderless tab bar, a status line, and focus-mode chrome fading. The spec was received 2026-11-03; each conflict with earlier sections is resolved in §5.8 ("Conflict resolutions").
+
+**Dependencies:** Phase 1 needs only M1. Phases 2 and 3 need the M2 workspace code (file tree, buffers), which is in `git stash@{0}`. Phase 4 can run after Phase 1.
+
+### Phase 1: Tokens, typography, shell (M1 only)
+- [x] Tokens in `src/styles/tokens.css` set to the §5.8 table (light and dark). Names stay `--canvas`, `--surface`, etc., mapped to `--color-*` through `@theme`.
+- [x] Contrast test (`src/styles/tokens.test.ts`): text, muted, accent and diff foregrounds meet AA (accent 3:1) in both themes; token parity; no raw hex in `src/**/*.tsx`.
+- [x] Typography: editor 14 px, line height 1.65; UI 13 px; status 11 px mono (`--text-*` in `index.css`).
+- [x] Shell layout: sidebar `w-sidebar` (240 px, replaces `w-64`); header `h-header` (40 px, replaces `h-12`); breadcrumb centered; header border transparent until hover or focus-within.
+- [x] Editor column: `padding: 3rem 2rem` (`py-12 px-8`) in `theme.ts` (replaces `12vh` / `40vh`); `max-w-[72ch]` and `margin: 0 auto` kept.
+- [x] Gutter: `lineNumbers()` in `createEditor.ts`, styled `muted` at 70% opacity. Hiding it in focus mode is part of Phase 4.
+- [x] Active line: `surface` at 50% fill (`.cm-activeLine`), replacing the transparent value in `theme.ts`.
+
+**Status (2026-11-03):** implemented. Unit tests (21/21), typecheck, ESLint, Prettier and `vite build` pass. Not yet checked: a visual review in light and dark, because Chromium crashes in the Termux dev environment (see M1). Do this in CI or by hand before marking the milestone done. Gutter sits at the scroller's left edge, not next to the 72ch column, so on wide windows it is far from the text. Revisit in Phase 4.
+
+### Phase 2: Worktree sidebar (needs M2)
+- [ ] Restore the stashed M2 code and finish M2 (see M2 status).
+- [x] Sidebar is the worktree only. The workspace switcher, workspace options, and archive (zip) options were removed on 2026-11-03 at the user's request. Workspace switching is done from the workspace opener, and zip import is a drop onto the opener.
+- [x] Toolbar: New File and New Folder use the shared `Button` (secondary, `sm`, with icon). Row actions (rename, delete) and the sidebar toggle are `IconButton`s. Collapse All is still open.
+- [x] Shared `Button` and `IconButton` (`src/ui/Button.tsx`), used for all action buttons. Covered by `src/ui/Button.test.tsx`.
+- [ ] Tree rows: 28 px high, 13 px `font-normal`, `truncate`; 12 px indent per level; guide lines 1 px `line` at 40% opacity.
+- [ ] Directory chevron rotates 90° over 150 ms. File icons are omitted by default.
+- [ ] Active row: `bg-accent/10` and `font-medium`. Modified file: 5 px `accent` dot at the far right.
+- [ ] Keyboard (only when the tree has focus): Up/Down move focus; Right expands a folder or opens a file; Left collapses a folder or moves to the parent; Enter opens in the active tab; `A` creates a file in the cursor folder; `Shift+A` creates a folder; `F2` renames.
+- [x] Storage footer: removed with the sidebar cleanup. Storage details stay in Settings.
+- [ ] Compact sidebar option (200 px) in settings.
+
+### Phase 3: Tab bar (needs M2 buffers)
+Spec: the "Minimalist Tab Architecture" PRD (received 2026-11-03; not stored in the repo). Pure rules live in `src/state/tabOps.ts`.
+- [x] Borderless row on the `canvas` background; height 40 px. Compact 36 px is still open.
+- [x] Active tab: full-opacity text, `border-b-2 border-accent`, dirty dot when unsaved.
+- [x] Inactive tabs: `muted` text, 80% on hover, 150 ms ease-out. Deviation from the spec's 50% opacity: muted at 50% fails AA on `canvas`.
+- [x] Close `x`: shown on tab hover, focus, or when active. Close via `x`, middle-click, the context menu, the palette, or `Mod-Alt-W` (provisional, see decisions).
+- [x] Context menu (right-click, Shift+F10): Close, Close Others, Close to the Right, Close All, Pin/Unpin, Copy Relative Path. Pinned tabs survive Close Others and Close All.
+- [x] Drag to reorder (native DnD, 2 px accent insert marker, 150 ms FLIP). Pinned and unpinned groups stay separate. Keyboard reorder via palette "Tab: Move Left/Right".
+- [x] Width `min-w-[100px] max-w-[200px]`. Horizontal overflow via wheel and trackpad, with a hidden scrollbar. The right-edge fade mask was dropped.
+- [ ] Pinned state persistence and drag-over-drop visual checks in a real browser (covered by jsdom tests only).
+
+### Phase 4: Status line, focus mode, palette
+- [ ] Status line: one 11 px mono line at the bottom left: file path, encoding, `line:col`, and session token cost (shows `$0.00` until the M4 ledger exists). Fades to 30% opacity while typing.
+- [ ] Focus-mode chrome: while typing, tabs, status line, and sidebar fade to `opacity-0` over 300 ms. They return on pointer movement, on `Esc`, or when keyboard focus enters chrome. `Mod-K` opens the palette and does not restore chrome. Instant under `prefers-reduced-motion`. This completes the chrome part of M6 focus mode.
+- [ ] Hover transitions (icons, tabs, sidebar triggers): 150 ms ease-out.
+- [ ] Command palette: glass panel with a centered input; editor dimmed beneath (`canvas` at 60%).
+
+### Phase 5: Verification
+- [ ] Unit: tree keyboard map (including `A`, `Shift+A`, `F2` scoped to tree focus), tab close and width rules, focus-mode state transitions.
+- [ ] Playwright screenshots in light and dark at 1280 px and 390 px. Check the editor column is at most 72ch.
+- [ ] Reduced-motion: focus-mode transitions are instant.
+
+**Open decisions** (provisional defaults are in §5.8; confirm or change):
+1. Gutter line numbers visible by default (spec) vs. "no visible chrome" (earlier §5.8 text). Default: visible, faint.
+2. Close-tab shortcut: `Mod-W` is browser-reserved. Default: `Mod-Alt-W`.
+3. Editor font: IBM Plex Mono (bundled) vs. the spec's JetBrains Mono or Fira Code. Default: IBM Plex Mono.
+4. Base font size: 14 px (spec) vs. 15 px default (spec alternative). Default: 14 px.
+
+**Done when:** Phases 1–5 are checked, and the screenshots show the layout in both themes with the status line and focus mode working.
 
 ---
 

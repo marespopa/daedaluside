@@ -9,14 +9,18 @@
     'Liberation Mono', 'Courier New', monospace;
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif;
 
-  --text-xs: 0.75rem;
-  --text-sm: 0.875rem;
-  --text-base: 1rem;
-  --text-lg: 1.125rem;
-  --text-xl: 1.375rem;
+  /* Spec type scale: 14px base, 13px UI, 11px status line. */
+  --text-xs: 0.6875rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.25rem;
   --text-xs--line-height: 1.5;
-  --text-sm--line-height: 1.6;
-  --text-base--line-height: 1.7;
+  --text-sm--line-height: 1.5;
+  --text-base--line-height: 1.65;
+
+  --spacing-sidebar: 240px;
+  --spacing-header: 2.5rem;
 }
 
 html,

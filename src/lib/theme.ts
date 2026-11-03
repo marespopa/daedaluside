@@ -1,28 +1,56 @@
 import { atom } from 'jotai'
+import {
+  normalizePreference,
+  resolveTheme,
+  THEME_STORAGE_KEY,
+  themeKind,
+  type ThemePreference,
+} from './themes'
 
-export type ThemePreference = 'system' | 'light' | 'dark'
-const KEY = 'daedalus:theme'
+export type { ThemePreference } from './themes'
+
+function storage(): Storage | undefined {
+  try {
+    return globalThis.localStorage
+  } catch {
+    return undefined
+  }
+}
+
+const systemPrefersDark = () =>
+  typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches
 
 export function loadTheme(): ThemePreference {
   try {
-    const v = localStorage.getItem(KEY)
-    if (v === 'light' || v === 'dark') return v
+    return normalizePreference(storage()?.getItem(THEME_STORAGE_KEY))
   } catch {
-    /* storage unavailable */
+    return 'system'
   }
-  return 'system'
 }
 
-export function applyTheme(pref: ThemePreference) {
-  const root = document.documentElement
-  root.classList.remove('light', 'dark')
-  if (pref !== 'system') root.classList.add(pref)
+/** Sets the theme on <html> and saves the preference, so a reload keeps it. */
+export function applyTheme(pref: ThemePreference, root = document.documentElement) {
+  const id = resolveTheme(pref, systemPrefersDark())
+  root.dataset.theme = id
+  const dark = themeKind(id) === 'dark'
+  root.classList.toggle('dark', dark)
+  root.classList.toggle('light', !dark)
   try {
-    if (pref === 'system') localStorage.removeItem(KEY)
-    else localStorage.setItem(KEY, pref)
+    storage()?.setItem(THEME_STORAGE_KEY, pref)
   } catch {
-    /* storage unavailable */
+    /* storage unavailable: the theme still applies for this session */
   }
+}
+
+/** When the preference is `system`, follow the OS setting as it changes. */
+export function watchSystemTheme(): () => void {
+  if (typeof matchMedia !== 'function') return () => undefined
+  const mq = matchMedia('(prefers-color-scheme: dark)')
+  const onChange = () => {
+    if (loadTheme() === 'system') applyTheme('system')
+  }
+  mq.addEventListener('change', onChange)
+  return () => mq.removeEventListener('change', onChange)
 }
 
 const base = atom<ThemePreference>(loadTheme())

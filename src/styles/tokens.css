@@ -1,50 +1,187 @@
-/* Design tokens (ARCHITECTURE.md §5.8). Light is the default; dark applies via
-   the `.dark` class, or the system preference unless `.light` forces light. */
-:root {
-  --canvas: #f5f6f6;
-  --surface: #ffffff;
-  --text: #242424;
-  --muted: #757575;
-  --line: #e2e4e4;
-  --accent: #007aff;
+/* Design tokens (ARCHITECTURE.md §5.8). Each theme is one block keyed by
+   data-theme; the ids match THEMES in src/lib/themes.ts. Tests in
+   src/styles/tokens.test.ts check every theme's text and accent contrast.
+   Diff tints are derived from the diff foreground, so each theme has one source
+   value per color. `:root` mirrors the default (Paper) for first paint. */
+
+:root,
+[data-theme='paper'] {
+  --canvas: #ffffff;
+  --surface: #f8f9fa;
+  --text: #18181b;
+  --muted: #71717a;
+  --line: #e4e4e7;
+  --accent: #2563eb;
   --selection-mix: 20%;
-  --diff-add-bg: #e6f4ea;
-  --diff-add-fg: #137333;
-  --diff-remove-bg: #fce8e6;
-  --diff-remove-fg: #c5221f;
+  --diff-mix: 14%;
+  --diff-add-fg: #15803d;
+  --diff-remove-fg: #b91c1c;
+  --syntax-keyword: #7c3aed;
+  --syntax-string: #15803d;
+  --syntax-number: #b45309;
+  --syntax-function: #1d4ed8;
+  --syntax-type: #0e7490;
+  --syntax-property: #be185d;
+  --syntax-comment: #71717a;
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) {
-    --canvas: #0f172a;
-    --surface: #1e293b;
-    --text: #f8fafc;
-    --muted: #64748b;
-    --line: #334155;
-    --accent: #06b6d4;
-    --selection-mix: 30%;
-    --diff-add-bg: #12301f;
-    --diff-add-fg: #6ee7a0;
-    --diff-remove-bg: #3b1818;
-    --diff-remove-fg: #fca5a5;
-    color-scheme: dark;
-  }
+[data-theme='github-light'] {
+  --canvas: #ffffff;
+  --surface: #f6f8fa;
+  --text: #1f2328;
+  --muted: #656d76;
+  --line: #d0d7de;
+  --accent: #0969da;
+  --selection-mix: 20%;
+  --diff-mix: 14%;
+  --diff-add-fg: #1a7f37;
+  --diff-remove-fg: #cf222e;
+  --syntax-keyword: #cf222e;
+  --syntax-string: #0a3069;
+  --syntax-number: #0550ae;
+  --syntax-function: #8250df;
+  --syntax-type: #953800;
+  --syntax-property: #116329;
+  --syntax-comment: #656d76;
+  color-scheme: light;
 }
 
-:root.dark {
-  --canvas: #0f172a;
-  --surface: #1e293b;
-  --text: #f8fafc;
-  --muted: #64748b;
-  --line: #334155;
-  --accent: #06b6d4;
+[data-theme='solarized-light'] {
+  --canvas: #fdf6e3;
+  --surface: #eee8d5;
+  --text: #46595f;
+  --muted: #586b70;
+  --line: #d9d2bb;
+  --accent: #268bd2;
+  --selection-mix: 20%;
+  --diff-mix: 14%;
+  --diff-add-fg: #4f6a00;
+  --diff-remove-fg: #b52a27;
+  --syntax-keyword: #566400;
+  --syntax-string: #126b66;
+  --syntax-number: #b0306b;
+  --syntax-function: #1a5f96;
+  --syntax-type: #735300;
+  --syntax-property: #b33a2a;
+  --syntax-comment: #586b70;
+  color-scheme: light;
+}
+
+[data-theme='one-light'] {
+  --canvas: #fafafa;
+  --surface: #f0f0f1;
+  --text: #383a42;
+  --muted: #696c77;
+  --line: #dbdbdc;
+  --accent: #4078f2;
+  --selection-mix: 20%;
+  --diff-mix: 14%;
+  --diff-add-fg: #3d7a3c;
+  --diff-remove-fg: #c9372c;
+  --syntax-keyword: #a626a4;
+  --syntax-string: #3b7a38;
+  --syntax-number: #86600a;
+  --syntax-function: #2f67d8;
+  --syntax-type: #8a5e00;
+  --syntax-property: #c4392d;
+  --syntax-comment: #696c77;
+  color-scheme: light;
+}
+
+[data-theme='deep-slate'] {
+  --canvas: #121212;
+  --surface: #1a1a1a;
+  --text: #e4e4e7;
+  --muted: #8e8e96;
+  --line: #27272a;
+  --accent: #60a5fa;
   --selection-mix: 30%;
-  --diff-add-bg: #12301f;
-  --diff-add-fg: #6ee7a0;
-  --diff-remove-bg: #3b1818;
-  --diff-remove-fg: #fca5a5;
+  --diff-mix: 16%;
+  --diff-add-fg: #4ade80;
+  --diff-remove-fg: #f87171;
+  --syntax-keyword: #c4b5fd;
+  --syntax-string: #86efac;
+  --syntax-number: #fdba74;
+  --syntax-function: #93c5fd;
+  --syntax-type: #67e8f9;
+  --syntax-property: #f9a8d4;
+  --syntax-comment: #8e8e96;
   color-scheme: dark;
+}
+
+[data-theme='github-dark'] {
+  --canvas: #0d1117;
+  --surface: #161b22;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --line: #30363d;
+  --accent: #58a6ff;
+  --selection-mix: 30%;
+  --diff-mix: 16%;
+  --diff-add-fg: #3fb950;
+  --diff-remove-fg: #f85149;
+  --syntax-keyword: #ff7b72;
+  --syntax-string: #a5d6ff;
+  --syntax-number: #79c0ff;
+  --syntax-function: #d2a8ff;
+  --syntax-type: #ffa657;
+  --syntax-property: #7ee787;
+  --syntax-comment: #8b949e;
+  color-scheme: dark;
+}
+
+[data-theme='one-dark'] {
+  --canvas: #282c34;
+  --surface: #21252b;
+  --text: #abb2bf;
+  --muted: #959ca6;
+  --line: #3e4451;
+  --accent: #61afef;
+  --selection-mix: 30%;
+  --diff-mix: 16%;
+  --diff-add-fg: #98c379;
+  --diff-remove-fg: #ea7d84;
+  --syntax-keyword: #c678dd;
+  --syntax-string: #98c379;
+  --syntax-number: #d19a66;
+  --syntax-function: #61afef;
+  --syntax-type: #e5c07b;
+  --syntax-property: #e8858c;
+  --syntax-comment: #959ca6;
+  color-scheme: dark;
+}
+
+[data-theme='dracula'] {
+  --canvas: #282a36;
+  --surface: #21222c;
+  --text: #f8f8f2;
+  --muted: #8b97c0;
+  --line: #44475a;
+  --accent: #bd93f9;
+  --selection-mix: 30%;
+  --diff-mix: 16%;
+  --diff-add-fg: #50fa7b;
+  --diff-remove-fg: #ff6e6e;
+  --syntax-keyword: #ff79c6;
+  --syntax-string: #f1fa8c;
+  --syntax-number: #bd93f9;
+  --syntax-function: #50fa7b;
+  --syntax-type: #8be9fd;
+  --syntax-property: #ffb86c;
+  --syntax-comment: #8b97c0;
+  color-scheme: dark;
+}
+
+/* Shared derived values, written once for every theme. */
+:root,
+[data-theme] {
+  --diff-add-bg: color-mix(in srgb, var(--diff-add-fg) var(--diff-mix), var(--canvas));
+  --diff-remove-bg: color-mix(
+    in srgb,
+    var(--diff-remove-fg) var(--diff-mix),
+    var(--canvas)
+  );
 }
 
 @theme inline {

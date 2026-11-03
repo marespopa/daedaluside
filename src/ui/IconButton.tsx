@@ -1,26 +1,39 @@
-import type { ButtonHTMLAttributes } from 'react'
+import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { Button, type ButtonVariant, type ButtonSize } from './Button'
+import type { IconName } from './Icon'
 
-export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  /** Required: icon-only buttons need an accessible name. */
-  label: string
-}
-
+/**
+ * Square icon-only button, the shared style from Button. Pass an icon name, or
+ * children for a custom glyph. `label` is required: it becomes the accessible name
+ * and tooltip.
+ */
 export function IconButton({
   label,
-  className = '',
+  icon,
+  variant = 'ghost',
+  size = 'md',
+  className,
   children,
-  type = 'button',
   ...props
-}: IconButtonProps) {
+}: {
+  label: string
+  icon?: IconName | undefined
+  variant?: ButtonVariant | undefined
+  size?: ButtonSize | undefined
+  className?: string | undefined
+  children?: ReactNode
+} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'>) {
   return (
-    <button
-      type={type}
-      aria-label={label}
-      title={label}
-      className={`inline-flex size-8 items-center justify-center rounded-md text-muted hover:bg-surface hover:text-text focus-visible:outline-2 focus-visible:outline-accent ${className}`}
+    <Button
+      iconOnly
+      label={label}
+      icon={icon}
+      variant={variant}
+      size={size}
+      className={className}
       {...props}
     >
       {children}
-    </button>
+    </Button>
   )
 }

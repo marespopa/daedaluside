@@ -13,8 +13,8 @@ export interface BufferMeta {
 }
 
 export const initialBuffer: BufferMeta = {
-  id: 'scratch',
-  name: 'scratch.ts',
+  id: '',
+  name: '',
   language: null,
   dirty: false,
   line: 1,
@@ -25,3 +25,5 @@ export const initialBuffer: BufferMeta = {
 export const activeBufferAtom = atom<BufferMeta>(initialBuffer)
 export const editorHandleAtom = atom<EditorHandle | null>(null)
 export const paletteOpenAtom = atom(false)
+/** Palette input text. A leading `>` means commands; anything else searches files. */
+export const paletteQueryAtom = atom('')

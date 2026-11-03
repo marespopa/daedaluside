@@ -2,10 +2,11 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { EditorView } from '@codemirror/view'
 import { tags as t } from '@lezer/highlight'
 
-// Monochrome: hierarchy comes from weight, style and opacity, never hue.
-// Colors are CSS variables, so light/dark switches without rebuilding the editor.
+// Code colors come from the per-theme --syntax-* tokens (src/styles/tokens.css), so a
+// theme switch recolors the code without rebuilding the editor. Every token meets AA
+// on the canvas and surface, which the token tests check.
 const highlight = HighlightStyle.define([
-  { tag: [t.comment, t.docComment], color: 'var(--muted)', fontStyle: 'italic' },
+  { tag: [t.comment, t.docComment], color: 'var(--syntax-comment)', fontStyle: 'italic' },
   {
     tag: [
       t.keyword,
@@ -13,33 +14,32 @@ const highlight = HighlightStyle.define([
       t.controlKeyword,
       t.operatorKeyword,
       t.definitionKeyword,
+      t.moduleKeyword,
+      t.self,
+      t.tagName,
     ],
-    fontWeight: '500',
+    color: 'var(--syntax-keyword)',
   },
-  { tag: [t.string, t.regexp, t.special(t.string)], color: 'var(--muted)' },
+  {
+    tag: [t.string, t.regexp, t.special(t.string)],
+    color: 'var(--syntax-string)',
+  },
   {
     tag: [t.number, t.bool, t.null, t.atom],
-    color: 'var(--muted)',
-    fontWeight: '500',
+    color: 'var(--syntax-number)',
   },
   {
-    tag: [
-      t.definition(t.variableName),
-      t.function(t.variableName),
-      t.className,
-      t.typeName,
-    ],
-    fontWeight: '500',
-    textDecoration: 'underline',
-    textDecorationColor: 'var(--line)',
-    textUnderlineOffset: '3px',
+    tag: [t.function(t.variableName), t.function(t.propertyName)],
+    color: 'var(--syntax-function)',
   },
-  { tag: [t.heading], fontWeight: '500' },
+  { tag: [t.typeName, t.className, t.namespace], color: 'var(--syntax-type)' },
+  { tag: [t.propertyName, t.attributeName], color: 'var(--syntax-property)' },
+  { tag: t.meta, color: 'var(--syntax-comment)' },
+  { tag: t.heading, color: 'var(--syntax-keyword)', fontWeight: '600' },
   { tag: t.emphasis, fontStyle: 'italic' },
-  { tag: t.strong, fontWeight: '500' },
-  { tag: t.link, textDecoration: 'underline' },
-  { tag: [t.punctuation, t.bracket, t.operator], color: 'var(--muted)' },
-  { tag: t.invalid, textDecoration: 'underline wavy' },
+  { tag: t.strong, fontWeight: '600' },
+  { tag: t.link, color: 'var(--syntax-function)', textDecoration: 'underline' },
+  { tag: t.invalid, color: 'var(--diff-remove-fg)', textDecoration: 'underline wavy' },
 ])
 
 const base = EditorView.theme({
@@ -52,15 +52,26 @@ const base = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
     fontFamily: 'var(--font-mono)',
-    lineHeight: '1.625',
+    lineHeight: '1.65',
     overflow: 'auto',
   },
+  // Spec: centered column, max 72ch, padding py-12 px-8.
   '.cm-content': {
     caretColor: 'var(--accent)',
     maxWidth: 'var(--editor-max-width, 72ch)',
     margin: '0 auto',
-    padding: '12vh 1.5rem 40vh',
+    padding: '3rem 2rem',
   },
+  // Faint, low-contrast gutter. Hidden in focus mode (see focusMode.ts, Phase 4).
+  '.cm-gutters': {
+    backgroundColor: 'transparent',
+    border: 'none',
+    color: 'var(--muted)',
+    opacity: '0.7',
+    fontSize: 'var(--text-xs)',
+  },
+  '.cm-gutterElement': { padding: '0 0.75rem 0 0.5rem' },
+  '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--text)' },
   '.cm-line': { padding: '0' },
   '.cm-cursor, .cm-dropCursor': {
     borderLeftColor: 'var(--accent)',
@@ -71,7 +82,10 @@ const base = EditorView.theme({
       backgroundColor:
         'color-mix(in srgb, var(--accent) var(--selection-mix), transparent)',
     },
-  '.cm-activeLine': { backgroundColor: 'transparent' },
+  // Spec: active line is a subtle surface fill (bg-surface/50).
+  '.cm-activeLine': {
+    backgroundColor: 'color-mix(in srgb, var(--surface) 50%, transparent)',
+  },
   '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
     backgroundColor: 'transparent',
     outline: '1px solid var(--muted)',
@@ -107,4 +121,4 @@ const base = EditorView.theme({
   },
 })
 
-export const monochromeTheme = [base, syntaxHighlighting(highlight)]
+export const editorTheme = [base, syntaxHighlighting(highlight)]

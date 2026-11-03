@@ -4,9 +4,10 @@ import '@fontsource/ibm-plex-mono/latin-400.css'
 import '@fontsource/ibm-plex-mono/latin-500.css'
 import App from './App'
 import './index.css'
-import { applyTheme, loadTheme } from './lib/theme'
+import { applyTheme, loadTheme, watchSystemTheme } from './lib/theme'
 
 applyTheme(loadTheme())
+watchSystemTheme()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
