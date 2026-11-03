@@ -8,14 +8,29 @@ import { editorHandleAtom, paletteOpenAtom } from '../state/editorAtoms'
 import {
   activePathAtom,
   currentWorkspaceIdAtom,
+  treeAtom,
   workspacesAtom,
+  workspaceStatusAtom,
 } from '../state/workspaceAtoms'
 import { getController } from './controller'
 import { openDB } from './db'
 import { IdbBackend } from './fallback-idb'
+import { WorkspaceManager } from './manager'
+
+/** The workspace record in IndexedDB, bypassing the app. */
+async function savedSession(store: ReturnType<typeof createStore>) {
+  const db = await openDB()
+  return new WorkspaceManager(db, new IdbBackend(db)).get(
+    store.get(currentWorkspaceIdAtom)!,
+  )
+}
+
+/** The store of the most recent `mount()`, for helpers that take no arguments. */
+let lastStore: ReturnType<typeof createStore> | null = null
 
 function mount() {
   const store = createStore()
+  lastStore = store
   const view = render(
     <Provider store={store}>
       <App />
@@ -37,15 +52,30 @@ async function onDisk(store: ReturnType<typeof createStore>, path: string) {
 
 const tab = (name: string) => screen.findByRole('tab', { name: new RegExp(`^${name}`) })
 
+/**
+ * Blank workspaces open to the opener, with no files. Tests that need an editor tab
+ * create `scratch.ts` first, unless it is already in the tree.
+ */
+async function scratchTab() {
+  const store = lastStore!
+  await waitFor(() => expect(store.get(workspaceStatusAtom).state).toBe('ready'))
+  if (!store.get(treeAtom).some((e) => e.path === 'scratch.ts')) {
+    await act(async () => {
+      await getController(store).createFile('scratch.ts')
+    })
+  }
+  return tab('scratch.ts')
+}
+
 describe('workspace in the app', () => {
   beforeEach(() => {
     globalThis.indexedDB = new IDBFactory()
   })
 
-  it('seeds a scratch file, saves with Mod-S, and restores after a reload', async () => {
+  it('creates a scratch file, saves with Mod-S, and restores after a reload', async () => {
     const user = userEvent.setup()
     const a = mount()
-    await tab('scratch.ts')
+    await scratchTab()
     type(a.store, 'hello')
     expect(await screen.findByLabelText('unsaved')).toBeInTheDocument()
     await user.keyboard('{Control>}s{/Control}')
@@ -53,10 +83,14 @@ describe('workspace in the app', () => {
       expect(screen.queryByLabelText('unsaved')).not.toBeInTheDocument(),
     )
     expect(await onDisk(a.store, 'scratch.ts')).toBe('hello')
+    getController(a.store).flushOnHide() // what pagehide does; the session save is debounced
+    await waitFor(async () =>
+      expect((await savedSession(a.store))?.openFiles).toEqual(['scratch.ts']),
+    )
     a.unmount()
 
     const b = mount() // new store, same IndexedDB: a page reload
-    await tab('scratch.ts')
+    await scratchTab()
     await waitFor(() =>
       expect(b.store.get(editorHandleAtom)!.view.state.doc.toString()).toBe('hello'),
     )
@@ -64,7 +98,7 @@ describe('workspace in the app', () => {
 
   it('autosaves after a pause', async () => {
     const a = mount()
-    await tab('scratch.ts')
+    await scratchTab()
     type(a.store, 'auto')
     await waitFor(async () => expect(await onDisk(a.store, 'scratch.ts')).toBe('auto'), {
       timeout: 3000,
@@ -78,7 +112,8 @@ describe('workspace in the app', () => {
     Object.defineProperty(file, 'webkitRelativePath', { value: 'demo/main.ts' })
 
     await user.click(await screen.findByRole('button', { name: 'Open folder' }))
-    await user.upload(screen.getByLabelText('Folder to open'), file)
+    // The header and the opener each render a hidden folder input; the header's comes first.
+    await user.upload(screen.getAllByLabelText('Folder to open')[0]!, file)
 
     await waitFor(() => expect(app.store.get(activePathAtom)).toBe('main.ts'))
     expect(app.store.get(editorHandleAtom)!.view.state.doc.toString()).toBe(
@@ -92,11 +127,11 @@ describe('workspace in the app', () => {
   it('creates, renames and deletes nested files from the tree', async () => {
     const user = userEvent.setup()
     const a = mount()
-    await tab('scratch.ts')
+    await scratchTab()
     await user.keyboard('{Control>}b{/Control}')
     const tree = await screen.findByRole('complementary', { name: 'File tree' })
 
-    await user.click(within(tree).getByRole('button', { name: 'New file' }))
+    await user.click(screen.getByRole('button', { name: 'New file' }))
     await user.type(
       within(tree).getByLabelText('New file name'),
       'src/deep/main.ts{Enter}',
@@ -126,7 +161,7 @@ describe('workspace in the app', () => {
   it('opens settings with storage details', async () => {
     const user = userEvent.setup()
     mount()
-    await tab('scratch.ts')
+    await scratchTab()
     await user.keyboard('{Control>},{/Control}')
     const dlg = await screen.findByRole('dialog', { name: 'Settings' })
     expect(await within(dlg).findByText(/Persistent storage/)).toBeInTheDocument()
@@ -141,12 +176,9 @@ describe('workspace opener (editor empty state)', () => {
     globalThis.indexedDB = new IDBFactory()
   })
 
-  /** Closing the only open file leaves the editor empty, so the opener shows. */
+  /** A blank workspace has no open file, so the opener shows. */
   async function emptyWorkspace(store: ReturnType<typeof createStore>) {
-    await tab('scratch.ts')
-    await act(async () => {
-      await getController(store).deletePath('scratch.ts')
-    })
+    await waitFor(() => expect(store.get(workspaceStatusAtom).state).toBe('ready'))
     expect(store.get(activePathAtom)).toBeNull()
   }
 
@@ -188,10 +220,11 @@ describe('workspace opener (editor empty state)', () => {
     await user.click(await screen.findByRole('button', { name: /^New workspace/ }))
     await user.type(screen.getByLabelText('Workspace name'), 'Fresh{Enter}')
 
-    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('scratch.ts'))
+    await waitFor(() => expect(a.store.get(currentWorkspaceIdAtom)).not.toBe(original))
+    await emptyWorkspace(a.store)
+    expect(a.store.get(treeAtom)).toEqual([])
     const fresh = a.store.get(currentWorkspaceIdAtom)
     expect(fresh).not.toBe(original)
-    await emptyWorkspace(a.store)
 
     const recents = await screen.findByRole('region', { name: 'Recent workspaces' })
     expect(within(recents).getByRole('button', { name: /^Fresh/ })).toBeInTheDocument()
@@ -241,10 +274,7 @@ describe('re-opening a folder', () => {
   })
 
   async function emptyWorkspace(store: ReturnType<typeof createStore>) {
-    await tab('scratch.ts')
-    await act(async () => {
-      await getController(store).deletePath('scratch.ts')
-    })
+    await waitFor(() => expect(store.get(workspaceStatusAtom).state).toBe('ready'))
     expect(store.get(activePathAtom)).toBeNull()
   }
 
@@ -300,7 +330,7 @@ describe('re-opening a folder', () => {
     await emptyWorkspace(a.store)
     await user.click(await screen.findByRole('button', { name: /^New workspace/ }))
     await user.type(screen.getByLabelText('Workspace name'), 'Fresh{Enter}')
-    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('scratch.ts'))
+    await waitFor(() => expect(a.store.get(currentWorkspaceIdAtom)).not.toBeNull())
     await emptyWorkspace(a.store)
 
     const recents = await screen.findByRole('region', { name: 'Recent workspaces' })
@@ -425,7 +455,7 @@ describe('opening a folder shows a loading state', () => {
 
   it('covers the blank scratch page until the folder is open, then replaces it', async () => {
     const a = mount()
-    await tab('scratch.ts')
+    await scratchTab()
     const c = getController(a.store)
     const { file, release } = gatedZip({ 'app.ts': 'zipped', 'lib/util.ts': 'util' })
 
@@ -452,7 +482,7 @@ describe('opening a folder shows a loading state', () => {
 
   it('brings the scratch file back when the folder cannot be read', async () => {
     const a = mount()
-    await tab('scratch.ts')
+    await scratchTab()
     const c = getController(a.store)
 
     await act(async () => {
@@ -468,7 +498,7 @@ describe('opening a folder shows a loading state', () => {
 
   it('refuses a second folder while one is still opening', async () => {
     const a = mount()
-    await tab('scratch.ts')
+    await scratchTab()
     const c = getController(a.store)
     const first = gatedZip({ 'one.ts': '1' })
     const second = gatedZip({ 'two.ts': '2' }, 'other.zip')
@@ -487,5 +517,96 @@ describe('opening a folder shows a loading state', () => {
     })
     await waitFor(() => expect(a.store.get(activePathAtom)).toBe('one.ts'))
     await waitFor(() => expect(overlay()).toBeNull())
+  })
+})
+
+describe('blank workspaces', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+    localStorage.clear()
+  })
+
+  /** A blank workspace as older builds left it, with a scratch.ts, opened last. */
+  async function legacyWorkspace(text: string) {
+    const db = await openDB()
+    const m = new WorkspaceManager(db, new IdbBackend(db))
+    const meta = await m.create('Legacy')
+    await m.fs(meta.id).write('scratch.ts', text)
+    await m.setLastId(meta.id)
+  }
+
+  const treePaths = (store: ReturnType<typeof createStore>) =>
+    store.get(treeAtom).map((e) => e.path)
+  const opener = () => screen.findByRole('region', { name: 'Workspace opener' })
+
+  it('opens a new install to the opener, with no files', async () => {
+    const a = mount()
+    expect(await opener()).toBeInTheDocument()
+    expect(screen.queryByRole('tab')).toBeNull()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    expect(treePaths(a.store)).toEqual([])
+  })
+
+  it('removes an untouched placeholder scratch.ts when the workspace opens', async () => {
+    await legacyWorkspace('')
+    const a = mount()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    expect(treePaths(a.store)).toEqual([])
+    expect(await opener()).toBeInTheDocument()
+  })
+
+  it('keeps a scratch.ts that has text in it', async () => {
+    await legacyWorkspace('notes')
+    const a = mount()
+    await waitFor(() => expect(treePaths(a.store)).toEqual(['scratch.ts']))
+    expect(await onDisk(a.store, 'scratch.ts')).toBe('notes')
+  })
+
+  it('checks a blank workspace once, so a later empty scratch.ts is kept', async () => {
+    const a = mount()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    await act(async () => {
+      await getController(a.store).createFile('scratch.ts')
+    })
+    a.unmount()
+
+    const b = mount() // reload: the workspace is opened again
+    await waitFor(() => expect(b.store.get(workspaceStatusAtom).state).toBe('ready'))
+    expect(treePaths(b.store)).toEqual(['scratch.ts'])
+  })
+})
+
+describe('tree context menu', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+  })
+
+  it('creates in the right-clicked folder, and at the root from empty space', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    await act(async () => {
+      await getController(a.store).importZipFile(
+        new File(
+          [zipSync({ 'docs/a.md': strToU8('a'), 'main.ts': strToU8('m') })],
+          'proj.zip',
+        ),
+      )
+    })
+    const tree = await screen.findByRole('complementary', { name: 'File tree' })
+
+    fireEvent.contextMenu(within(tree).getByRole('button', { name: 'docs' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'New file' }))
+    await user.type(within(tree).getByLabelText('New file name'), 'b.ts{Enter}')
+    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('docs/b.ts'))
+
+    fireEvent.contextMenu(tree) // empty space, not a row: the root menu
+    await user.click(await screen.findByRole('menuitem', { name: 'New folder' }))
+    await user.type(within(tree).getByLabelText('New folder name'), 'lib{Enter}')
+    await waitFor(() =>
+      expect(a.store.get(treeAtom)).toContainEqual(
+        expect.objectContaining({ path: 'lib', kind: 'dir' }),
+      ),
+    )
   })
 })

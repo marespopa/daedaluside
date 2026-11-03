@@ -126,11 +126,9 @@ export class WorkspaceController {
     this.store.set(workspaceStatusAtom, { state: 'ready', backend: backend.kind })
   }
 
-  /** A fresh workspace with an empty scratch file, so there is always something to type in. */
+  /** A blank workspace with no files. The opener explains how to start. */
   private async createDefault(manager: WorkspaceManager) {
-    const meta = await manager.create(DEFAULT_WORKSPACE)
-    await manager.fs(meta.id).write('scratch.ts', '')
-    await manager.saveSession(meta.id, ['scratch.ts'], 'scratch.ts')
+    await manager.create(DEFAULT_WORKSPACE)
   }
 
   get backendKind() {
@@ -534,6 +532,7 @@ export class WorkspaceController {
     this.fs = manager.fs(id)
     this.store.set(currentWorkspaceIdAtom, id)
     await manager.setLastId(id)
+    await this.dropPlaceholderScratch(manager, id)
     await this.refreshTree()
     const meta = await manager.get(id)
     const wanted = meta?.openFiles ?? []
@@ -556,13 +555,32 @@ export class WorkspaceController {
     this.commit({ tabs, active }, { force: true })
   }
 
+  /**
+   * Older builds gave every blank workspace an empty scratch.ts. Once per workspace,
+   * when it is opened, remove that file if it is the only file and still empty, so the
+   * workspace shows only its own content. Imported workspaces are never touched, and
+   * a file with text is never removed.
+   */
+  private async dropPlaceholderScratch(manager: WorkspaceManager, id: string) {
+    const meta = await manager.get(id)
+    if (!meta || meta.source !== undefined || meta.scratchChecked) return
+    const fs = manager.fs(id)
+    const [only, ...rest] = await fs.listAll()
+    const isPlaceholder =
+      rest.length === 0 &&
+      only?.kind === 'file' &&
+      only.path === 'scratch.ts' &&
+      (only.size ?? 0) === 0
+    if (isPlaceholder) await fs.remove('scratch.ts')
+    await manager.markScratchChecked(id)
+  }
+
   async createWorkspace(name: string) {
     try {
       const manager = this.requireManager()
       const meta = await manager.create(name)
       await this.refreshWorkspaces()
       await this.switchTo(meta.id)
-      await this.createFile('scratch.ts')
     } catch (e) {
       this.fail(e)
     }

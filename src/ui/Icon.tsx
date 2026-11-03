@@ -15,6 +15,9 @@ export type IconName =
   | 'pin'
   | 'chevron-left'
   | 'chevron-right'
+  | 'width'
+  | 'expand-all'
+  | 'collapse-all'
 
 const paths: Record<IconName, ReactNode> = {
   'file-plus': (
@@ -67,6 +70,9 @@ const paths: Record<IconName, ReactNode> = {
     </>
   ),
   arrow: <path d="M5 12h14m-6-6 6 6-6 6" />,
+  width: <path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4" />,
+  'expand-all': <path d="M6 5l6 5 6-5M6 12l6 5 6-5" />,
+  'collapse-all': <path d="M6 9l6-5 6 5M6 16l6-5 6 5" />,
   upload: (
     <>
       <path d="M12 15V4m0 0-4 4m4-4 4 4" />

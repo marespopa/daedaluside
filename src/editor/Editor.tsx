@@ -1,5 +1,6 @@
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
+import { editorWidthAtom } from '../state/editorAtoms'
 import {
   activePathAtom,
   importStatusAtom,
@@ -19,6 +20,7 @@ export default function Editor() {
   const status = useAtomValue(workspaceStatusAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const importing = useAtomValue(importStatusAtom)
+  const width = useAtomValue(editorWidthAtom)
   // Last session's file is being restored: show its place, not an empty editor.
   const restoring = status.state === 'loading' && snapshot?.activeFile != null
 
@@ -38,7 +40,7 @@ export default function Editor() {
   }, [controller])
 
   return (
-    <div className="relative h-full">
+    <div className="relative h-full" data-editor-width={width}>
       {/* Inert while importing: the scratch file must not take keystrokes under the overlay. */}
       <div
         ref={host}

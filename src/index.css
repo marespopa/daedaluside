@@ -57,6 +57,10 @@
     --editor-gutter: 4rem;
   }
 }
+/* Full width toggle (View: Toggle Full Width): drop the measure, keep the gutters. */
+[data-editor-width='full'] {
+  --editor-max-width: none;
+}
 
 html,
 body,

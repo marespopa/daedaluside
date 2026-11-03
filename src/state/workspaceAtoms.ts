@@ -50,6 +50,11 @@ export const treeAtom = atom<Entry[]>([])
 export const openBuffersAtom = atom<OpenBuffer[]>([])
 export const activePathAtom = atom<string | null>(null)
 export const sidebarOpenAtom = atom(false)
+/**
+ * Asks the file tree to start a new file or folder in the selected folder. Set by the
+ * header buttons, which also open the tree; the tree clears it once it has started.
+ */
+export const newEntryRequestAtom = atom<{ kind: 'new-file' | 'new-folder' } | null>(null)
 export const settingsOpenAtom = atom(false)
 /** Transient message (errors, import results). */
 export const noticeAtom = atom<{ kind: 'info' | 'error'; text: string } | null>(null)

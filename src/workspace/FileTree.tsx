@@ -2,12 +2,13 @@ import { useAtom, useAtomValue, useStore } from 'jotai'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   activePathAtom,
+  newEntryRequestAtom,
   sidebarOpenAtom,
   treeAtom,
   snapshotAtom,
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
-import { Button, IconButton } from '../ui'
+import { Button, ContextMenu, IconButton, type ContextMenuItem } from '../ui'
 import NameInput from './NameInput'
 import TreeSkeleton from './TreeSkeleton'
 import { dirname, joinPath } from './path'
@@ -29,6 +30,19 @@ type Editing =
   | { kind: 'rename'; path: string }
   | null
 
+/** Right-click menu. `parent` is the folder a new file or folder goes into ('' is the root). */
+type TreeMenu = { parent: string; x: number; y: number }
+
+function treeMenuItems(
+  parent: string,
+  startNew: (kind: 'new-file' | 'new-folder', parent: string) => void,
+): ContextMenuItem[] {
+  return [
+    { id: 'new-file', label: 'New file', run: () => startNew('new-file', parent) },
+    { id: 'new-folder', label: 'New folder', run: () => startNew('new-folder', parent) },
+  ]
+}
+
 /** File tree overlay, toggled with Mod-B. Only the rows on screen are rendered. */
 export default function FileTree() {
   const open = useAtomValue(sidebarOpenAtom)
@@ -39,6 +53,7 @@ function Sidebar() {
   const store = useStore()
   const controller = useController()
   const [, setOpen] = useAtom(sidebarOpenAtom)
+  const [request, setRequest] = useAtom(newEntryRequestAtom)
   const status = useAtomValue(workspaceStatusAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const tree = useAtomValue(treeAtom)
@@ -48,6 +63,7 @@ function Sidebar() {
   const [selected, setSelected] = useState('')
   const [editing, setEditing] = useState<Editing>(null)
   const [confirm, setConfirm] = useState<string | null>(null)
+  const [menu, setMenu] = useState<TreeMenu | null>(null)
   const [seenActive, setSeenActive] = useState<string | null>(null)
   // Virtual list state. `cursor` is the keyboard position; `focusTick` asks for DOM focus
   // to follow it after a keyboard move.
@@ -158,12 +174,32 @@ function Sidebar() {
   const targetDir = () =>
     selected === '' || kindOf.get(selected) === 'dir' ? selected : dirname(selected)
 
-  const startNew = (kind: 'new-file' | 'new-folder') => {
-    const parent = targetDir()
+  const startNew = (kind: 'new-file' | 'new-folder', parent = targetDir()) => {
     if (parent) expand(parent, true)
     setConfirm(null)
     setEditing({ kind, parent })
   }
+
+  const expandAll = () =>
+    setExpanded(new Set(tree.filter((e) => e.kind === 'dir').map((e) => e.path)))
+  const collapseAll = () => setExpanded(new Set())
+
+  /** A file's new entries go next to it, in its folder. A folder's go inside it. */
+  const openMenu = (x: number, y: number, entry: Entry | null) => {
+    const parent = entry ? (entry.kind === 'dir' ? entry.path : dirname(entry.path)) : ''
+    setMenu({ parent, x, y })
+  }
+
+  // New file / New folder from the header: start the inline name field here. The
+  // request is a one-shot event from outside the tree, so syncing it into state is
+  // the intended use of this effect.
+  useEffect(() => {
+    if (!request) return
+    setRequest(null)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    startNew(request.kind)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request])
 
   const close = () => {
     setOpen(false)
@@ -222,7 +258,17 @@ function Sidebar() {
       case 'Delete':
         e.preventDefault()
         return setConfirm(entry.path)
+      case 'ContextMenu':
+      case 'F10':
+        if (e.key === 'F10' && !e.shiftKey) return
+        e.preventDefault()
+        return openFromRow(entry)
     }
+  }
+
+  const openFromRow = (entry: Entry) => {
+    const r = rowElement(root.current, entry.path)?.getBoundingClientRect()
+    openMenu(r?.left ?? 0, r?.bottom ?? 0, entry)
   }
 
   const activate = (entry: Entry) => {
@@ -271,6 +317,10 @@ function Sidebar() {
       <li
         key={row.key}
         role="treeitem"
+        onContextMenu={(e) => {
+          e.preventDefault()
+          openMenu(e.clientX, e.clientY, entry)
+        }}
         aria-level={row.depth + 1}
         aria-setsize={row.setSize}
         aria-posinset={row.posInSet}
@@ -359,6 +409,12 @@ function Sidebar() {
       ref={root}
       aria-label="File tree"
       aria-busy={status.state === 'loading'}
+      onContextMenu={(e) => {
+        // Rows open their own menu; name fields keep the native one.
+        if ((e.target as Element).closest('li[role="treeitem"], input')) return
+        e.preventDefault()
+        openMenu(e.clientX, e.clientY, null)
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.preventDefault()
@@ -367,23 +423,21 @@ function Sidebar() {
       }}
       className="glass fixed top-header bottom-0 left-0 z-40 flex w-sidebar max-w-full flex-col border-r border-line font-sans text-sm"
     >
-      <div className="flex items-center gap-0.5 border-b border-line p-1">
-        <Button
-          variant="secondary"
+      <div className="flex items-center justify-end gap-0.5 border-b border-line p-1">
+        <IconButton
           size="sm"
-          icon="file-plus"
-          onClick={() => startNew('new-file')}
-        >
-          New file
-        </Button>
-        <Button
-          variant="secondary"
+          icon="expand-all"
+          label="Expand all folders"
+          disabled={status.state !== 'ready'}
+          onClick={expandAll}
+        />
+        <IconButton
           size="sm"
-          icon="folder-plus"
-          onClick={() => startNew('new-folder')}
-        >
-          New folder
-        </Button>
+          icon="collapse-all"
+          label="Collapse all folders"
+          disabled={status.state !== 'ready'}
+          onClick={collapseAll}
+        />
       </div>
 
       <div
@@ -420,6 +474,19 @@ function Sidebar() {
           </>
         )}
       </div>
+
+      {menu && (
+        <ContextMenu
+          label="Tree actions"
+          x={menu.x}
+          y={menu.y}
+          items={treeMenuItems(menu.parent, startNew)}
+          onDone={(restoreFocus) => {
+            setMenu(null)
+            if (restoreFocus) rowElement(root.current, tabStop)?.focus()
+          }}
+        />
+      )}
     </aside>
   )
 }

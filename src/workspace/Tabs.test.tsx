@@ -4,14 +4,23 @@ import { IDBFactory } from 'fake-indexeddb'
 import { createStore, Provider } from 'jotai'
 import App from '../App'
 import { editorHandleAtom } from '../state/editorAtoms'
-import { activePathAtom, currentWorkspaceIdAtom } from '../state/workspaceAtoms'
+import {
+  activePathAtom,
+  currentWorkspaceIdAtom,
+  treeAtom,
+  workspaceStatusAtom,
+} from '../state/workspaceAtoms'
 import { getController } from './controller'
 import { openDB } from './db'
 import { IdbBackend } from './fallback-idb'
 import type { WorkspaceFS } from './types'
 
+/** The store of the most recent `mount()`, for helpers that take no arguments. */
+let lastStore: ReturnType<typeof createStore> | null = null
+
 function mount() {
   const store = createStore()
+  lastStore = store
   const view = render(
     <Provider store={store}>
       <App />
@@ -37,6 +46,16 @@ const middleClick = (el: HTMLElement) =>
   )
 
 const menu = () => screen.findByRole('menu', { name: 'Tab actions' })
+
+/** Blank workspaces open with no files; this creates `scratch.ts` when it is missing. */
+async function scratchTab() {
+  const store = lastStore!
+  await waitFor(() => expect(store.get(workspaceStatusAtom).state).toBe('ready'))
+  if (!store.get(treeAtom).some((e) => e.path === 'scratch.ts')) {
+    await act(() => ctl(store).createFile('scratch.ts'))
+  }
+  return screen.findByRole('tab', { name: /^scratch/ })
+}
 
 async function openTabs(store: Store, ...names: string[]) {
   for (const name of names) await act(() => ctl(store).createFile(name))
@@ -65,7 +84,7 @@ describe('tab strip', () => {
 
   it('middle-click closes a tab', async () => {
     const a = mount()
-    await screen.findByRole('tab', { name: /^scratch/ })
+    await scratchTab()
     await openTabs(a.store, 'a.ts')
     const tab = await screen.findByRole('tab', { name: /^a\.ts/ })
     fireEvent.mouseDown(tab, { button: 1 })
@@ -73,10 +92,20 @@ describe('tab strip', () => {
     await waitFor(() => expect(tabPaths()).toEqual(['scratch.ts']))
   })
 
+  it('closes a tab from its hover close icon', async () => {
+    const a = mount()
+    await scratchTab()
+    await openTabs(a.store, 'a.ts')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close a.ts' }))
+
+    await waitFor(() => expect(tabPaths()).toEqual(['scratch.ts']))
+  })
+
   it('the context menu pins a tab, and Close Others keeps pinned tabs', async () => {
     const user = userEvent.setup()
     const a = mount()
-    await screen.findByRole('tab', { name: /^scratch/ })
+    await scratchTab()
     await openTabs(a.store, 'a.ts', 'b.ts')
 
     fireEvent.contextMenu(tabEl('a.ts'), { clientX: 10, clientY: 10 })
@@ -86,6 +115,7 @@ describe('tab strip', () => {
     // Pinned tabs move to the start of the strip and show as an icon named by the file.
     await waitFor(() => expect(tabPaths()).toEqual(['a.ts', 'scratch.ts', 'b.ts']))
     expect(screen.getByRole('tab', { name: 'a.ts' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Close a.ts' })).toBeInTheDocument()
     expect(screen.queryByRole('menu')).toBeNull()
 
     fireEvent.contextMenu(tabEl('b.ts'))
@@ -96,7 +126,7 @@ describe('tab strip', () => {
   it('Escape dismisses the tab menu and returns focus to the tab', async () => {
     const user = userEvent.setup()
     mount()
-    const scratch = await screen.findByRole('tab', { name: /^scratch/ })
+    const scratch = await scratchTab()
     fireEvent.contextMenu(scratch)
     await menu()
     await user.keyboard('{Escape}')
@@ -107,7 +137,7 @@ describe('tab strip', () => {
   it('arrow keys move focus between tabs, and Mod-Alt-W closes the active one', async () => {
     const user = userEvent.setup()
     const a = mount()
-    await screen.findByRole('tab', { name: /^scratch/ })
+    await scratchTab()
     await openTabs(a.store, 'a.ts')
 
     tabEl('scratch.ts').focus()
@@ -122,7 +152,7 @@ describe('tab strip', () => {
   it('keeps the dirty dot visible until Ctrl+S saves the active file', async () => {
     const user = userEvent.setup()
     const a = mount()
-    await screen.findByRole('tab', { name: /^scratch/ })
+    await scratchTab()
     await openTabs(a.store, 'a.ts')
     type(a.store, 'draft')
 
@@ -139,7 +169,7 @@ describe('tab strip', () => {
 
   it('dragging a tab onto the right half of another moves it there', async () => {
     const a = mount()
-    await screen.findByRole('tab', { name: /^scratch/ })
+    await scratchTab()
     await openTabs(a.store, 'a.ts', 'b.ts')
 
     // jsdom has no layout: give each tab a 100 px slot.
@@ -171,7 +201,7 @@ describe('tab strip', () => {
 
   it('closing a dirty tab saves it first', async () => {
     const a = mount()
-    await screen.findByRole('tab', { name: /^scratch/ })
+    await scratchTab()
     await openTabs(a.store, 'a.ts')
     type(a.store, 'draft')
     middleClick(tabEl('a.ts'))
@@ -181,7 +211,7 @@ describe('tab strip', () => {
 
   it('a tab whose save fails stays open with its edits', async () => {
     const a = mount()
-    await screen.findByRole('tab', { name: /^scratch/ })
+    await scratchTab()
     await openTabs(a.store, 'a.ts')
     type(a.store, 'draft')
 
@@ -196,7 +226,7 @@ describe('tab strip', () => {
 
   it('pinned tabs survive a reload', async () => {
     const a = mount()
-    await screen.findByRole('tab', { name: /^scratch/ })
+    await scratchTab()
     await openTabs(a.store, 'a.ts')
     act(() => ctl(a.store).togglePin('a.ts'))
     // The session is saved 500 ms after a change.
@@ -210,7 +240,7 @@ describe('tab strip', () => {
 
   it('uses plain text tabs in a scrollable, auto-width strip', async () => {
     const a = mount()
-    await screen.findByRole('tab', { name: /^scratch/ })
+    await scratchTab()
     await openTabs(a.store, 'a.ts', 'b.ts')
 
     const strip = screen.getByRole('tablist', { name: 'Open files' })
@@ -219,6 +249,13 @@ describe('tab strip', () => {
     expect(strip.parentElement).toHaveClass('font-mono', 'text-xs', 'bg-transparent')
     expect(tabEl('a.ts')).toHaveClass('opacity-50', 'hover:opacity-80')
     expect(tabEl('b.ts').parentElement).not.toHaveClass('min-w-[100px]', 'max-w-[200px]')
-    expect(within(strip).queryByRole('button', { name: /close/i })).toBeNull()
+    expect(within(strip).getAllByRole('button', { name: /^Close / })).toHaveLength(3)
+    expect(within(strip).getByRole('button', { name: 'Close a.ts' })).toHaveClass(
+      'opacity-0',
+      'group-hover:opacity-100',
+    )
+    expect(within(strip).getByRole('button', { name: 'Close b.ts' })).toHaveClass(
+      'opacity-100',
+    )
   })
 })

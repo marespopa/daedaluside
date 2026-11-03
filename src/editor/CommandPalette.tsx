@@ -6,6 +6,7 @@ import { THEMES, type ThemePreference } from '../lib/themes'
 import {
   activeBufferAtom,
   editorHandleAtom,
+  editorWidthAtom,
   paletteOpenAtom,
   paletteQueryAtom,
 } from '../state/editorAtoms'
@@ -42,6 +43,7 @@ export default function CommandPalette() {
   const controller = useController()
   const setSettings = useSetAtom(settingsOpenAtom)
   const setSidebar = useSetAtom(sidebarOpenAtom)
+  const setWidth = useSetAtom(editorWidthAtom)
   const tree = useAtomValue(treeAtom)
   const activePath = useAtomValue(activePathAtom)
 
@@ -93,6 +95,11 @@ export default function CommandPalette() {
         run: () => activePath && void controller.closeBuffer(activePath),
       },
       { id: 'tree', label: 'View: Toggle File Tree', run: () => setSidebar((o) => !o) },
+      {
+        id: 'width',
+        label: 'View: Toggle Full Width',
+        run: () => setWidth(store.get(editorWidthAtom) === 'full' ? 'measured' : 'full'),
+      },
       {
         id: 'tab-close-others',
         label: 'Tab: Close Others',
@@ -147,7 +154,17 @@ export default function CommandPalette() {
       },
       ...langs,
     ]
-  }, [handle, setTheme, setBuffer, controller, activePath, setSettings, setSidebar])
+  }, [
+    handle,
+    setTheme,
+    setBuffer,
+    controller,
+    activePath,
+    setSettings,
+    setSidebar,
+    setWidth,
+    store,
+  ])
 
   const files = useMemo(() => tree.filter((e) => e.kind === 'file'), [tree])
 

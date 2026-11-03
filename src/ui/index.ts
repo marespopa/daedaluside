@@ -1,5 +1,6 @@
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button'
 export { Chip } from './Chip'
+export { ContextMenu, type ContextMenuItem } from './ContextMenu'
 export { GlassPopover } from './GlassPopover'
 export { IconButton } from './IconButton'
 export { Kbd } from './Kbd'

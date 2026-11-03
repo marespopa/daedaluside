@@ -14,6 +14,8 @@ export interface WorkspaceMeta {
   pinnedFiles?: string[]
   /** Identity of the imported source (see `sourceKey`). Absent for blank workspaces. */
   source?: string | undefined
+  /** Set once the placeholder scratch.ts check has run for this blank workspace. */
+  scratchChecked?: boolean
 }
 
 const MAX_NAME = 100
@@ -88,6 +90,10 @@ export class WorkspaceManager {
     const next = { ...cur, ...patch, id, updated: Date.now() }
     await idbPut(this.db, 'workspaces', id, next)
     return next
+  }
+
+  markScratchChecked(id: string): Promise<WorkspaceMeta> {
+    return this.update(id, { scratchChecked: true })
   }
 
   rename(id: string, name: string): Promise<WorkspaceMeta> {

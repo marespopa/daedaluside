@@ -22,6 +22,37 @@ export const initialBuffer: BufferMeta = {
   length: 0,
 }
 
+/**
+ * `measured` keeps the reading column (see the breakpoints in index.css); `full`
+ * lets the text use the whole pane. Saved so a reload keeps the choice.
+ */
+export type EditorWidth = 'measured' | 'full'
+
+export const EDITOR_WIDTH_KEY = 'daedalus.editorWidth'
+
+export function loadEditorWidth(): EditorWidth {
+  try {
+    return globalThis.localStorage?.getItem(EDITOR_WIDTH_KEY) === 'full'
+      ? 'full'
+      : 'measured'
+  } catch {
+    return 'measured'
+  }
+}
+
+const widthBase = atom<EditorWidth>(loadEditorWidth())
+export const editorWidthAtom = atom(
+  (get) => get(widthBase),
+  (_get, set, next: EditorWidth) => {
+    set(widthBase, next)
+    try {
+      globalThis.localStorage?.setItem(EDITOR_WIDTH_KEY, next)
+    } catch {
+      /* storage unavailable: the choice still applies for this session */
+    }
+  },
+)
+
 export const activeBufferAtom = atom<BufferMeta>(initialBuffer)
 export const editorHandleAtom = atom<EditorHandle | null>(null)
 export const paletteOpenAtom = atom(false)

@@ -26,7 +26,7 @@ import {
   workspaceStatusAtom,
   type OpenBuffer,
 } from '../state/workspaceAtoms'
-import { GlassPopover } from '../ui'
+import { GlassPopover, IconButton } from '../ui'
 import { basename } from './path'
 import { focusEditor, useController } from './useWorkspace'
 
@@ -234,7 +234,7 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
                   onDragStart={(e) => startDrag(e, i, b.path)}
                   onDragEnd={endDrag}
                   className={[
-                    'flex h-full shrink-0 items-center whitespace-nowrap border-b-[1.5px] text-left transition-[color,opacity] duration-150 ease-out focus-visible:outline-2 focus-visible:outline-accent',
+                    'flex h-full shrink-0 items-center whitespace-nowrap border-b-[1.5px] pr-5 text-left transition-[color,opacity] duration-150 ease-out focus-visible:outline-2 focus-visible:outline-accent',
                     isActive
                       ? 'border-accent font-medium text-text'
                       : 'border-transparent text-muted opacity-50 hover:opacity-80',
@@ -254,6 +254,15 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
                     />
                   )}
                 </button>
+                <IconButton
+                  label={`Close ${b.path}`}
+                  icon="x"
+                  size="xs"
+                  variant="quiet"
+                  tabIndex={-1}
+                  onClick={() => closeTab(b.path)}
+                  className={`absolute top-1/2 right-0 -translate-y-1/2 transition-opacity duration-150 ease-out focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 ${isActive ? 'opacity-100' : 'opacity-0'}`}
+                />
               </div>
             )
           })}

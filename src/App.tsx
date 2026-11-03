@@ -1,9 +1,14 @@
-import { useAtom, useAtomValue } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import CommandPalette from './editor/CommandPalette'
 import Editor from './editor/Editor'
 import { activeBufferAtom } from './state/editorAtoms'
 import { MOD_KEY_LABEL } from './lib/platform'
-import { importStatusAtom, sidebarOpenAtom } from './state/workspaceAtoms'
+import { editorWidthAtom } from './state/editorAtoms'
+import {
+  importStatusAtom,
+  newEntryRequestAtom,
+  sidebarOpenAtom,
+} from './state/workspaceAtoms'
 import { IconButton, Kbd } from './ui'
 import FileTree from './workspace/FileTree'
 import Notice from './workspace/Notice'
@@ -17,6 +22,12 @@ export default function App() {
   const [sidebar, setSidebar] = useAtom(sidebarOpenAtom)
   const buffer = useAtomValue(activeBufferAtom)
   const importing = useAtomValue(importStatusAtom)
+  const [width, setWidth] = useAtom(editorWidthAtom)
+  const requestNew = useSetAtom(newEntryRequestAtom)
+  const newEntry = (kind: 'new-file' | 'new-folder') => {
+    setSidebar(true) // the inline name field lives in the tree
+    requestNew({ kind })
+  }
   return (
     <div className="flex h-full bg-canvas text-text">
       <FileTree />
@@ -39,6 +50,24 @@ export default function App() {
             <span className="hidden text-xs text-muted sm:inline">
               <Kbd>{MOD_KEY_LABEL}</Kbd> <Kbd>K</Kbd>
             </span>
+            <IconButton
+              label="New file"
+              icon="file-plus"
+              disabled={importing !== null}
+              onClick={() => newEntry('new-file')}
+            />
+            <IconButton
+              label="New folder"
+              icon="folder-plus"
+              disabled={importing !== null}
+              onClick={() => newEntry('new-folder')}
+            />
+            <IconButton
+              label="Full width"
+              icon="width"
+              aria-pressed={width === 'full'}
+              onClick={() => setWidth(width === 'full' ? 'measured' : 'full')}
+            />
             <OpenFolderButton />
           </div>
         </header>

@@ -47,10 +47,10 @@ The **MVP ships with Google Gemini as the only AI provider** and no backend (M0�
 - [x] Centered layout with a max line width; chrome hidden by default.
 - [x] Command palette (`Mod-K`) as the main control surface.
 - [x] Jotai `editorAtoms`: active buffer metadata. CodeMirror owns the document text.
-- [x] Apply the design system (§5.8): CodeMirror theme driven by CSS variables; 2 px accent cursor and accent selection tint; editor column `max-w-[72ch]`, `leading-relaxed`; app shell layout (collapsible translucent sidebar, 48 px header with transparent border until hover, breadcrumb); command palette as a glass panel.
+- [x] Apply the design system (§5.8): CodeMirror theme driven by CSS variables; 2 px accent cursor and accent selection tint; editor column `max-w-[72ch]` (since replaced by the responsive column, M6b Phase 1), `leading-relaxed`; app shell layout (collapsible translucent sidebar, 48 px header with transparent border until hover, breadcrumb); command palette as a glass panel.
 - [x] `src/ui/` primitives: `Panel`, `GlassPopover`, `Chip`, `IconButton`, `Kbd`, with an opaque fallback when `backdrop-filter` is unsupported.
 
-**Status (2026-11-03):** complete. Line numbers and active-line fill were added in M6b Phase 1, and the shell now uses the 40 px header from §5.8. Typecheck, lint, Prettier, and unit tests (117/117) pass, and `vite build` succeeds. The Playwright smoke test (CSP + palette) still fails because Chromium's GPU process crashes in the Termux dev environment; run it in CI. Main bundle is 689 kB (221 kB gzip), under the M7 budget of 250 KB gzip. Re-check in M7.
+**Status (2026-11-03):** complete. Line numbers and active-line fill were added in M6b Phase 1, and the shell now uses the 40 px header from §5.8. Typecheck, lint, Prettier, unit tests, and `vite build` pass. The Playwright smoke test (CSP + palette) still fails because Chromium's GPU process crashes in the Termux dev environment; run it in CI. Main bundle is 689 kB (221 kB gzip), under the M7 budget of 250 KB gzip. Re-check in M7.
 
 **Done when:** the user can open the app, type code with highlighting, switch themes, and use the palette, with no visible chrome.
 
@@ -68,6 +68,8 @@ The **MVP ships with Google Gemini as the only AI provider** and no backend (M0�
 - [x] File tree overlay (toggle with `Mod-B`): create, rename, delete, open (`FileTree.tsx`).
 - [x] Multiple open buffers (`Tabs.tsx`), dirty tracking, autosave (800 ms debounce) + `Mod-S`.
 - [x] Import from folder or `.zip` (`fflate`); zip import is a drop onto the opener. Export to `.zip` is implemented (`archive.ts`, `controller.exportCurrentZip`) but no longer exposed in the UI after the 2026-11-03 sidebar cleanup. Re-expose it in Settings if needed.
+- [x] Opening a folder shows a loading overlay with progress (scan, then copy) in place of the blank page and scratch tab, until its first file is open. A failed import shows the error and restores the previous view. Only one import runs at a time (`OpeningFolder.tsx`, `controller.runImport`).
+- [x] Blank workspaces (first run, New workspace) start with no files; the opener says what to do next. An empty, untouched `scratch.ts` left by older builds is removed once, when its workspace is opened (`controller.dropPlaceholderScratch`).
 - [x] `navigator.storage.persist()` requested at startup; storage details and quota in settings.
 
 **Status (2026-11-03):** code complete and committed in `79ad171` (`Add tab bar, OPFS workspace and iA Writer shell redesign`). The shared FS contract runs against IndexedDB, OPFS with native move, OPFS with copy fallback, and OPFS through the worker RPC. Controller tests cover the workspace flows, reload restore, zip drop, and error notices. Not verified in a real browser: OPFS persistence across a browser restart, and the worker path under real `createSyncAccessHandle`. Verify manually or in CI. The `pre-iA-redesign` stash remains as a safety copy; retain it until separately reviewed.
@@ -145,7 +147,7 @@ Can run alongside M3–M5.
 - [ ] Chrome auto-hide: while typing, sidebar/header/status fade to `opacity-0` over 300 ms and return on pointer movement or keyboard focus; instant under `prefers-reduced-motion`.
 - [ ] Finalize design tokens: define dark-mode `diff-add`/`diff-remove` colors and the dark prose secondary shade; audit `muted` contrast in both themes (WCAG AA) and adjust.
 - [ ] Glass surfaces on the AI panel, model drawer and status chips; verify contrast on blended backgrounds.
-- [ ] Typography settings: font size, line height, line width (default `72ch`).
+- [ ] Typography settings: font size, line height, and a user-set line width. The default width is responsive and a full-width toggle ships (M6b Phase 1), so only the user setting is open.
 - [ ] Keyboard-first: every action in the palette; shortcuts reference sheet (`?`).
 - [ ] Minimal status line (file, dirty flag, phase, session cost) that fades when idle.
 - [ ] Accessibility: focus outlines, ARIA on overlays/dialogs, `prefers-reduced-motion`, contrast checks for the monochrome themes.
@@ -164,16 +166,19 @@ Can run alongside M3–M5.
 - [x] Contrast test (`src/styles/tokens.test.ts`): text, muted, accent and diff foregrounds meet AA (accent 3:1) in both themes; token parity; no raw hex in `src/**/*.tsx`.
 - [x] Typography: editor 14 px, line height 1.65; UI 13 px; status 11 px mono (`--text-*` in `index.css`).
 - [x] Shell layout: sidebar `w-sidebar` (240 px, replaces `w-64`); header `h-header` (40 px, replaces `h-12`); tabs sit in the header; header has no border on hover or focus.
-- [x] Editor column: `padding: 3rem 2rem` (`py-12 px-8`) in `theme.ts` (replaces `12vh` / `40vh`); `max-w-[72ch]` and `margin: 0 auto` kept.
+- [x] Editor column: `padding: 3rem 2rem` (`py-12 px-8`) in `theme.ts` (replaces `12vh` / `40vh`). Width and gutters now come from breakpoints in `index.css`: 100% on phones, then 80ch, 100ch, 130ch and 160ch from 640 px to 2560 px. This replaces the fixed `max-w-[72ch]`.
+- [x] Full-width toggle: header button and `View: Toggle Full Width` in the palette. Drops the measure and keeps the gutters. The choice is saved in localStorage.
 - [x] Gutter: `lineNumbers()` in `createEditor.ts`, styled `muted` at 70% opacity. Hiding it in focus mode is part of Phase 4.
 - [x] Active line: `surface` at 50% fill (`.cm-activeLine`), replacing the transparent value in `theme.ts`.
 
-**Status (2026-11-03):** implemented. Unit tests (21/21), typecheck, ESLint, Prettier and `vite build` pass. Not yet checked: a visual review in light and dark, because Chromium crashes in the Termux dev environment (see M1). Do this in CI or by hand before marking the milestone done. Gutter sits at the scroller's left edge, not next to the 72ch column, so on wide windows it is far from the text. Revisit in Phase 4.
+**Status (2026-11-03):** implemented. Typecheck, ESLint, Prettier, unit tests and `vite build` pass. Not yet checked: a visual review in light and dark, because Chromium crashes in the Termux dev environment (see M1). Do this in CI or by hand before marking the milestone done. The gutter sits at the scroller's left edge, so on wide windows it is still far from the text. Revisit in Phase 4.
 
 ### Phase 2: Worktree sidebar (needs M2)
 - [x] M2 workspace code is committed in `79ad171` (see M2 status).
 - [x] Sidebar is the worktree only. The workspace switcher, workspace options, and archive (zip) options were removed on 2026-11-03 at the user's request. Workspace switching is done from the workspace opener, and zip import is a drop onto the opener.
-- [x] Toolbar: New File and New Folder use the shared `Button` (secondary, `sm`, with icon). Row actions (rename, delete) and the sidebar toggle are `IconButton`s. Collapse All is still open.
+- [x] Header: New file and New folder (`IconButton`s) sit to the left of Open folder. They open the tree and start the inline name field in the selected folder.
+- [x] Tree toolbar: Expand all and Collapse all folders. Row actions (rename, delete) and the sidebar toggle are `IconButton`s.
+- [x] Right-click menu (`ui/ContextMenu.tsx`, also Shift+F10 on a focused row): on a folder, New file / New folder inside it; on a file, the same in its folder; on empty space, at the root.
 - [x] Shared `Button` and `IconButton` (`src/ui/Button.tsx`), used for all action buttons, including quiet and compact variants. Covered by `src/ui/Button.test.tsx`.
 - [x] Workspace opener describes the selected workspace and offers a direct action to show its file tree when no file is open.
 - [ ] Tree rows: 28 px high, 13 px `font-normal`, `truncate`; 12 px indent per level; guide lines 1 px `line` at 40% opacity.
@@ -188,7 +193,7 @@ Spec: the "Minimalist Tab Architecture" PRD (received 2026-11-03; not stored in 
 - [x] Transparent, borderless strip in the header; auto-width labels scroll horizontally with the scrollbar hidden. 24 px row height.
 - [x] Active tab: full-opacity text with a 1.5 px accent underline; unsaved files show a 4 px accent dot.
 - [x] Inactive tabs: `muted` text at 50% opacity, 80% on hover, 150 ms ease-out (per the tab-bar spec).
-- [x] No default close icon. Close via middle-click, the context menu, the palette, or `Mod-Alt-W`.
+- [x] Minimal close icon on every tab; visible on the active tab and revealed on hover/focus. Close is also available via middle-click, the context menu, the palette, or `Mod-Alt-W`.
 - [x] Context menu (right-click, Shift+F10): Close, Close Others, Close to Right, Close All, Pin/Unpin, Copy Relative Path. Shares the glass surface with the command palette. Pinned tabs survive Close Others and Close All.
 - [x] Drag to reorder (native DnD, 2 px accent insert marker, 150 ms FLIP). Pinned and unpinned groups stay separate. Keyboard reorder via palette "Tab: Move Left/Right".
 - [x] Horizontal overflow via wheel and trackpad, with a hidden scrollbar. Active tab is scrolled into view.
@@ -203,7 +208,7 @@ Spec: the "Minimalist Tab Architecture" PRD (received 2026-11-03; not stored in 
 
 ### Phase 5: Verification
 - [ ] Unit: tree keyboard map (including `A`, `Shift+A`, `F2` scoped to tree focus), tab close and width rules, focus-mode state transitions.
-- [ ] Playwright screenshots in light and dark at 1280 px and 390 px. Check the editor column is at most 72ch.
+- [ ] Playwright screenshots in light and dark at 1280 px, 1920 px and 390 px. Check the editor column follows the breakpoint measure, and fills the pane when full width is on.
 - [ ] Reduced-motion: focus-mode transitions are instant.
 
 **Open decisions** (provisional defaults are in §5.8; confirm or change):

@@ -107,3 +107,56 @@ describe('file tree virtualization', () => {
     expect(rowButtons().length).toBeLessThan(60)
   })
 })
+
+describe('file tree folders and menu', () => {
+  const nested: Entry[] = [
+    { name: 'docs', path: 'docs', kind: 'dir' },
+    { name: 'a.md', path: 'docs/a.md', kind: 'file', size: 1 },
+    { name: 'main.ts', path: 'main.ts', kind: 'file', size: 1 },
+  ]
+
+  it('expands and collapses every folder from the toolbar', () => {
+    mountTree(nested)
+    expect(screen.queryByRole('button', { name: 'a.md' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all folders' }))
+    expect(screen.getByRole('button', { name: 'a.md' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all folders' }))
+    expect(screen.queryByRole('button', { name: 'a.md' })).toBeNull()
+  })
+
+  it('opens the menu from a row, and from empty space as the root', async () => {
+    const user = userEvent.setup()
+    mountTree(nested)
+    const tree = screen.getByRole('complementary', { name: 'File tree' })
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'main.ts' }))
+    const menu = screen.getByRole('menu', { name: 'Tree actions' })
+    expect(within(menu).getByRole('menuitem', { name: 'New file' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    fireEvent.contextMenu(tree)
+    expect(screen.getByRole('menu', { name: 'Tree actions' })).toBeInTheDocument()
+  })
+
+  it('opens the menu from the keyboard with Shift+F10 on a focused row', () => {
+    mountTree(nested)
+    fireEvent.keyDown(screen.getByRole('button', { name: 'docs' }), {
+      key: 'F10',
+      shiftKey: true,
+    })
+    expect(screen.getByRole('menu', { name: 'Tree actions' })).toBeInTheDocument()
+  })
+
+  it('keeps the native menu on the inline name field', async () => {
+    const user = userEvent.setup()
+    mountTree(nested)
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'main.ts' }))
+    await user.click(screen.getByRole('menuitem', { name: 'New folder' }))
+    const field = screen.getByLabelText('New folder name')
+    fireEvent.contextMenu(field)
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+})
