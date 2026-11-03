@@ -1,36 +1,13 @@
 @import 'tailwindcss';
+@import './styles/tokens.css';
 
-@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
-
-:root {
-  --bg: #ffffff;
-  --fg: #0f172a;
-  --fg-muted: #64748b;
-  --border: #e2e8f0;
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --bg: #0a0a0a;
-    --fg: #e5e5e5;
-    --fg-muted: #8a8a8a;
-    --border: #262626;
-    color-scheme: dark;
-  }
-}
-
-:root[data-theme='dark'] {
-  --bg: #0a0a0a;
-  --fg: #e5e5e5;
-  --fg-muted: #8a8a8a;
-  --border: #262626;
-  color-scheme: dark;
-}
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --font-sans: var(--font-mono);
+  --font-mono:
+    'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif;
 
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;
@@ -40,11 +17,6 @@
   --text-xs--line-height: 1.5;
   --text-sm--line-height: 1.6;
   --text-base--line-height: 1.7;
-
-  --color-bg: var(--bg);
-  --color-fg: var(--fg);
-  --color-muted: var(--fg-muted);
-  --color-line: var(--border);
 }
 
 html,
@@ -55,9 +27,21 @@ body,
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-mono);
+  background: var(--canvas);
+  color: var(--text);
+  font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: var(--text-base--line-height);
+}
+
+/* Glass surfaces: opaque fallback first, blur where supported. */
+.glass {
+  background: var(--surface);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .glass {
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
 }

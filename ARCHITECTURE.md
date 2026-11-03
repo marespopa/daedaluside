@@ -107,7 +107,7 @@ graph TD
 | Layer             | Choice                       | Rationale                                                                                |
 | :---------------- | :--------------------------- | :--------------------------------------------------------------------------------------- |
 | Build / framework | Vite + React + TypeScript    | Static SPA output, fast HMR, typed contracts between modules.                            |
-| Styling           | Tailwind CSS                 | Custom typography scale, monochrome light/dark themes, little CSS to maintain.           |
+| Styling           | Tailwind CSS v4              | Semantic design tokens as CSS variables (§5.8), light/dark themes, little CSS to maintain. |
 | Editor            | CodeMirror 6                 | Modular and light; language packages load on demand; `@codemirror/merge` provides diffs. |
 | State             | Jotai                        | Atomic updates keep re-renders small during token streaming.                             |
 | File storage      | OPFS                         | Fast, origin-scoped file storage that needs no permission prompts.                       |
@@ -122,6 +122,8 @@ graph TD
 ```
 src/
   app/                 # App shell, layout, command palette, keybindings
+  styles/              # tokens.css (design tokens, §5.8), fonts, Tailwind @theme mapping
+  ui/                  # Design-system primitives: Panel, GlassPopover, Chip, IconButton, Kbd
   editor/              # CodeMirror setup, extensions, themes, language loading
     extensions/        # focus mode, typewriter scrolling, diff decorations
   workspace/           # File tree UI + FS service facade
@@ -158,7 +160,7 @@ netlify/
 - **Default shell:** one centered CodeMirror pane with a constrained line width and no visible chrome. The file tree, AI panel and diff viewer open as overlays or a split, from the command palette (`Mod-K`) or shortcuts.
 - **Focus mode:** a CodeMirror extension that dims everything except the current line, paragraph or code block, like iA Writer.
 - **Typewriter scrolling:** optional; keeps the cursor line vertically centered.
-- **Typography:** one monospace family for code and prose (self-hosted, e.g. iA Writer Mono / IBM Plex Mono). Monochrome syntax theme in which weight and opacity carry meaning before color does.
+- **Typography:** a monospace family for code and prose (self-hosted, e.g. iA Writer Mono / JetBrains Mono, with a system monospace fallback) and the native system sans stack for UI chrome. Monochrome syntax theme in which weight and opacity carry meaning before color does. Full rules in §5.8.
 - **Language support:** `@codemirror/language-data` loads parsers lazily, so the initial bundle stays small.
 
 ### 5.2 State Management (Jotai)
@@ -307,6 +309,48 @@ stateDiagram-v2
 **Phase 2b: Review (diff)**
 - `@codemirror/merge` shows a side-by-side or unified diff per file. The user can accept or reject individual hunks or whole files.
 - **Apply:** accepted patches are applied with `applyPatchSet`, which is all-or-nothing. It first takes a snapshot, so **Undo last AI change** can restore the previous contents.
+
+### 5.8 Design System
+
+The look combines the typographic focus of iA Writer, macOS/iOS-style materials, and Tailwind CSS for implementation.
+
+**Principles**
+- **Focus first:** the editor is the workspace. Chrome (sidebars, toolbars, metadata) recedes until hovered or toggled.
+- **Tactile simplicity:** subdued monochrome palettes, generous whitespace, one sharp accent for focus states, subtle backdrop blur on floating surfaces.
+- **Typographic rhythm:** a strict column width and a comfortable line height.
+
+**Tokens.** Colors are defined once as CSS variables in `src/styles/tokens.css` (`:root` for light, `.dark` for dark) and mapped to Tailwind through `@theme`. Components use semantic names (`bg-canvas`, `text-muted`, `border-line`, `bg-accent`), never raw hex values. Dark mode is class-based, with the system preference as default.
+
+| Token | Light (Paper) | Dark (Deep Slate) | Usage |
+| --- | --- | --- | --- |
+| `canvas` | `#f5f6f6` | `#0f172a` | Editor background |
+| `surface` | `#ffffff` | `#1e293b` | Panels, modals, popovers, active tree item |
+| `text` | `#242424` | `#f8fafc` | Code and primary text |
+| `muted` | `#757575` | `#64748b` | Line numbers, metadata, paths |
+| `line` | `#e2e4e4` | `#334155` | Hairline borders and dividers |
+| `accent` | `#007aff` (iA Blue) | `#06b6d4` (Electric Cyan) | Cursor, selection tint, primary actions, active plan node |
+| `diff-add` | bg `#e6f4ea`, fg `#137333` | to be defined (dark variants) | Added lines |
+| `diff-remove` | bg `#fce8e6`, fg `#c5221f` | to be defined (dark variants) | Removed lines |
+
+The dark-mode diff colors and the secondary text shade used for prose in dark mode (`#94a3b8`) are not in the source spec, so choose them in M6 and check contrast. `#64748b` on `#0f172a` and `#757575` on `#f5f6f6` are close to the WCAG AA limit for small text. Verify in M6 and darken or lighten `muted` if needed.
+
+**Typography**
+- Editor and code: `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`, optionally preceded by a self-hosted iA Writer Mono or JetBrains Mono (`font-display: swap`).
+- UI and controls: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif`. If Inter is used it must be self-hosted (CSP `font-src 'self'`). File names, paths and breadcrumbs in chrome stay monospace.
+- Editor column: `max-w-[72ch]` (about 70–80 characters), centered, `leading-relaxed`. Width and line height are user-adjustable in settings.
+
+**Layout.** Full-viewport flex row: collapsible sidebar (`w-64`, translucent canvas, hairline right border, blur) and a main column with a 48 px header and a scrolling, centered editor viewport. The header's bottom border is transparent until hover. The sidebar is the file tree overlay and the header holds the breadcrumb and a phase chip (e.g. "Plan Mode"). The active file item uses `surface` with a small accent dot.
+
+**Interactions**
+- **Focus mode (chrome):** while typing, non-essential chrome fades out (`opacity-0`, 300 ms) and returns on pointer movement. This is separate from the editor's line/paragraph dimming in §5.1. Both are disabled under `prefers-reduced-motion` (instant, no transition), and chrome stays visible when it holds keyboard focus.
+- **Cursor:** solid 2 px bar in `accent` (CodeMirror `cursor` theme). Selection uses `accent` at 20% (light) / 30% (dark).
+- **Glass panels:** popovers, status chips, the command palette and model drawers use `backdrop-blur-md` with `canvas`/white at about 70% opacity. Provide an opaque fallback when `backdrop-filter` is unsupported, and keep text contrast above AA on the blended background.
+
+**Implementation notes**
+- The CodeMirror theme reads the same CSS variables (`var(--color-accent)` etc.), so one token change updates the editor and the UI together.
+- Shared primitives live in `src/ui/`. Feature modules compose them and don't redefine colors.
+- Tailwind's `dark:` variant is only needed for exceptions, since tokens already switch with the theme class.
+- Backdrop blur and inline styles need no CSP changes.
 
 ---
 

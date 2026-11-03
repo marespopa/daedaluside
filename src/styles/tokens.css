@@ -1,0 +1,61 @@
+/* Design tokens (ARCHITECTURE.md §5.8). Light is the default; dark applies via
+   the `.dark` class, or the system preference unless `.light` forces light. */
+:root {
+  --canvas: #f5f6f6;
+  --surface: #ffffff;
+  --text: #242424;
+  --muted: #757575;
+  --line: #e2e4e4;
+  --accent: #007aff;
+  --selection-mix: 20%;
+  --diff-add-bg: #e6f4ea;
+  --diff-add-fg: #137333;
+  --diff-remove-bg: #fce8e6;
+  --diff-remove-fg: #c5221f;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --canvas: #0f172a;
+    --surface: #1e293b;
+    --text: #f8fafc;
+    --muted: #64748b;
+    --line: #334155;
+    --accent: #06b6d4;
+    --selection-mix: 30%;
+    --diff-add-bg: #12301f;
+    --diff-add-fg: #6ee7a0;
+    --diff-remove-bg: #3b1818;
+    --diff-remove-fg: #fca5a5;
+    color-scheme: dark;
+  }
+}
+
+:root.dark {
+  --canvas: #0f172a;
+  --surface: #1e293b;
+  --text: #f8fafc;
+  --muted: #64748b;
+  --line: #334155;
+  --accent: #06b6d4;
+  --selection-mix: 30%;
+  --diff-add-bg: #12301f;
+  --diff-add-fg: #6ee7a0;
+  --diff-remove-bg: #3b1818;
+  --diff-remove-fg: #fca5a5;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-diff-add: var(--diff-add-bg);
+  --color-diff-add-fg: var(--diff-add-fg);
+  --color-diff-remove: var(--diff-remove-bg);
+  --color-diff-remove-fg: var(--diff-remove-fg);
+}

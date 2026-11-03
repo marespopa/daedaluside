@@ -25,6 +25,8 @@ test('app loads under the netlify.toml CSP with no console violations', async ({
   page.on('pageerror', (e) => problems.push(e.message))
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Daedalus IDE' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Editor' })).toBeVisible()
+  await page.keyboard.press('Control+k')
+  await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
   expect(problems).toEqual([])
 })

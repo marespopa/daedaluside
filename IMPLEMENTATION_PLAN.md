@@ -2,18 +2,18 @@
 
 The **MVP ships with Google Gemini as the only AI provider** and no backend (M0–M7, tagged `v0.1.0`). More providers come after the MVP (M8–M9). Each milestone ends in a working build that can be deployed. Later milestones depend on earlier ones, but the UI polish work (M6) can run alongside M3–M5. See [ARCHITECTURE.md](./ARCHITECTURE.md) for design details, and §1.1 there for the MVP scope.
 
-| Milestone | Outcome | Depends on | Release |
-| --- | --- | --- | --- |
-| M0 | Project scaffold + CI + Netlify deploy | n/a | MVP |
-| M1 | Distraction-free editor (single file, in-memory) | M0 | MVP |
-| M2 | OPFS workspace (multi-file, persistent) | M1 | MVP |
-| M3 | Key vault + Gemini adapter | M0 | MVP |
-| M4 | Model router + Plan → Review workflow | M2, M3 | MVP |
-| M5 | Execute → Diff review → Apply | M4 | MVP |
-| M6 | UX polish, focus mode, theming, accessibility | M1 | MVP |
-| M7 | Hardening, testing, docs, **MVP release `v0.1.0`** | M0–M6 | MVP |
-| M8 | Direct providers: Anthropic, local Ollama; cross-provider fallback | M7 | Post-MVP |
-| M9 | LLM proxy (Edge Function) + Ollama Cloud + OpenCode | M8 | Post-MVP |
+| Milestone | Outcome                                                                 | Depends on | Release  |
+| :-------- | :---------------------------------------------------------------------- | :--------- | :------- |
+| M0        | Project scaffold + CI + Netlify deploy (Netlify connection pending)     | n/a        | MVP      |
+| M1        | Distraction-free editor (single file, in-memory) (done; e2e pending CI) | M0         | MVP      |
+| M2        | OPFS workspace (multi-file, persistent)                                 | M1         | MVP      |
+| M3        | Key vault + Gemini adapter                                              | M0         | MVP      |
+| M4        | Model router + Plan → Review workflow                                   | M2, M3     | MVP      |
+| M5        | Execute → Diff review → Apply                                           | M4         | MVP      |
+| M6        | UX polish, focus mode, theming, accessibility                           | M1         | MVP      |
+| M7        | Hardening, testing, docs, **MVP release `v0.1.0`**                      | M0–M6      | MVP      |
+| M8        | Direct providers: Anthropic, local Ollama; cross-provider fallback      | M7         | Post-MVP |
+| M9        | LLM proxy (Edge Function) + Ollama Cloud + OpenCode                     | M8         | Post-MVP |
 
 ---
 
@@ -21,13 +21,16 @@ The **MVP ships with Google Gemini as the only AI provider** and no backend (M0�
 
 **Goal:** an empty app deployed to Netlify with the final security headers in place from day one.
 
-- [ ] `npm create vite@latest` with the React + TypeScript template; strict `tsconfig`.
-- [ ] Tailwind CSS v4, base typography tokens, light/dark CSS variables.
-- [ ] ESLint + Prettier; `vitest` + `@testing-library/react`; Playwright for e2e.
-- [ ] Create the folder structure from ARCHITECTURE.md §4.
-- [ ] `netlify.toml` with SPA redirect, the corrected CSP (ARCHITECTURE.md §8.1), and immutable asset caching.
-- [ ] GitHub Actions: typecheck, lint, unit tests, build, `npm audit --audit-level=high`.
+- [x] `npm create vite@latest` with the React + TypeScript template; strict `tsconfig`.
+- [x] Tailwind CSS v4, base typography tokens, light/dark CSS variables.
+- [x] ESLint + Prettier; `vitest` + `@testing-library/react`; Playwright for e2e.
+- [x] Create the folder structure from ARCHITECTURE.md §4.
+- [x] `netlify.toml` with SPA redirect, the corrected CSP (ARCHITECTURE.md §8.1), and immutable asset caching.
+- [x] GitHub Actions: typecheck, lint, unit tests, build, `npm audit --audit-level=high`.
 - [ ] Connect the repo to Netlify; deploy previews on PRs.
+- [x] Design system foundation (ARCHITECTURE.md §5.8): `src/styles/tokens.css` with semantic light/dark color tokens (canvas, surface, text, muted, line, accent, diff-add, diff-remove) mapped through Tailwind `@theme`; class-based dark mode; UI sans and monospace font stacks. Replace any raw hex values in existing components with tokens.
+
+**Status:** implemented, including the design tokens (`src/styles/tokens.css`). Only connecting the repo to Netlify remains (not verifiable from the repo; do this in the Netlify dashboard). Dark-mode diff colors are provisional until M6.
 
 **Done when:** a pushed commit deploys, and the CSP header shows up in the browser with no console violations.
 
@@ -37,12 +40,16 @@ The **MVP ships with Google Gemini as the only AI provider** and no backend (M0�
 
 **Goal:** a single-buffer CodeMirror 6 editor in the iA Writer style.
 
-- [ ] `editor/` module: `createEditor()` factory with the base extensions (history, search, bracket matching, autoclose, keymaps).
-- [ ] Lazy language loading through `@codemirror/language-data`.
-- [ ] Monochrome syntax theme (light + dark); self-hosted monospace font with `font-display: swap`.
-- [ ] Centered layout with a max line width; chrome hidden by default.
-- [ ] Command palette (`Mod-K`) as the main control surface.
-- [ ] Jotai `editorAtoms`: active buffer metadata. CodeMirror owns the document text.
+- [x] `editor/` module: `createEditor()` factory with the base extensions (history, search, bracket matching, autoclose, keymaps).
+- [x] Lazy language loading through `@codemirror/language-data`.
+- [x] Monochrome syntax theme (light + dark); self-hosted monospace font with `font-display: swap`.
+- [x] Centered layout with a max line width; chrome hidden by default.
+- [x] Command palette (`Mod-K`) as the main control surface.
+- [x] Jotai `editorAtoms`: active buffer metadata. CodeMirror owns the document text.
+- [x] Apply the design system (§5.8): CodeMirror theme driven by CSS variables; 2 px accent cursor and accent selection tint; editor column `max-w-[72ch]`, `leading-relaxed`; app shell layout (collapsible translucent sidebar, 48 px header with transparent border until hover, breadcrumb); command palette as a glass panel.
+- [x] `src/ui/` primitives: `Panel`, `GlassPopover`, `Chip`, `IconButton`, `Kbd`, with an opaque fallback when `backdrop-filter` is unsupported.
+
+**Status:** all items are implemented, including the design system shell and `src/ui/` primitives. Typecheck, lint, Prettier, unit tests and build pass. The Playwright smoke test (CSP + palette) has not yet passed because Chromium crashes in the Termux dev environment; run it in CI. Known: main bundle is 624 kB (200 kB gzip), over the M7 budget of 250 KB gzip; revisit in M7.
 
 **Done when:** the user can open the app, type code with highlighting, switch themes, and use the palette, with no visible chrome.
 
@@ -116,7 +123,7 @@ The **MVP ships with Google Gemini as the only AI provider** and no backend (M0�
 - [ ] `execute.ts`: one request per step, sending only the files that step touches.
 - [ ] Patch format: full-file blocks for creates and small files; search/replace blocks for edits. Strict parser; each search block must match exactly once.
 - [ ] Progress per step (pending/streaming/done/failed); retry or regenerate a single step.
-- [ ] Diff viewer with `@codemirror/merge`: unified/split toggle; accept/reject per hunk and per file.
+- [ ] Diff viewer with `@codemirror/merge`: unified/split toggle; accept/reject per hunk and per file. Styled with the `diff-add`/`diff-remove` tokens.
 - [ ] `apply.ts` + `WorkspaceFS.applyPatchSet`: snapshot, then apply all, with rollback on failure.
 - [ ] **Undo last AI change** from snapshot; refresh open buffers after apply.
 - [ ] Detect conflicts if the user edited a file between Execute and Apply (compare content hashes) and ask for re-execution.
@@ -130,7 +137,10 @@ The **MVP ships with Google Gemini as the only AI provider** and no backend (M0�
 Can run alongside M3–M5.
 
 - [ ] Focus mode (dim everything except the current line/paragraph/block); typewriter scrolling.
-- [ ] Typography settings: font size, line height, line width.
+- [ ] Chrome auto-hide: while typing, sidebar/header/status fade to `opacity-0` over 300 ms and return on pointer movement or keyboard focus; instant under `prefers-reduced-motion`.
+- [ ] Finalize design tokens: define dark-mode `diff-add`/`diff-remove` colors and the dark prose secondary shade; audit `muted` contrast in both themes (WCAG AA) and adjust.
+- [ ] Glass surfaces on the AI panel, model drawer and status chips; verify contrast on blended backgrounds.
+- [ ] Typography settings: font size, line height, line width (default `72ch`).
 - [ ] Keyboard-first: every action in the palette; shortcuts reference sheet (`?`).
 - [ ] Minimal status line (file, dirty flag, phase, session cost) that fades when idle.
 - [ ] Accessibility: focus outlines, ARIA on overlays/dialogs, `prefers-reduced-motion`, contrast checks for the monochrome themes.
@@ -186,6 +196,7 @@ For providers that block browser requests (ARCHITECTURE.md §5.5.1). This is the
 | Unit | Vitest | crypto round-trip, stream parsers, plan/patch parsers, router decisions, reducer transitions |
 | FS | Vitest + browser mode | OPFS worker and IDB fallback both pass the shared `WorkspaceFS` contract suite |
 | Component | Testing Library | plan reviewer, diff accept/reject, vault modal |
+| Design system | Vitest + Playwright | token parity between light/dark, no raw hex in components (lint/grep check), contrast check of token pairs, reduced-motion behavior |
 | E2E | Playwright | full workflow with a mocked provider; import/export; reload resumes a run |
 | Proxy (M9) | Netlify CLI + Vitest | allowlists, origin checks, streaming pass-through |
 
@@ -199,5 +210,6 @@ For providers that block browser requests (ARCHITECTURE.md §5.5.1). This is the
 | Local Ollama unreachable from HTTPS origin (Safari, local network access prompts) (M8) | Detect and explain; offer cloud fallback after confirmation. |
 | Proxy abuse burns Netlify credits (M9) | Same-origin check, rate limits, fixed upstream list, body size cap, credit alerts. |
 | OPFS data loss (storage eviction) | Request persistent storage; prominent export; warn when not persisted. |
+| Spec colors fail contrast (`muted` text, glass panels) or leave dark diff colors undefined | Automated contrast check in M6; tokens are centralized, so fixes are one-line changes. |
 | XSS exposing unlocked keys | Strict CSP, no raw HTML rendering, minimal dependencies, auto-lock. |
 | Runaway API cost | Cheap Flash-tier defaults, pre-request estimates, hard budget caps. |
