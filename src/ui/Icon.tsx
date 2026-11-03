@@ -17,6 +17,7 @@ export type IconName =
   | 'chevron-right'
   | 'width'
   | 'expand-all'
+  | 'search'
   | 'collapse-all'
 
 const paths: Record<IconName, ReactNode> = {
@@ -71,6 +72,12 @@ const paths: Record<IconName, ReactNode> = {
   ),
   arrow: <path d="M5 12h14m-6-6 6 6-6 6" />,
   width: <path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4" />,
+  search: (
+    <>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4.5 4.5" />
+    </>
+  ),
   'expand-all': <path d="M6 5l6 5 6-5M6 12l6 5 6-5" />,
   'collapse-all': <path d="M6 9l6-5 6 5M6 16l6-5 6 5" />,
   upload: (

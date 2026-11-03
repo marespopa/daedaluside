@@ -47,6 +47,14 @@ export const workspacesAtom = atom<WorkspaceMeta[]>([])
 export const currentWorkspaceIdAtom = atom<string | null>(null)
 /** Every entry of the current workspace, flat; the tree UI derives hierarchy from paths. */
 export const treeAtom = atom<Entry[]>([])
+/** Paths of the current workspace that are still being copied in. They are listed but not readable yet. */
+export const pendingPathsAtom = atom<ReadonlySet<string>>(new Set<string>())
+/** Background copy of the current workspace; null when nothing is copying. */
+export const copyStatusAtom = atom<{
+  done: number
+  failed: number
+  total: number
+} | null>(null)
 export const openBuffersAtom = atom<OpenBuffer[]>([])
 export const activePathAtom = atom<string | null>(null)
 export const sidebarOpenAtom = atom(false)

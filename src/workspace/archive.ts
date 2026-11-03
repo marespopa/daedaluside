@@ -51,6 +51,28 @@ export function readZip(bytes: Uint8Array): ImportEntry[] {
   return out
 }
 
+/**
+ * "Compress" wraps a folder in one top-level folder named after the archive
+ * (`proj.zip` holds `proj/...`). Unwrapping it makes the workspace root the folder's
+ * own contents. Only that case is changed: any other archive keeps its layout.
+ */
+export function unwrapTopFolder(
+  entries: ImportEntry[],
+  archiveName: string,
+): ImportEntry[] {
+  const name = entries[0]?.path.split('/')[0]
+  if (!name || name.toLowerCase() !== archiveName.toLowerCase()) return entries
+  const prefix = `${name}/`
+  // Everything must sit under the wrapper; a bare file named like the archive is not one.
+  const wrapped = entries.every((e) =>
+    e.path === name ? e.kind === 'dir' : e.path.startsWith(prefix),
+  )
+  if (!wrapped) return entries
+  return entries
+    .filter((e) => e.path !== name)
+    .map((e) => ({ ...e, path: e.path.slice(prefix.length) }) as ImportEntry)
+}
+
 /** From `<input webkitdirectory>`: drops the picked folder's own name. */
 export function entriesFromFileList(files: Iterable<File>): {
   name: string

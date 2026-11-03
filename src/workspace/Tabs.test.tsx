@@ -157,7 +157,7 @@ describe('tab strip', () => {
     type(a.store, 'draft')
 
     const dirty = screen.getByRole('img', { name: 'unsaved' })
-    expect(dirty).toHaveClass('size-1', 'rounded-full', 'bg-accent')
+    expect(dirty).toHaveClass('size-1.5', 'rounded-full', 'bg-accent')
 
     await user.keyboard('{Control>}s{/Control}')
 
@@ -238,24 +238,22 @@ describe('tab strip', () => {
     expect(tabPaths()).toEqual(['a.ts', 'scratch.ts'])
   })
 
-  it('uses plain text tabs in a scrollable, auto-width strip', async () => {
+  it('shows quiet pill tabs in a scrollable strip, with the close icon on hover', async () => {
     const a = mount()
     await scratchTab()
     await openTabs(a.store, 'a.ts', 'b.ts')
 
     const strip = screen.getByRole('tablist', { name: 'Open files' })
-    expect(strip).toHaveClass('overflow-x-auto', 'bg-transparent')
-    expect(strip).toHaveClass('[scrollbar-width:none]')
-    expect(strip.parentElement).toHaveClass('font-mono', 'text-xs', 'bg-transparent')
-    expect(tabEl('a.ts')).toHaveClass('opacity-50', 'hover:opacity-80')
-    expect(tabEl('b.ts').parentElement).not.toHaveClass('min-w-[100px]', 'max-w-[200px]')
+    expect(strip).toHaveClass('overflow-x-auto', '[scrollbar-width:none]')
+    expect(strip.parentElement).toHaveClass('font-sans', 'text-sm')
+    // The active tab is a surface pill; the others are muted text that brightens on hover.
+    expect(tabEl('b.ts').parentElement).toHaveClass('bg-surface')
+    expect(tabEl('a.ts').parentElement).not.toHaveClass('bg-surface')
+    expect(tabEl('a.ts')).toHaveClass('text-muted')
     expect(within(strip).getAllByRole('button', { name: /^Close / })).toHaveLength(3)
     expect(within(strip).getByRole('button', { name: 'Close a.ts' })).toHaveClass(
       'opacity-0',
       'group-hover:opacity-100',
-    )
-    expect(within(strip).getByRole('button', { name: 'Close b.ts' })).toHaveClass(
-      'opacity-100',
     )
   })
 })

@@ -10,10 +10,12 @@ import {
 } from '../state/editorAtoms'
 import {
   activePathAtom,
+  copyStatusAtom,
   currentWorkspaceIdAtom,
   importStatusAtom,
   noticeAtom,
   openBuffersAtom,
+  pendingPathsAtom,
   settingsOpenAtom,
   sidebarOpenAtom,
   treeAtom,
@@ -35,19 +37,20 @@ import {
 } from '../state/tabOps'
 import {
   downloadBytes,
+  unwrapTopFolder,
   entriesFromDirectoryHandle,
   entriesFromFileList,
   exportZip,
-  importEntries,
   readZip,
   walkTree,
   type ImportEntry,
 } from './archive'
 import { openDB } from './db'
+import { ImportQueue, type CopyProgress } from './importQueue'
 import { createBackend } from './fs'
-import { sourceKey, WorkspaceManager } from './manager'
+import { sourceKey, WorkspaceManager, type WorkspaceMeta } from './manager'
 import { startSnapshotSync } from './snapshot'
-import { isWithin, normalizePath } from './path'
+import { depthFirst, isWithin, normalizePath } from './path'
 import { requestPersistence } from './storage'
 import type { WorkspaceFS } from './types'
 
@@ -92,6 +95,9 @@ export class WorkspaceController {
   private sessionTimer: ReturnType<typeof setTimeout> | undefined
   /** Bumped on every workspace switch so stale async work can bail out. */
   private epoch = 0
+  /** Background copies still running, by workspace id. */
+  private imports = new Map<string, ImportQueue>()
+  private lastCopyPublish = 0
 
   constructor(store: Store) {
     this.store = store
@@ -113,6 +119,10 @@ export class WorkspaceController {
     const backend = await createBackend(db)
     const manager = (this.manager = new WorkspaceManager(db, backend))
     let list = await manager.list()
+    // A page closed mid-import leaves a partial copy behind. It cannot be resumed, so remove it.
+    const interrupted = list.filter((w) => w.importing)
+    for (const w of interrupted) await manager.remove(w.id)
+    if (interrupted.length > 0) list = await manager.list()
     if (list.length === 0) {
       await this.createDefault(manager)
       list = await manager.list()
@@ -124,6 +134,11 @@ export class WorkspaceController {
     const first = list.find((w) => w.id === last) ?? list[0]!
     await this.switchTo(first.id)
     this.store.set(workspaceStatusAtom, { state: 'ready', backend: backend.kind })
+    if (interrupted.length > 0)
+      this.notify(
+        'info',
+        `Removed ${interrupted.length === 1 ? 'an import' : `${interrupted.length} imports`} that did not finish. Import the folder again.`,
+      )
   }
 
   /** A blank workspace with no files. The opener explains how to start. */
@@ -188,9 +203,36 @@ export class WorkspaceController {
     }))
   }
 
+  /**
+   * The tree is what is on disk plus what is still copying. Pending entries come from the
+   * import's own list, so the tree can show a folder before its files are written.
+   */
   async refreshTree() {
     if (!this.fs) return
-    this.store.set(treeAtom, await walkTree(this.fs))
+    const listed = await walkTree(this.fs)
+    const queue = this.currentImport()
+    if (!queue) {
+      this.store.set(treeAtom, listed)
+      this.store.set(pendingPathsAtom, new Set<string>())
+      this.store.set(copyStatusAtom, null)
+      return
+    }
+    const byPath = new Map(listed.map((e) => [e.path, e]))
+    for (const e of queue.pendingEntries()) if (!byPath.has(e.path)) byPath.set(e.path, e)
+    this.store.set(treeAtom, depthFirst([...byPath.values()]))
+    this.store.set(pendingPathsAtom, new Set(queue.pendingPaths()))
+    this.store.set(copyStatusAtom, queue.status())
+  }
+
+  private currentImport(): ImportQueue | undefined {
+    return this.wsId ? this.imports.get(this.wsId) : undefined
+  }
+
+  /** Tree changes wait for the background copy, so they cannot race with it. */
+  private assertCopied(action: string) {
+    const left = this.currentImport()?.remaining() ?? 0
+    if (left > 0)
+      throw new Error(`Still copying ${left} items. ${action} when the copy finishes.`)
   }
 
   private async refreshWorkspaces() {
@@ -301,8 +343,10 @@ export class WorkspaceController {
     return path
   }
 
+  /** Opens a file. One that is still copying is copied next, then opened. */
   async openFile(path: string) {
     try {
+      await this.currentImport()?.promote(normalizePath(path))
       const p = await this.load(path)
       if (p) this.activate(p)
     } catch (e) {
@@ -440,6 +484,7 @@ export class WorkspaceController {
     try {
       const path = normalizePath(rawPath)
       if (path === '') throw new Error('Name cannot be empty')
+      this.assertCopied('New files')
       const fs = this.requireFS()
       if (await fs.stat(path)) throw new Error(`Already exists: ${path}`)
       await fs.write(path, '')
@@ -454,6 +499,7 @@ export class WorkspaceController {
     try {
       const path = normalizePath(rawPath)
       if (path === '') throw new Error('Name cannot be empty')
+      this.assertCopied('New folders')
       const fs = this.requireFS()
       if (await fs.stat(path)) throw new Error(`Already exists: ${path}`)
       await fs.mkdir(path)
@@ -467,6 +513,7 @@ export class WorkspaceController {
     try {
       const from = normalizePath(fromRaw)
       const to = normalizePath(toRaw)
+      this.assertCopied('Renaming')
       const fs = this.requireFS()
       await Promise.all(
         [...this.buffers.keys()]
@@ -500,6 +547,7 @@ export class WorkspaceController {
   async deletePath(rawPath: string) {
     try {
       const path = normalizePath(rawPath)
+      this.assertCopied('Deleting')
       const fs = this.requireFS()
       await fs.remove(path)
       const gone = [...this.buffers.keys()].filter((p) => isWithin(p, path))
@@ -598,6 +646,7 @@ export class WorkspaceController {
   async deleteWorkspace(id: string) {
     try {
       const manager = this.requireManager()
+      this.cancelCopy(id)
       if (id === this.wsId) {
         for (const b of this.buffers.values()) clearTimeout(b.timer)
         this.buffers = new Map() // nothing to save: the workspace is going away
@@ -646,6 +695,11 @@ export class WorkspaceController {
     }
   }
 
+  /**
+   * Opens the import as a workspace right away and copies its files in the background.
+   * The tree shows every entry at once; a file is readable once it has been copied, and
+   * opening one copies it first. Only the first file is waited for.
+   */
   private async importInto(name: string, entries: ImportEntry[], report: ReportImport) {
     const manager = this.requireManager()
     const label = name || 'Imported'
@@ -664,10 +718,10 @@ export class WorkspaceController {
       )
       return
     }
-    const meta = await manager.create(label, source)
+    const meta = await manager.create(label, source, true)
     try {
       report(0, entries.length)
-      const { files, dirs } = await importEntries(manager.fs(meta.id), entries, report)
+      this.startCopy(meta, entries)
       await this.refreshWorkspaces()
       await this.switchTo(meta.id)
       const firstFile = entries
@@ -679,18 +733,71 @@ export class WorkspaceController {
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))[0]
       if (firstFile) await this.openFile(firstFile)
       this.store.set(sidebarOpenAtom, true)
-      this.notify('info', `Opened "${meta.name}" (${files} files, ${dirs} folders)`)
+      this.notify(
+        'info',
+        `Opened "${meta.name}". Copying the rest in the background; files open as they are ready.`,
+      )
     } catch (e) {
+      this.cancelCopy(meta.id)
       await manager.remove(meta.id) // don't leave a half-imported workspace
       await this.refreshWorkspaces()
       throw e
     }
   }
 
+  /** Starts copying an import in the background. Its files are listed as pending until written. */
+  private startCopy(meta: WorkspaceMeta, entries: ImportEntry[]) {
+    const id = meta.id
+    const queue = new ImportQueue(this.requireManager().fs(id), entries, {
+      onProgress: (p) => this.publishCopy(id, queue, p),
+    })
+    this.imports.set(id, queue)
+    void queue.idle.then(() => this.finishCopy(meta, queue))
+  }
+
+  /** Throttled, so a 20,000-file copy does not re-render the UI 20,000 times. */
+  private publishCopy(id: string, queue: ImportQueue, p: CopyProgress) {
+    if (this.wsId !== id) return
+    const now = performance.now()
+    const last = p.done + p.failed >= p.total
+    if (!last && now - this.lastCopyPublish < 100) return
+    this.lastCopyPublish = now
+    this.store.set(copyStatusAtom, p)
+    this.store.set(pendingPathsAtom, new Set(queue.pendingPaths()))
+  }
+
+  private async finishCopy(meta: WorkspaceMeta, queue: ImportQueue) {
+    if (this.imports.get(meta.id) !== queue) return // cancelled: the workspace was deleted
+    this.imports.delete(meta.id)
+    const { failed, total } = queue.status()
+    try {
+      await this.requireManager().finishImport(meta.id)
+    } catch {
+      return // deleted while finishing
+    }
+    if (this.wsId === meta.id) await this.refreshTree() // now the listing is complete
+    if (failed > 0)
+      this.notify(
+        'error',
+        `"${meta.name}": ${failed} of ${total} items could not be copied.`,
+      )
+    else this.notify('info', `Copied "${meta.name}" (${total} items).`)
+  }
+
+  private cancelCopy(id: string) {
+    const queue = this.imports.get(id)
+    if (!queue) return
+    this.imports.delete(id)
+    queue.cancel()
+  }
+
   async importZipFile(file: File) {
     const name = file.name.replace(/\.zip$/i, '')
     await this.runImport(name, async (report) => {
-      const entries = readZip(new Uint8Array(await file.arrayBuffer()))
+      const entries = unwrapTopFolder(
+        readZip(new Uint8Array(await file.arrayBuffer())),
+        name,
+      )
       await this.importInto(name, entries, report)
     })
   }
@@ -715,6 +822,7 @@ export class WorkspaceController {
 
   async exportCurrentZip() {
     try {
+      this.assertCopied('Exporting')
       await this.flushAll()
       const fs = this.requireFS()
       const meta = this.store.get(workspacesAtom).find((w) => w.id === this.wsId)

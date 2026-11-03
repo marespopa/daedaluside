@@ -1,15 +1,13 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import CommandPalette from './editor/CommandPalette'
 import Editor from './editor/Editor'
-import { activeBufferAtom } from './state/editorAtoms'
-import { MOD_KEY_LABEL } from './lib/platform'
-import { editorWidthAtom } from './state/editorAtoms'
+import { activeBufferAtom, editorWidthAtom } from './state/editorAtoms'
 import {
   importStatusAtom,
   newEntryRequestAtom,
   sidebarOpenAtom,
 } from './state/workspaceAtoms'
-import { IconButton, Kbd } from './ui'
+import { IconButton } from './ui'
 import FileTree from './workspace/FileTree'
 import Notice from './workspace/Notice'
 import OpenFolderButton from './workspace/OpenFolderButton'
@@ -32,7 +30,7 @@ export default function App() {
     <div className="flex h-full bg-canvas text-text">
       <FileTree />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-header min-w-0 shrink-0 items-center gap-2 px-3 font-sans text-sm text-muted">
+        <header className="flex h-header min-w-0 shrink-0 items-center gap-1 px-3 font-sans text-sm text-muted">
           <IconButton
             label={sidebar ? 'Hide file tree' : 'Show file tree'}
             icon="menu"
@@ -46,10 +44,7 @@ export default function App() {
               ? `Editing ${buffer.name}${buffer.dirty ? ', unsaved' : ''}`
               : ''}
           </span>
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            <span className="hidden text-xs text-muted sm:inline">
-              <Kbd>{MOD_KEY_LABEL}</Kbd> <Kbd>K</Kbd>
-            </span>
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
             <IconButton
               label="New file"
               icon="file-plus"
@@ -66,6 +61,7 @@ export default function App() {
               label="Full width"
               icon="width"
               aria-pressed={width === 'full'}
+              className="aria-pressed:bg-surface aria-pressed:text-text"
               onClick={() => setWidth(width === 'full' ? 'measured' : 'full')}
             />
             <OpenFolderButton />

@@ -6,7 +6,9 @@ import {
   exportZip,
   importEntries,
   readZip,
+  unwrapTopFolder,
   walkTree,
+  type ImportEntry,
 } from './archive'
 import { openDB } from './db'
 import { IdbBackend } from './fallback-idb'
@@ -133,5 +135,36 @@ describe('import progress', () => {
       [50, 60],
       [60, 60],
     ])
+  })
+})
+
+describe('unwrapTopFolder', () => {
+  const file = (path: string): ImportEntry => ({
+    kind: 'file',
+    path,
+    read: async () => new Uint8Array(),
+  })
+  const dir = (path: string): ImportEntry => ({ kind: 'dir', path })
+
+  it('makes the wrapper folder the root when the archive is named after it', () => {
+    const out = unwrapTopFolder(
+      [dir('proj'), dir('proj/src'), file('proj/src/a.ts'), file('proj/README.md')],
+      'proj',
+    )
+    expect(out.map((e) => e.path)).toEqual(['src', 'src/a.ts', 'README.md'])
+  })
+
+  it('works when the folder entry itself is missing from the archive', () => {
+    const out = unwrapTopFolder([file('proj/a.ts')], 'Proj')
+    expect(out.map((e) => e.path)).toEqual(['a.ts'])
+  })
+
+  it('leaves other archives alone', () => {
+    const named = [dir('proj'), file('proj/a.ts')]
+    expect(unwrapTopFolder(named, 'other')).toEqual(named)
+    const mixed = [dir('proj'), file('proj/a.ts'), file('notes.md')]
+    expect(unwrapTopFolder(mixed, 'proj')).toEqual(mixed)
+    const bare = [file('proj')]
+    expect(unwrapTopFolder(bare, 'proj')).toEqual(bare)
   })
 })

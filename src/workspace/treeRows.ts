@@ -1,7 +1,7 @@
 import type { Entry } from './types'
 
 /** Fixed row height in px. The virtual list positions rows by index, so every row must match. */
-export const ROW_HEIGHT = 24
+export const ROW_HEIGHT = 28
 /** Indent per tree level in px. */
 export const INDENT = 12
 /** Rows rendered beyond the visible window, so fast scrolling does not show blank space. */

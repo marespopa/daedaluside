@@ -1,14 +1,17 @@
 import { useAtom, useAtomValue, useStore } from 'jotai'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { matchFiles } from '../editor/paletteSearch'
 import {
   activePathAtom,
+  copyStatusAtom,
   newEntryRequestAtom,
+  pendingPathsAtom,
   sidebarOpenAtom,
   treeAtom,
   snapshotAtom,
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
-import { Button, ContextMenu, IconButton, type ContextMenuItem } from '../ui'
+import { Button, ContextMenu, Icon, IconButton, type ContextMenuItem } from '../ui'
 import NameInput from './NameInput'
 import TreeSkeleton from './TreeSkeleton'
 import { dirname, joinPath } from './path'
@@ -58,18 +61,25 @@ function Sidebar() {
   const snapshot = useAtomValue(snapshotAtom)
   const tree = useAtomValue(treeAtom)
   const activePath = useAtomValue(activePathAtom)
+  const pending = useAtomValue(pendingPathsAtom)
+  const copy = useAtomValue(copyStatusAtom)
 
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [selected, setSelected] = useState('')
   const [editing, setEditing] = useState<Editing>(null)
   const [confirm, setConfirm] = useState<string | null>(null)
   const [menu, setMenu] = useState<TreeMenu | null>(null)
+  const [query, setQuery] = useState('')
+  const [highlight, setHighlight] = useState(0)
+  const listId = useId()
   const [seenActive, setSeenActive] = useState<string | null>(null)
   // Virtual list state. `cursor` is the keyboard position; `focusTick` asks for DOM focus
   // to follow it after a keyboard move.
   const [cursor, setCursor] = useState<string | null>(null)
   const [focusTick, setFocusTick] = useState(1)
   const [scrollTop, setScrollTop] = useState(0)
+  // Last scroll offset seen. The browser resets a hidden element's scroll, so it is put back.
+  const savedScroll = useRef(0)
   const [viewport, setViewport] = useState(0)
 
   const root = useRef<HTMLElement>(null)
@@ -103,6 +113,19 @@ function Sidebar() {
     () => flattenTree(byParent, expanded, newParent),
     [byParent, expanded, newParent],
   )
+  // Quick finder: files whose path has every typed word. Null while the box is empty.
+  const matches = useMemo(
+    () =>
+      query.trim()
+        ? matchFiles(
+            tree.filter((e) => e.kind === 'file'),
+            query,
+          )
+        : null,
+    [tree, query],
+  )
+  const searching = matches !== null
+  const active = matches ? Math.min(highlight, Math.max(matches.length - 1, 0)) : 0
   const { start, end } = visibleRange(
     scrollTop,
     viewport || FALLBACK_VIEWPORT,
@@ -204,6 +227,43 @@ function Sidebar() {
   const close = () => {
     setOpen(false)
     focusEditor(store)
+  }
+
+  // The tree is hidden while searching. Put its scroll offset back when it returns, so
+  // the virtual list is rendered at the position the user left it.
+  useLayoutEffect(() => {
+    if (!searching && scroller.current) scroller.current.scrollTop = savedScroll.current
+  }, [searching])
+
+  // Keep the highlighted result in view as the arrow keys move through the list.
+  useEffect(() => {
+    if (matches)
+      document
+        .getElementById(`${listId}-${active}`)
+        ?.scrollIntoView?.({ block: 'nearest' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active])
+
+  const openMatch = (path: string) => void controller.openFile(path)
+
+  const onFinderKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      // First Escape clears the search; a second one closes the tree (handled above).
+      if (query === '') return
+      e.preventDefault()
+      e.stopPropagation()
+      setQuery('')
+      return
+    }
+    if (!matches || matches.length === 0) return
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const step = e.key === 'ArrowDown' ? 1 : -1
+      setHighlight((active + step + matches.length) % matches.length)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      openMatch(matches[active]!.path)
+    }
   }
 
   const focusIndex = (i: number) => {
@@ -327,11 +387,11 @@ function Sidebar() {
         aria-expanded={isDir ? row.open : undefined}
         aria-selected={isActive}
         style={box}
-        className={`absolute inset-x-0 ${stack}`}
+        className={`absolute inset-x-1 ${stack}`}
       >
         <div
           style={{ paddingLeft: row.depth * INDENT + 8 }}
-          className={`group/row flex h-full items-center gap-1 pr-2 ${isActive ? 'bg-surface' : ''}`}
+          className={`group/row flex h-full items-center gap-1 rounded-md pr-1 ${isActive ? 'bg-surface' : 'hover:bg-surface/60'}`}
         >
           {renaming ? (
             <NameInput
@@ -349,7 +409,7 @@ function Sidebar() {
             />
           ) : confirming ? (
             <>
-              <span className="min-w-0 flex-1 truncate font-mono text-xs">
+              <span className="min-w-0 flex-1 truncate text-xs text-muted">
                 Delete {entry.name}?
               </span>
               <Button
@@ -373,15 +433,28 @@ function Sidebar() {
                 type="button"
                 data-tree-row
                 data-row-key={entry.path}
+                aria-description={pending.has(entry.path) ? 'Copying' : undefined}
                 tabIndex={entry.path === tabStop ? 0 : -1}
                 onClick={() => activate(entry)}
                 onKeyDown={(e) => onRowKey(e, index)}
-                className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-0.5 text-left font-mono text-xs hover:text-text focus-visible:outline-2 focus-visible:outline-accent"
+                className={`flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md text-left text-sm transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent ${isActive ? 'font-medium text-text' : 'text-muted group-hover/row:text-text'}`}
               >
-                <span aria-hidden className="w-3 shrink-0 text-muted">
-                  {isDir ? (row.open ? '▾' : '▸') : isActive ? '•' : ''}
+                <span aria-hidden className="flex w-3 shrink-0 justify-center">
+                  {isDir && (
+                    <Icon
+                      name="chevron-right"
+                      className={`size-3 transition-transform duration-150 ${row.open ? 'rotate-90' : ''}`}
+                    />
+                  )}
                 </span>
                 <span className="truncate">{entry.name}</span>
+                {pending.has(entry.path) && (
+                  <span
+                    aria-hidden
+                    title="Still copying. Opening it copies it first."
+                    className="ml-auto size-1.5 shrink-0 rounded-full bg-muted motion-safe:animate-pulse"
+                  />
+                )}
               </button>
               <span className="flex shrink-0 opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100">
                 <IconButton
@@ -421,29 +494,106 @@ function Sidebar() {
           close()
         }
       }}
-      className="glass fixed top-header bottom-0 left-0 z-40 flex w-sidebar max-w-full flex-col border-r border-line font-sans text-sm"
+      className="glass fixed top-header bottom-0 left-0 z-40 flex w-sidebar max-w-full flex-col border-r border-line/60 font-sans text-sm"
     >
-      <div className="flex items-center justify-end gap-0.5 border-b border-line p-1">
-        <IconButton
-          size="sm"
-          icon="expand-all"
-          label="Expand all folders"
-          disabled={status.state !== 'ready'}
-          onClick={expandAll}
-        />
-        <IconButton
-          size="sm"
-          icon="collapse-all"
-          label="Collapse all folders"
-          disabled={status.state !== 'ready'}
-          onClick={collapseAll}
-        />
+      <div className="flex h-9 shrink-0 items-center justify-between pr-1 pl-3">
+        <span className="text-xs font-medium text-muted">Files</span>
+        <div className="flex items-center gap-0.5">
+          <IconButton
+            size="sm"
+            icon="expand-all"
+            label="Expand all folders"
+            disabled={status.state !== 'ready'}
+            onClick={expandAll}
+          />
+          <IconButton
+            size="sm"
+            icon="collapse-all"
+            label="Collapse all folders"
+            disabled={status.state !== 'ready'}
+            onClick={collapseAll}
+          />
+        </div>
       </div>
+
+      {copy && (
+        <div role="status" className="shrink-0 px-3 pb-2">
+          <div className="flex items-baseline justify-between text-xs text-muted">
+            <span>
+              Copying {copy.done.toLocaleString()} of {copy.total.toLocaleString()}
+            </span>
+            {copy.failed > 0 && (
+              <span className="text-diff-remove-fg">{copy.failed} failed</span>
+            )}
+          </div>
+          <div className="mt-1 h-px overflow-hidden bg-line">
+            <div
+              className="h-full bg-accent transition-[width] duration-300 ease-out"
+              style={{ width: `${(copy.done / Math.max(copy.total, 1)) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="shrink-0 px-2 pb-2">
+        <label className="flex h-7 items-center gap-2 rounded-md bg-surface px-2 text-muted focus-within:text-text focus-within:ring-1 focus-within:ring-accent/50">
+          <Icon name="search" className="size-3.5 shrink-0" />
+          <input
+            type="text"
+            aria-label="Find a file"
+            aria-autocomplete="list"
+            aria-controls={listId}
+            aria-activedescendant={matches?.length ? `${listId}-${active}` : undefined}
+            placeholder="Find a file"
+            value={query}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setHighlight(0)
+            }}
+            onKeyDown={onFinderKey}
+            className="min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-muted"
+          />
+        </label>
+      </div>
+
+      {matches ? (
+        <ul
+          id={listId}
+          role="listbox"
+          aria-label="Matching files"
+          className="min-h-0 flex-1 overflow-auto px-2 pb-2"
+        >
+          {matches.length === 0 && (
+            <li className="px-2 py-1.5 text-xs text-muted">No matching files</li>
+          )}
+          {matches.map((entry, i) => (
+            <li
+              key={entry.path}
+              id={`${listId}-${i}`}
+              role="option"
+              aria-selected={i === active}
+              onMouseEnter={() => setHighlight(i)}
+              onClick={() => openMatch(entry.path)}
+              className={`flex cursor-pointer flex-col rounded-md px-2 py-1.5 ${i === active ? 'bg-surface' : ''}`}
+            >
+              <span className="truncate text-sm text-text">{entry.name}</span>
+              <span className="truncate text-xs text-muted">
+                {dirname(entry.path) || '/'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <div
         ref={scroller}
-        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-        className="min-h-0 flex-1 overflow-auto"
+        onScroll={(e) => {
+          savedScroll.current = e.currentTarget.scrollTop
+          setScrollTop(e.currentTarget.scrollTop)
+        }}
+        className={searching ? 'hidden' : 'min-h-0 flex-1 overflow-auto'}
       >
         {status.state === 'loading' &&
           (snapshot ? (

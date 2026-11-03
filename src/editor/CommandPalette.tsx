@@ -1,6 +1,7 @@
 import { openSearchPanel } from '@codemirror/search'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createDoubleShift } from '../lib/doubleShift'
 import { themeAtom } from '../lib/theme'
 import { THEMES, type ThemePreference } from '../lib/themes'
 import {
@@ -31,7 +32,8 @@ import {
 
 /**
  * Plain input searches files. A leading `>` searches commands, as in VS Code.
- * Mod-P and Mod-K open the palette in file mode, Mod-Shift-P opens it in command mode.
+ * Mod-P and Mod-K open the palette in file mode. Mod-Shift-P and a double tap of Shift
+ * open it in command mode.
  */
 export default function CommandPalette() {
   const store = useStore()
@@ -64,8 +66,21 @@ export default function CommandPalette() {
         else show('')
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // Double Shift also opens the command palette (IntelliJ-style). Ignored while it is open.
+    const doubleShift = createDoubleShift(() => {
+      if (!store.get(paletteOpenAtom)) show(COMMAND_PREFIX)
+    })
+    const onDown = (e: KeyboardEvent) => {
+      doubleShift.keydown(e)
+      onKey(e)
+    }
+    const onUp = (e: KeyboardEvent) => doubleShift.keyup(e)
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup', onUp)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+    }
   }, [store])
 
   const openFile = useCallback(

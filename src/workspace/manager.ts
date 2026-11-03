@@ -16,6 +16,8 @@ export interface WorkspaceMeta {
   source?: string | undefined
   /** Set once the placeholder scratch.ts check has run for this blank workspace. */
   scratchChecked?: boolean
+  /** Still copying in. An import left like this (page closed) is removed on the next start. */
+  importing?: boolean
 }
 
 const MAX_NAME = 100
@@ -65,7 +67,11 @@ export class WorkspaceManager {
     return (await this.list()).find((w) => w.source === source)
   }
 
-  async create(name: string, source?: string | undefined): Promise<WorkspaceMeta> {
+  async create(
+    name: string,
+    source?: string | undefined,
+    importing = false,
+  ): Promise<WorkspaceMeta> {
     const now = Date.now()
     const meta: WorkspaceMeta = {
       id: crypto.randomUUID(),
@@ -75,6 +81,7 @@ export class WorkspaceManager {
       openFiles: [],
       activeFile: null,
       ...(source ? { source } : {}),
+      ...(importing ? { importing: true } : {}),
     }
     await this.fs(meta.id).mkdir('')
     await idbPut(this.db, 'workspaces', meta.id, meta)
@@ -90,6 +97,11 @@ export class WorkspaceManager {
     const next = { ...cur, ...patch, id, updated: Date.now() }
     await idbPut(this.db, 'workspaces', id, next)
     return next
+  }
+
+  /** The background copy finished: the workspace is complete. */
+  finishImport(id: string): Promise<WorkspaceMeta> {
+    return this.update(id, { importing: false })
   }
 
   markScratchChecked(id: string): Promise<WorkspaceMeta> {

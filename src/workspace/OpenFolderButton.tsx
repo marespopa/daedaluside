@@ -10,7 +10,7 @@ export default function OpenFolderButton() {
   return (
     <>
       <Button
-        variant="secondary"
+        variant="ghost"
         size="sm"
         icon="folder"
         disabled={importing}

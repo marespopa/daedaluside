@@ -26,14 +26,14 @@ import {
   workspaceStatusAtom,
   type OpenBuffer,
 } from '../state/workspaceAtoms'
-import { GlassPopover, IconButton } from '../ui'
+import { GlassPopover, Icon, IconButton } from '../ui'
 import { basename } from './path'
 import { focusEditor, useController } from './useWorkspace'
 
 /**
  * The tab row lives in the app header with no surface, border, or shadow of its own.
  */
-const FRAME = 'flex min-w-0 flex-1 items-center bg-transparent font-mono text-xs'
+const FRAME = 'flex min-w-0 flex-1 items-center bg-transparent font-sans text-sm'
 
 /** Open buffers as auto-width text tabs in a horizontally scrollable strip. */
 export default function Tabs() {
@@ -48,13 +48,13 @@ export default function Tabs() {
       <nav
         aria-label="Open files"
         aria-busy="true"
-        className={`${FRAME} gap-4 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
+        className={`${FRAME} gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
       >
         {snapshot.openFiles.map((path) => (
           <span
             key={path}
             title={path}
-            className={`flex h-6 shrink-0 items-center whitespace-nowrap border-b-[1.5px] motion-safe:animate-pulse ${path === snapshot.activeFile ? 'border-accent font-medium text-text' : 'border-transparent text-muted opacity-50'}`}
+            className={`flex h-7 shrink-0 items-center rounded-md px-3 whitespace-nowrap motion-safe:animate-pulse ${path === snapshot.activeFile ? 'bg-surface font-medium text-text' : 'text-muted'}`}
           >
             {basename(path)}
           </span>
@@ -83,6 +83,14 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
 
   useWheelToScroll(list)
   useFlipOnReorder(list, orderKey)
+  const measureEdges = () => {
+    if (list.current) applyEdgeMask(list.current)
+  }
+  useLayoutEffect(measureEdges, [orderKey])
+  useEffect(() => {
+    window.addEventListener('resize', measureEdges)
+    return () => window.removeEventListener('resize', measureEdges)
+  }, [])
   // Keep the active tab inside the scrolled strip.
   useEffect(() => {
     const el = list.current
@@ -183,7 +191,8 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
           onDrop={onDrop}
-          className="relative flex min-w-0 flex-1 items-center gap-4 overflow-x-auto bg-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          onScroll={measureEdges}
+          className="relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto bg-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {buffers.map((b, i) => {
             const isActive = b.path === active
@@ -192,6 +201,7 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
             // Insert markers only when the drop would actually move the tab.
             const marker =
               drag !== null && slot !== null && insertIndex(drag.from, slot) !== drag.from
+            const status = b.saveError ? 'save failed' : b.dirty ? 'unsaved' : null
             return (
               <div
                 key={b.path}
@@ -210,7 +220,8 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
                   setMenu({ path: b.path, x: e.clientX, y: e.clientY })
                 }}
                 className={[
-                  'group relative flex h-6 shrink-0 transition-opacity duration-150 ease-out',
+                  'group relative flex h-7 shrink-0 items-center rounded-md transition-[background-color,opacity] duration-150 ease-out',
+                  isActive ? 'bg-surface' : 'hover:bg-surface/60',
                   dragging ? 'opacity-50' : '',
                 ].join(' ')}
               >
@@ -234,26 +245,32 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
                   onDragStart={(e) => startDrag(e, i, b.path)}
                   onDragEnd={endDrag}
                   className={[
-                    'flex h-full shrink-0 items-center whitespace-nowrap border-b-[1.5px] pr-5 text-left transition-[color,opacity] duration-150 ease-out focus-visible:outline-2 focus-visible:outline-accent',
+                    'flex h-full items-center rounded-md text-left whitespace-nowrap transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:outline-accent',
+                    b.pinned ? 'px-2.5' : 'max-w-[12rem] px-3 pr-7',
                     isActive
-                      ? 'border-accent font-medium text-text'
-                      : 'border-transparent text-muted opacity-50 hover:opacity-80',
+                      ? 'font-medium text-text'
+                      : 'text-muted group-hover:text-text',
                   ].join(' ')}
                 >
-                  <span>{name}</span>
-                  {(b.dirty || b.saveError) && (
-                    <span
-                      role="img"
-                      aria-label={b.saveError ? 'save failed' : 'unsaved'}
-                      title={
-                        b.saveError
-                          ? `Save failed. Press ${MOD_KEY_LABEL}+S to retry.`
-                          : undefined
-                      }
-                      className="ml-1.5 size-1 shrink-0 rounded-full bg-accent"
-                    />
+                  {b.pinned ? (
+                    <Icon name="pin" className="size-3.5" />
+                  ) : (
+                    <span className="truncate">{name}</span>
                   )}
                 </button>
+                {/* Unsaved shows as a dot in the close slot; the close icon takes it over on hover. */}
+                {status && (
+                  <span
+                    role="img"
+                    aria-label={status}
+                    title={
+                      b.saveError
+                        ? `Save failed. Press ${MOD_KEY_LABEL}+S to retry.`
+                        : undefined
+                    }
+                    className={`pointer-events-none absolute top-1/2 right-2.5 size-1.5 -translate-y-1/2 rounded-full transition-opacity duration-150 group-hover:opacity-0 ${b.saveError ? 'bg-diff-remove-fg' : 'bg-accent'}`}
+                  />
+                )}
                 <IconButton
                   label={`Close ${b.path}`}
                   icon="x"
@@ -261,7 +278,7 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
                   variant="quiet"
                   tabIndex={-1}
                   onClick={() => closeTab(b.path)}
-                  className={`absolute top-1/2 right-0 -translate-y-1/2 transition-opacity duration-150 ease-out focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 ${isActive ? 'opacity-100' : 'opacity-0'}`}
+                  className="absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity duration-150 ease-out group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
                 />
               </div>
             )
@@ -279,6 +296,22 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
       )}
     </>
   )
+}
+
+/**
+ * Fades the strip's scrolling edges, and only where there is more to scroll, so the
+ * tabs never end in a hard cut. Presentation only: it writes the mask to the element,
+ * so it needs no React state and causes no re-render.
+ */
+function applyEdgeMask(el: HTMLElement) {
+  const fade = 24
+  const left = el.scrollLeft > 1
+  const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+  const start = left ? `transparent 0, black ${fade}px` : 'black 0'
+  const end = right ? `black calc(100% - ${fade}px), transparent 100%` : 'black 100%'
+  const mask = left || right ? `linear-gradient(to right, ${start}, ${end})` : 'none'
+  el.style.maskImage = mask
+  el.style.setProperty('-webkit-mask-image', mask)
 }
 
 function DropMarker({ side }: { side: 'left' | 'right' }) {

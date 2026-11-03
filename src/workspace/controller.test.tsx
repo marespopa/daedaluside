@@ -610,3 +610,157 @@ describe('tree context menu', () => {
     )
   })
 })
+
+describe('quick finder in the tree', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+  })
+
+  it('opens the highlighted file from the search box', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    await act(async () => {
+      await getController(a.store).importZipFile(
+        new File(
+          [zipSync({ 'docs/a.md': strToU8('a'), 'main.ts': strToU8('m') })],
+          'proj.zip',
+        ),
+      )
+    })
+    const tree = await screen.findByRole('complementary', { name: 'File tree' })
+
+    await user.type(
+      within(tree).getByRole('textbox', { name: 'Find a file' }),
+      'main{Enter}',
+    )
+    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('main.ts'))
+  })
+})
+
+describe('zip root folder', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+  })
+
+  it('shows the contents of a compressed folder at the workspace root', async () => {
+    const a = mount()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    await act(async () => {
+      await getController(a.store).importZipFile(
+        new File(
+          [zipSync({ 'proj/src/main.ts': strToU8('m'), 'proj/README.md': strToU8('r') })],
+          'proj.zip',
+        ),
+      )
+    })
+    await waitFor(() => expect(a.store.get(treeAtom).length).toBeGreaterThan(0))
+    expect(
+      a.store
+        .get(treeAtom)
+        .map((e) => e.path)
+        .sort(),
+    ).toEqual(['README.md', 'src', 'src/main.ts'])
+  })
+})
+
+describe('double Shift', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+  })
+
+  it('opens the command palette in command mode', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    await user.keyboard('{Shift}{/Shift}{Shift}{/Shift}')
+    expect((await screen.findByRole('combobox')) as HTMLInputElement).toHaveValue('>')
+    await user.keyboard('{Escape}')
+  })
+})
+
+describe('optimistic folder import', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+    localStorage.clear()
+  })
+
+  /** A folder file whose bytes are held back until `release`, so its copy can be paused. */
+  function gatedFile(relPath: string, content: string) {
+    const f = new File([content], relPath.split('/').pop()!)
+    Object.defineProperty(f, 'webkitRelativePath', { value: `proj/${relPath}` })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    Object.defineProperty(f, 'arrayBuffer', {
+      value: async () => {
+        await gate
+        return new TextEncoder().encode(content).buffer
+      },
+    })
+    return { file: f, release }
+  }
+
+  const row = (tree: HTMLElement, name: string) =>
+    within(tree).getByRole('button', { name })
+
+  it('opens the first file and lists the rest as still copying', async () => {
+    const a = mount()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    const first = { file: new File(['A'], 'a.ts') }
+    Object.defineProperty(first.file, 'webkitRelativePath', { value: 'proj/a.ts' })
+    const b = gatedFile('b.ts', 'B')
+    const c = gatedFile('c.ts', 'C')
+    await act(async () => {
+      await getController(a.store).importFolderFiles([first.file, b.file, c.file])
+    })
+
+    expect(a.store.get(activePathAtom)).toBe('a.ts')
+    const tree = await screen.findByRole('complementary', { name: 'File tree' })
+    expect(row(tree, 'b.ts')).toHaveAttribute('aria-description', 'Copying')
+    expect(row(tree, 'c.ts')).toHaveAttribute('aria-description', 'Copying')
+    b.release()
+    c.release()
+  })
+
+  it('opening a file that is still copying copies it first', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    const first = new File(['A'], 'a.ts')
+    Object.defineProperty(first, 'webkitRelativePath', { value: 'proj/a.ts' })
+    const b = gatedFile('b.ts', 'B')
+    const c = gatedFile('c.ts', 'C')
+
+    await act(async () => {
+      await getController(a.store).importFolderFiles([first, b.file, c.file])
+    })
+    const tree = await screen.findByRole('complementary', { name: 'File tree' })
+
+    await user.click(row(tree, 'c.ts'))
+    c.release() // c is copied next, while b stays pending
+    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('c.ts'))
+    expect(a.store.get(editorHandleAtom)!.view.state.doc.toString()).toBe('C')
+    expect(row(tree, 'b.ts')).toHaveAttribute('aria-description', 'Copying')
+    b.release()
+  })
+})
+
+describe('interrupted imports', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+    localStorage.clear()
+  })
+
+  it('removes a copy that was left unfinished when the page closed', async () => {
+    const db = await openDB()
+    const m = new WorkspaceManager(db, new IdbBackend(db))
+    const meta = await m.create('Half', 'source-key', true)
+    await m.fs(meta.id).write('partial.ts', 'x')
+    await m.setLastId(meta.id)
+
+    const a = mount()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    expect(a.store.get(workspacesAtom).map((w) => w.name)).not.toContain('Half')
+    expect(await screen.findByText(/did not finish/)).toBeInTheDocument()
+  })
+})

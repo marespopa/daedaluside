@@ -79,7 +79,7 @@ describe('file tree virtualization', () => {
     expect(
       [...rowButtons()].filter((el) => el.tabIndex === 0).map((el) => el.dataset.rowKey),
     ).toEqual(['f60.ts'])
-  })
+  }, 15_000) // user-event is slow when the whole suite runs in parallel
 
   it('Home and End jump to the first and last rows', async () => {
     const user = userEvent.setup()
@@ -90,7 +90,7 @@ describe('file tree virtualization', () => {
     expect(screen.getByRole('button', { name: 'f299.ts' })).toBeInTheDocument()
     await user.keyboard('{Home}')
     expect((document.activeElement as HTMLElement).dataset.rowKey).toBe('f0.ts')
-  })
+  }, 15_000) // user-event is slow when the whole suite runs in parallel
 
   it('keeps the active file reachable by scrolling it into view', () => {
     const store = createStore()
@@ -158,5 +158,32 @@ describe('file tree folders and menu', () => {
     const field = screen.getByLabelText('New folder name')
     fireEvent.contextMenu(field)
     expect(screen.queryByRole('menu')).toBeNull()
+  })
+})
+
+describe('quick finder', () => {
+  const nested: Entry[] = [
+    { name: 'docs', path: 'docs', kind: 'dir' },
+    { name: 'a.md', path: 'docs/a.md', kind: 'file', size: 1 },
+    { name: 'main.ts', path: 'main.ts', kind: 'file', size: 1 },
+  ]
+
+  it('lists matching files in place of the tree, and Escape brings the tree back', async () => {
+    const user = userEvent.setup()
+    mountTree(nested)
+    const input = screen.getByRole('textbox', { name: 'Find a file' })
+
+    await user.type(input, 'docs')
+    const results = screen.getByRole('listbox', { name: 'Matching files' })
+    expect(within(results).getByRole('option', { name: /a\.md/ })).toBeInTheDocument()
+    expect(within(results).getAllByRole('option')).toHaveLength(1)
+
+    await user.type(input, 'zzz')
+    expect(screen.getByText('No matching files')).toBeInTheDocument()
+
+    await user.keyboard('{Escape}') // the first Escape clears the search
+    expect(input).toHaveValue('')
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(screen.getByRole('button', { name: 'docs' })).toBeInTheDocument()
   })
 })

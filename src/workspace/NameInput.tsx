@@ -53,7 +53,7 @@ export default function NameInput({
         }
       }}
       onBlur={() => finish(false)}
-      className={`min-w-0 flex-1 rounded border border-accent bg-canvas px-1.5 py-0.5 font-mono text-xs text-text outline-none ${className}`}
+      className={`min-w-0 flex-1 rounded-md bg-canvas px-1.5 py-0.5 text-sm text-text ring-1 ring-accent/60 outline-none focus:ring-accent ${className}`}
     />
   )
 }
