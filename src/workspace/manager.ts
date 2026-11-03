@@ -223,7 +223,7 @@ export class WorkspaceManager {
     return idbPut(this.db, 'settings', linkKey(id), folder)
   }
 
-  /** Files, record and link are removed in one transaction (see `IdbBackend.destroy`). */
+  /** Files, record and link are removed atomically by the OPFS backend. */
   async remove(id: string): Promise<void> {
     await this.backend.destroy(id)
     announce({ ws: null })

@@ -55,7 +55,7 @@ export interface OpenOptions {
 }
 
 export interface FSBackend {
-  readonly kind: 'idb'
+  readonly kind: 'opfs'
   open(workspaceId: string, opts?: OpenOptions): WorkspaceFS
   /**
    * Deletes a workspace: its files, its metadata and its linked-folder record, in one

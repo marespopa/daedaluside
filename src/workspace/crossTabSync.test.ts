@@ -2,7 +2,8 @@ import { IDBFactory } from 'fake-indexeddb'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceController } from './controller'
 import { openDB } from './db'
-import { IdbBackend } from './fallback-idb'
+import { OpfsBackend } from './opfs'
+import { getMemoryOpfs } from './testing/opfsSetup'
 import type { WorkspaceFS } from './types'
 
 /**
@@ -103,7 +104,8 @@ describe('two tabs on one workspace', () => {
     )
     // Tab B tries to save its stale buffer. Nothing may come back under the deleted id.
     await b.controller.flushAll()
-    const storage = new IdbBackend(await openDB()).open(deletedId)
+    const db = await openDB()
+    const storage = new OpfsBackend(getMemoryOpfs().rootHandle(), db).open(deletedId)
     expect(await storage.listAll()).toEqual([])
     expect(b.store.get(b.atoms.openBuffersAtom)).toEqual([])
     expect(b.store.get(b.atoms.noticeAtom)?.text).toContain('deleted in another tab')

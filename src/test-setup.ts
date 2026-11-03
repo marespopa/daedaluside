@@ -1,6 +1,11 @@
 import '@testing-library/jest-dom/vitest'
 import { configure } from '@testing-library/react'
 import 'fake-indexeddb/auto'
+import { installMemoryOpfs } from './workspace/testing/opfsSetup'
+
+beforeEach(() => {
+  installMemoryOpfs()
+})
 
 // jsdom's KeyboardEvent does not give Enter a keyCode, but some editor deps check it.
 const OriginalKeyboardEvent = window.KeyboardEvent

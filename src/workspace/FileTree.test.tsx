@@ -24,7 +24,7 @@ const flatFiles = (n: number): Entry[] =>
 function mountTree(entries: Entry[]) {
   const store = createStore()
   store.set(sidebarOpenAtom, true)
-  store.set(workspaceStatusAtom, { state: 'ready', backend: 'idb' })
+  store.set(workspaceStatusAtom, { state: 'ready', backend: 'opfs' })
   store.set(treeAtom, entries)
   render(
     <Provider store={store}>
@@ -97,7 +97,7 @@ describe('file tree virtualization', () => {
   it('keeps the active file reachable by scrolling it into view', () => {
     const store = createStore()
     store.set(sidebarOpenAtom, true)
-    store.set(workspaceStatusAtom, { state: 'ready', backend: 'idb' })
+    store.set(workspaceStatusAtom, { state: 'ready', backend: 'opfs' })
     store.set(treeAtom, flatFiles(5_000))
     store.set(activePathAtom, 'f4000.ts')
     render(

@@ -73,7 +73,7 @@ function Dialog({ onClose }: { onClose: () => void }) {
           </h3>
           <p>
             Files are stored on this device using{' '}
-            {status.state === 'ready' ? 'IndexedDB' : '…'}
+            {status.state === 'ready' ? 'OPFS' : '…'}
             .
           </p>
           {info?.usage != null && info.quota != null ? (

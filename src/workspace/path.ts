@@ -1,8 +1,5 @@
 import { FSError, type Entry } from './types'
 
-/** Suffix for in-flight atomic writes. Hidden from listings. */
-export const TMP_SUFFIX = '.daedalus-tmp'
-
 /** Normalizes to `a/b/c`; '' is the root. Rejects `.`/`..` segments and bad names. */
 export function normalizePath(input: string): string {
   const parts = input.split('/').filter((p) => p !== '')
@@ -13,9 +10,6 @@ export function normalizePath(input: string): string {
 export function validateName(name: string): void {
   if (name === '.' || name === '..' || name.includes('\0') || name.includes('\\')) {
     throw new FSError('EINVAL', `Invalid name: ${JSON.stringify(name)}`)
-  }
-  if (name.endsWith(TMP_SUFFIX)) {
-    throw new FSError('EINVAL', `Reserved suffix: ${TMP_SUFFIX}`)
   }
 }
 

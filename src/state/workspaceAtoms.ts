@@ -13,7 +13,7 @@ export interface OpenBuffer {
 
 export type WorkspaceStatus =
   | { state: 'loading' }
-  | { state: 'ready'; backend: 'idb' }
+  | { state: 'ready'; backend: 'opfs' }
   | { state: 'error'; message: string }
 
 /**

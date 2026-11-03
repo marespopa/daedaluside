@@ -11,12 +11,13 @@ import {
   type ImportEntry,
 } from './archive'
 import { openDB } from './db'
-import { IdbBackend } from './fallback-idb'
 import { WorkspaceManager } from './manager'
+import { OpfsBackend } from './opfs'
+import { getMemoryOpfs } from './testing/opfsSetup'
 import type { FSBackend } from './types'
 
 const backends: [string, () => Promise<FSBackend>][] = [
-  ['IDB', async () => new IdbBackend(await openDB('a', new IDBFactory()))],
+  ['OPFS', async () => new OpfsBackend(getMemoryOpfs().rootHandle(), await openDB('a', new IDBFactory()))],
 ]
 
 describe.each(backends)('zip import/export (%s)', (_name, make) => {
@@ -92,7 +93,7 @@ describe('entriesFromFileList', () => {
 describe('WorkspaceManager', () => {
   it('creates, renames, saves sessions and deletes with files', async () => {
     const db = await openDB('m', new IDBFactory())
-    const backend = new IdbBackend(db)
+    const backend = new OpfsBackend(getMemoryOpfs().rootHandle(), db)
     const m = new WorkspaceManager(db, backend)
     const ws = await m.create('  Alpha ')
     expect(ws.name).toBe('Alpha')
@@ -116,7 +117,7 @@ describe('WorkspaceManager', () => {
 describe('import progress', () => {
   it('reports every 25 entries and always the final count', async () => {
     const db = await openDB('p', new IDBFactory())
-    const fs = new IdbBackend(db).open('p')
+    const fs = new OpfsBackend(getMemoryOpfs().rootHandle(), db).open('p')
     const entries = Array.from({ length: 60 }, (_, i) => ({
       kind: 'file' as const,
       path: `f${i}.txt`,

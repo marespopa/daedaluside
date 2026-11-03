@@ -12,7 +12,8 @@ import {
 } from '../state/workspaceAtoms'
 import { getController } from './controller'
 import { openDB } from './db'
-import { IdbBackend } from './fallback-idb'
+import { OpfsBackend } from './opfs'
+import { getMemoryOpfs } from './testing/opfsSetup'
 import type { WorkspaceFS } from './types'
 
 /** The store of the most recent `mount()`, for helpers that take no arguments. */
@@ -69,7 +70,10 @@ function type(store: Store, text: string) {
 
 /** Reads straight from storage, bypassing the app. */
 async function onDisk(store: Store, path: string) {
-  const fs = new IdbBackend(await openDB()).open(store.get(currentWorkspaceIdAtom)!)
+  const db = await openDB()
+  const fs = new OpfsBackend(getMemoryOpfs().rootHandle(), db).open(
+    store.get(currentWorkspaceIdAtom)!,
+  )
   return fs.read(path)
 }
 

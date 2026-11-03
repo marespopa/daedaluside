@@ -13,7 +13,6 @@ import { createStore, Provider } from 'jotai'
 import App from '../App'
 import { editorHandleAtom } from '../state/editorAtoms'
 import { openDB } from './db'
-import { IdbBackend } from './fallback-idb'
 import {
   activePathAtom,
   currentWorkspaceIdAtom,
@@ -25,6 +24,8 @@ import {
 } from '../state/workspaceAtoms'
 import { getController } from './controller'
 import { WorkspaceManager } from './manager'
+import { OpfsBackend } from './opfs'
+import { getMemoryOpfs } from './testing/opfsSetup'
 import { MemDisk } from './testing/memoryDisk'
 
 const enc = (s: string) => new TextEncoder().encode(s)
@@ -121,7 +122,12 @@ describe('write-back to a linked folder', () => {
       expect(disk.files.has('lib/b.ts')).toBe(true)
       expect(store.get(treeAtom).some((entry) => entry.path === 'lib')).toBe(true)
     })
-    await user.click(within(tree).getByRole('button', { name: 'lib' }))
+    const libRow = within(tree).getByRole('button', { name: 'lib' })
+    libRow.focus()
+    await user.keyboard('l')
+    await waitFor(() =>
+      expect(within(tree).getByRole('button', { name: 'b.ts' })).toBeInTheDocument(),
+    )
 
     fireEvent.contextMenu(tree)
     await user.click(await screen.findByRole('menuitem', { name: 'New folder' }))
@@ -257,6 +263,9 @@ describe('write-back to a linked folder', () => {
 
 /** Reads the app's own copy of a file, bypassing the controller. */
 async function onAppDisk(store: ReturnType<typeof createStore>, path: string) {
-  const fs = new IdbBackend(await openDB()).open(store.get(currentWorkspaceIdAtom)!)
+  const db = await openDB()
+  const fs = new OpfsBackend(getMemoryOpfs().rootHandle(), db).open(
+    store.get(currentWorkspaceIdAtom)!,
+  )
   return fs.read(path)
 }

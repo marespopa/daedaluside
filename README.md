@@ -32,7 +32,7 @@ graph TD
         State["App State<br/><i>Jotai Atoms</i>"]
         
         subgraph Storage ["Local Storage"]
-            FS["Workspace FS<br/><i>OPFS Worker</i>"]
+            FS["Workspace FS<br/><i>OPFS</i>"]
             IDB["Settings & Sessions<br/><i>IndexedDB</i>"]
         end
         
@@ -78,7 +78,7 @@ graph TD
   - **Plan:** Generate implementation blueprints using high-reasoning models (Gemini Flash, Claude 3.5 Sonnet, DeepSeek).
   - **Review:** Visually inspect diffs, logic breakdowns, and file operations before executing code modifications.
   - **Execute:** Apply changes using zero-cost local LLMs (`Ollama`) or low-cost cloud models.
-- **Native Browser Storage (OPFS):** Direct, near-native file system performance inside browser storage using Web Workers.
+- **Native Browser Storage (OPFS):** Direct, near-native file system performance inside browser storage.
 - **Zero Backend Dependency:** Static asset hosting via Netlify CDN; network calls go straight from client to provider APIs.
 
 ## Getting Started

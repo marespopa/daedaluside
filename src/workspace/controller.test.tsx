@@ -17,13 +17,15 @@ import {
 } from '../state/workspaceAtoms'
 import { AUTOSAVE_MS, getController } from './controller'
 import { openDB } from './db'
-import { IdbBackend } from './fallback-idb'
 import { WorkspaceManager } from './manager'
+import { OpfsBackend } from './opfs'
+import { getMemoryOpfs } from './testing/opfsSetup'
 
 /** The workspace record in IndexedDB, bypassing the app. */
 async function savedSession(store: ReturnType<typeof createStore>) {
   const db = await openDB()
-  return new WorkspaceManager(db, new IdbBackend(db)).get(
+  const root = getMemoryOpfs().rootHandle()
+  return new WorkspaceManager(db, new OpfsBackend(root, db)).get(
     store.get(currentWorkspaceIdAtom)!,
   )
 }
@@ -49,7 +51,10 @@ const type = (store: ReturnType<typeof createStore>, text: string) => {
 
 /** Reads straight from storage, bypassing the app. */
 async function onDisk(store: ReturnType<typeof createStore>, path: string) {
-  const fs = new IdbBackend(await openDB()).open(store.get(currentWorkspaceIdAtom)!)
+  const db = await openDB()
+  const fs = new OpfsBackend(getMemoryOpfs().rootHandle(), db).open(
+    store.get(currentWorkspaceIdAtom)!,
+  )
   return fs.read(path)
 }
 
@@ -215,7 +220,7 @@ describe('workspace in the app', () => {
     await user.keyboard('{Control>},{/Control}')
     const dlg = await screen.findByRole('dialog', { name: 'Settings' })
     expect(await within(dlg).findByText(/Persistent storage/)).toBeInTheDocument()
-    expect(within(dlg).getByText(/IndexedDB/)).toBeInTheDocument()
+    expect(within(dlg).getByText(/OPFS/)).toBeInTheDocument()
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
@@ -629,7 +634,8 @@ describe('blank workspaces', () => {
   /** A blank workspace as older builds left it, with a scratch.ts, opened last. */
   async function legacyWorkspace(text: string) {
     const db = await openDB()
-    const m = new WorkspaceManager(db, new IdbBackend(db))
+    const root = getMemoryOpfs().rootHandle()
+    const m = new WorkspaceManager(db, new OpfsBackend(root, db))
     const meta = await m.create('Legacy')
     await m.fs(meta.id).write('scratch.ts', text)
     await m.setLastId(meta.id)
@@ -911,7 +917,8 @@ describe('interrupted imports', () => {
 
   it('removes a copy that was left unfinished when the page closed', async () => {
     const db = await openDB()
-    const m = new WorkspaceManager(db, new IdbBackend(db))
+    const root = getMemoryOpfs().rootHandle()
+    const m = new WorkspaceManager(db, new OpfsBackend(root, db))
     const meta = await m.create('Half', 'source-key', true)
     await m.fs(meta.id).write('partial.ts', 'x')
     await m.setLastId(meta.id)
