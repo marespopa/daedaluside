@@ -11,7 +11,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { prefersReducedMotion } from '../lib/motion'
-import { ALT_KEY_LABEL, MOD_KEY_LABEL } from '../lib/platform'
+import { MOD_KEY_LABEL } from '../lib/platform'
 import {
   clampSlot,
   insertIndex,
@@ -26,11 +26,16 @@ import {
   workspaceStatusAtom,
   type OpenBuffer,
 } from '../state/workspaceAtoms'
-import { GlassPopover, Icon, IconButton, Kbd } from '../ui'
+import { GlassPopover } from '../ui'
 import { basename } from './path'
 import { focusEditor, useController } from './useWorkspace'
 
-/** Open buffers as a borderless tab strip, 40 px high (ARCHITECTURE.md §5.8). */
+/**
+ * The tab row lives in the app header with no surface, border, or shadow of its own.
+ */
+const FRAME = 'flex min-w-0 flex-1 items-center bg-transparent font-mono text-xs'
+
+/** Open buffers as auto-width text tabs in a horizontally scrollable strip. */
 export default function Tabs() {
   const buffers = useAtomValue(openBuffersAtom)
   const active = useAtomValue(activePathAtom)
@@ -43,13 +48,13 @@ export default function Tabs() {
       <nav
         aria-label="Open files"
         aria-busy="true"
-        className="flex min-w-0 items-center gap-1 overflow-x-auto font-mono text-xs"
+        className={`${FRAME} gap-4 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
       >
         {snapshot.openFiles.map((path) => (
           <span
             key={path}
             title={path}
-            className={`flex shrink-0 rounded-md px-2 py-1 motion-safe:animate-pulse ${path === snapshot.activeFile ? 'bg-surface text-text' : 'text-muted'}`}
+            className={`flex h-6 shrink-0 items-center whitespace-nowrap border-b-[1.5px] motion-safe:animate-pulse ${path === snapshot.activeFile ? 'border-accent font-medium text-text' : 'border-transparent text-muted opacity-50'}`}
           >
             {basename(path)}
           </span>
@@ -74,9 +79,10 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
   const [slot, setSlot] = useState<number | null>(null)
   const [menu, setMenu] = useState<Menu | null>(null)
   const n = buffers.length
+  const orderKey = buffers.map((b) => `${b.path}:${b.pinned ? 1 : 0}`).join('\n')
 
   useWheelToScroll(list)
-  useFlipOnReorder(list, buffers.map((b) => b.path).join('\n'))
+  useFlipOnReorder(list, orderKey)
   // Keep the active tab inside the scrolled strip.
   useEffect(() => {
     const el = list.current
@@ -168,104 +174,90 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
 
   return (
     <>
-      <div
-        ref={list}
-        role="tablist"
-        aria-label="Open files"
-        aria-orientation="horizontal"
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-        className="relative flex min-w-0 flex-1 items-stretch self-stretch overflow-x-auto font-sans text-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {buffers.map((b, i) => {
-          const isActive = b.path === active
-          const name = basename(b.path)
-          const dragging = drag?.path === b.path
-          // Insert markers only when the drop would actually move the tab.
-          const marker =
-            drag !== null && slot !== null && insertIndex(drag.from, slot) !== drag.from
-          return (
-            <div
-              key={b.path}
-              data-tab={b.path}
-              role="presentation"
-              onMouseDown={(e: MouseEvent) => {
-                if (e.button === 1) e.preventDefault() // no autoscroll on middle-click
-              }}
-              onAuxClick={(e: MouseEvent) => {
-                if (e.button !== 1) return
-                e.preventDefault()
-                closeTab(b.path)
-              }}
-              onContextMenu={(e: MouseEvent) => {
-                e.preventDefault()
-                setMenu({ path: b.path, x: e.clientX, y: e.clientY })
-              }}
-              className={[
-                'group relative flex h-full shrink-0 transition-opacity duration-150 ease-out',
-                b.pinned ? 'w-9' : 'min-w-[100px] max-w-[200px]',
-                dragging ? 'rounded-md bg-canvas opacity-50 shadow-md' : '',
-              ].join(' ')}
-            >
-              {marker && slot === i && <DropMarker side="left" />}
-              {marker && slot === n && i === n - 1 && <DropMarker side="right" />}
-              <button
-                ref={(el) => {
-                  if (el) tabEls.current.set(b.path, el)
-                  else tabEls.current.delete(b.path)
+      <div className={FRAME}>
+        <div
+          ref={list}
+          role="tablist"
+          aria-label="Open files"
+          aria-orientation="horizontal"
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+          className="relative flex min-w-0 flex-1 items-center gap-4 overflow-x-auto bg-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {buffers.map((b, i) => {
+            const isActive = b.path === active
+            const name = basename(b.path)
+            const dragging = drag?.path === b.path
+            // Insert markers only when the drop would actually move the tab.
+            const marker =
+              drag !== null && slot !== null && insertIndex(drag.from, slot) !== drag.from
+            return (
+              <div
+                key={b.path}
+                data-tab={b.path}
+                role="presentation"
+                onMouseDown={(e: MouseEvent) => {
+                  if (e.button === 1) e.preventDefault() // no autoscroll on middle-click
                 }}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                aria-controls="editor-pane"
-                aria-label={b.pinned ? name : undefined}
-                tabIndex={isActive ? 0 : -1}
-                title={b.path}
-                draggable
-                onClick={() => void controller.openFile(b.path)}
-                onKeyDown={(e) => onTabKey(e, i, b.path)}
-                onDragStart={(e) => startDrag(e, i, b.path)}
-                onDragEnd={endDrag}
+                onAuxClick={(e: MouseEvent) => {
+                  if (e.button !== 1) return
+                  e.preventDefault()
+                  closeTab(b.path)
+                }}
+                onContextMenu={(e: MouseEvent) => {
+                  e.preventDefault()
+                  setMenu({ path: b.path, x: e.clientX, y: e.clientY })
+                }}
                 className={[
-                  'flex h-full min-w-0 flex-1 items-center border-b-2 text-left transition-[color,opacity] duration-150 ease-out focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-accent',
-                  b.pinned ? 'justify-center' : 'pr-7 pl-3',
-                  isActive
-                    ? 'border-accent font-medium text-text'
-                    : 'border-transparent text-muted hover:text-text hover:opacity-80',
+                  'group relative flex h-6 shrink-0 transition-opacity duration-150 ease-out',
+                  dragging ? 'opacity-50' : '',
                 ].join(' ')}
               >
-                {b.pinned ? (
-                  <Icon name="pin" className="size-3.5" />
-                ) : (
-                  <span className="min-w-0 truncate">{name}</span>
-                )}
-                {(b.dirty || b.saveError) && (
-                  <span
-                    role="img"
-                    aria-label={b.saveError ? 'save failed' : 'unsaved'}
-                    title={
-                      b.saveError
-                        ? `Save failed. Press ${MOD_KEY_LABEL}+S to retry.`
-                        : undefined
-                    }
-                    className="ml-1.5 size-[5px] shrink-0 rounded-full bg-accent"
-                  />
-                )}
-              </button>
-              {!b.pinned && (
-                <IconButton
-                  label={`Close ${b.path}`}
-                  icon="x"
-                  size="sm"
-                  tabIndex={-1}
-                  onClick={() => closeTab(b.path)}
-                  className={`absolute top-1/2 right-1 -translate-y-1/2 transition-opacity duration-150 ease-out group-hover:opacity-100 focus-visible:opacity-100 ${isActive ? 'opacity-100' : 'opacity-0'}`}
-                />
-              )}
-            </div>
-          )
-        })}
+                {marker && slot === i && <DropMarker side="left" />}
+                {marker && slot === n && i === n - 1 && <DropMarker side="right" />}
+                <button
+                  ref={(el) => {
+                    if (el) tabEls.current.set(b.path, el)
+                    else tabEls.current.delete(b.path)
+                  }}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-controls="editor-pane"
+                  aria-label={b.pinned ? name : undefined}
+                  tabIndex={isActive ? 0 : -1}
+                  title={b.path}
+                  draggable
+                  onClick={() => void controller.openFile(b.path)}
+                  onKeyDown={(e) => onTabKey(e, i, b.path)}
+                  onDragStart={(e) => startDrag(e, i, b.path)}
+                  onDragEnd={endDrag}
+                  className={[
+                    'flex h-full shrink-0 items-center whitespace-nowrap border-b-[1.5px] text-left transition-[color,opacity] duration-150 ease-out focus-visible:outline-2 focus-visible:outline-accent',
+                    isActive
+                      ? 'border-accent font-medium text-text'
+                      : 'border-transparent text-muted opacity-50 hover:opacity-80',
+                  ].join(' ')}
+                >
+                  <span>{name}</span>
+                  {(b.dirty || b.saveError) && (
+                    <span
+                      role="img"
+                      aria-label={b.saveError ? 'save failed' : 'unsaved'}
+                      title={
+                        b.saveError
+                          ? `Save failed. Press ${MOD_KEY_LABEL}+S to retry.`
+                          : undefined
+                      }
+                      className="ml-1.5 size-1 shrink-0 rounded-full bg-accent"
+                    />
+                  )}
+                </button>
+              </div>
+            )
+          })}
+        </div>
       </div>
       {menu && (
         <TabMenu
@@ -292,7 +284,6 @@ function DropMarker({ side }: { side: 'left' | 'right' }) {
 interface MenuItem {
   id: string
   label: string
-  hint?: string[]
   disabled?: boolean
   run: () => Promise<void> | void
 }
@@ -319,11 +310,10 @@ function TabMenu({
   const [pos, setPos] = useState({ left: x, top: y })
   const pinned = buffers.find((b) => b.path === path)?.pinned ?? false
 
-  const items: (MenuItem | 'rule')[] = [
+  const items: MenuItem[] = [
     {
       id: 'close',
       label: 'Close',
-      hint: [MOD_KEY_LABEL, ALT_KEY_LABEL, 'W'],
       run: () => controller.closeBuffer(path),
     },
     {
@@ -334,7 +324,7 @@ function TabMenu({
     },
     {
       id: 'right',
-      label: 'Close to the Right',
+      label: 'Close to Right',
       disabled: rightToClose(buffers, path).length === 0,
       run: () => controller.closeToRight(path),
     },
@@ -344,7 +334,6 @@ function TabMenu({
       disabled: unpinnedPaths(buffers).length === 0,
       run: () => controller.closeAll(),
     },
-    'rule',
     {
       id: 'pin',
       label: pinned ? 'Unpin Tab' : 'Pin Tab',
@@ -419,31 +408,20 @@ function TabMenu({
       aria-label="Tab actions"
       onKeyDown={onKeyDown}
       style={{ left: pos.left, top: pos.top }}
-      className="fixed z-50 min-w-52 p-1 font-sans text-sm"
+      className="fixed z-50 min-w-44 p-1 font-sans text-sm"
     >
-      {items.map((item, k) =>
-        item === 'rule' ? (
-          <div key={`rule-${k}`} role="separator" className="my-1 border-t border-line" />
-        ) : (
-          <button
-            key={item.id}
-            type="button"
-            role="menuitem"
-            disabled={item.disabled}
-            onClick={() => choose(item)}
-            className="flex w-full items-center justify-between gap-6 rounded-md px-2.5 py-1.5 text-left hover:bg-surface focus:bg-surface focus:outline-none disabled:opacity-40"
-          >
-            <span>{item.label}</span>
-            {item.hint && (
-              <span className="flex gap-1">
-                {item.hint.map((key, j) => (
-                  <Kbd key={j}>{key}</Kbd>
-                ))}
-              </span>
-            )}
-          </button>
-        ),
-      )}
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          role="menuitem"
+          disabled={item.disabled}
+          onClick={() => choose(item)}
+          className="block w-full whitespace-nowrap rounded-md px-3 py-2 text-left hover:bg-accent/10 focus:bg-accent/10 focus:outline-none disabled:opacity-40"
+        >
+          <span>{item.label}</span>
+        </button>
+      ))}
     </GlassPopover>,
     document.body,
   )
@@ -488,10 +466,7 @@ function useFlipOnReorder(list: RefObject<HTMLDivElement | null>, orderKey: stri
       ) {
         wrap.animate(
           [{ transform: `translateX(${prev - x}px)` }, { transform: 'translateX(0)' }],
-          {
-            duration: 150,
-            easing: 'ease-out',
-          },
+          { duration: 150, easing: 'ease-out' },
         )
       }
     }

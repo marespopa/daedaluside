@@ -15,6 +15,7 @@ import {
   sidebarOpenAtom,
   treeAtom,
 } from '../state/workspaceAtoms'
+import { GlassPopover } from '../ui'
 import { useController } from '../workspace/useWorkspace'
 import type { Entry } from '../workspace/types'
 import { languageList } from './languages'
@@ -246,11 +247,11 @@ function PaletteDialog({
       className="fixed inset-0 z-50 flex items-start justify-center bg-canvas/60 px-4 pt-[15vh]"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div
+      <GlassPopover
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="glass w-full max-w-lg rounded-xl border border-line shadow-lg"
+        className="w-full max-w-lg"
         onKeyDown={onKeyDown}
       >
         <input
@@ -292,7 +293,7 @@ function PaletteDialog({
             </li>
           ))}
         </ul>
-      </div>
+      </GlassPopover>
     </div>
   )
 }

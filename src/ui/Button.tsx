@@ -5,8 +5,8 @@ import { Icon, type IconName } from './Icon'
  * The one button style for the whole app. Feature code uses this (or IconButton)
  * instead of writing its own classes, so every control looks and behaves the same.
  */
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
-export type ButtonSize = 'sm' | 'md'
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'quiet' | 'danger'
+export type ButtonSize = 'xs' | 'sm' | 'md'
 
 const base =
   'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap rounded-md font-sans font-medium transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40'
@@ -15,10 +15,12 @@ const variants: Record<ButtonVariant, string> = {
   primary: 'bg-text text-canvas hover:opacity-90',
   secondary: 'border border-line bg-canvas text-text hover:bg-surface',
   ghost: 'text-muted hover:bg-surface hover:text-text',
+  quiet: 'text-muted hover:text-text',
   danger: 'text-diff-remove-fg hover:bg-diff-remove',
 }
 
 const sizes: Record<ButtonSize, { text: string; box: string; icon: string }> = {
+  xs: { text: 'h-5 gap-1 px-1.5 text-xs', box: 'size-5', icon: 'size-3' },
   sm: { text: 'h-7 gap-1.5 px-2.5 text-xs', box: 'size-7', icon: 'size-3.5' },
   md: { text: 'h-8 gap-2 px-3 text-sm', box: 'size-8', icon: 'size-4' },
 }

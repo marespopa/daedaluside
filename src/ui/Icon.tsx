@@ -13,6 +13,8 @@ export type IconName =
   | 'x'
   | 'menu'
   | 'pin'
+  | 'chevron-left'
+  | 'chevron-right'
 
 const paths: Record<IconName, ReactNode> = {
   'file-plus': (
@@ -38,6 +40,8 @@ const paths: Record<IconName, ReactNode> = {
   ),
   x: <path d="M6 6l12 12M18 6 6 18" />,
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+  'chevron-left': <path d="M15 6l-6 6 6 6" />,
+  'chevron-right': <path d="M9 6l6 6-6 6" />,
   pin: (
     <>
       <path d="M8.5 3.5h7l-1 5.5 2.5 3v1.5h-10V12l2.5-3z" />

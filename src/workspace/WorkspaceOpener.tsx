@@ -10,6 +10,8 @@ import { MOD_KEY_LABEL } from '../lib/platform'
 import {
   currentWorkspaceIdAtom,
   noticeAtom,
+  sidebarOpenAtom,
+  treeAtom,
   workspacesAtom,
   workspaceStatusAtom,
   type WorkspaceStatus,
@@ -78,7 +80,9 @@ export default function WorkspaceOpener() {
   const status = useAtomValue(workspaceStatusAtom)
   const workspaces = useAtomValue(workspacesAtom)
   const currentId = useAtomValue(currentWorkspaceIdAtom)
+  const tree = useAtomValue(treeAtom)
   const setNotice = useSetAtom(noticeAtom)
+  const setSidebar = useSetAtom(sidebarOpenAtom)
   const { pick, input } = useFolderPicker()
 
   const [dragging, setDragging] = useState(false)
@@ -89,6 +93,10 @@ export default function WorkspaceOpener() {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
   const ready = status.state === 'ready'
+  // With a workspace open, the page describes it. Only a workspace-less state gets the
+  // generic "Open a workspace" copy.
+  const current = workspaces.find((w) => w.id === currentId)
+  const fileCount = tree.filter((e) => e.kind === 'file').length
   const recents = [...workspaces]
     .sort((a, b) => b.updated - a.updated)
     .slice(0, RECENT_LIMIT)
@@ -152,7 +160,7 @@ export default function WorkspaceOpener() {
 
   return (
     <section
-      aria-labelledby="opener-title"
+      aria-label="Workspace opener"
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
@@ -176,13 +184,30 @@ export default function WorkspaceOpener() {
             />
             {storageLabel(status)}
           </span>
-          <h2 id="opener-title" className="text-2xl font-normal tracking-tight">
-            Open a workspace
+          <h2 className="text-2xl font-normal tracking-tight">
+            {current ? current.name : 'Open a workspace'}
           </h2>
-          <p className="text-sm leading-relaxed text-muted">
-            Choose a folder to edit, or drop a <code className="font-mono">.zip</code> to
-            unpack one. Files stay on this device and work offline.
-          </p>
+          {current ? (
+            <p className="text-sm leading-relaxed text-muted">
+              {fileCount === 1 ? '1 file' : `${fileCount} files`} in this workspace, none
+              open. Pick one from the file tree, or switch workspaces below.
+            </p>
+          ) : (
+            <p className="text-sm leading-relaxed text-muted">
+              Choose a folder to edit, or drop a <code className="font-mono">.zip</code>{' '}
+              to unpack one. Files stay on this device and work offline.
+            </p>
+          )}
+          {current && (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="menu"
+              onClick={() => setSidebar(true)}
+            >
+              Show file tree
+            </Button>
+          )}
         </header>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

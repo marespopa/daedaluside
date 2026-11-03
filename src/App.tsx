@@ -20,7 +20,7 @@ export default function App() {
     <div className="flex h-full bg-canvas text-text">
       <FileTree />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-header shrink-0 items-center gap-2 border-b border-transparent px-3 font-sans text-sm text-muted transition-colors duration-150 ease-out hover:border-line focus-within:border-line">
+        <header className="flex h-header min-w-0 shrink-0 items-center gap-2 px-3 font-sans text-sm text-muted">
           <IconButton
             label={sidebar ? 'Hide file tree' : 'Show file tree'}
             icon="menu"

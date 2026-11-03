@@ -80,7 +80,9 @@ describe('tab strip', () => {
     await openTabs(a.store, 'a.ts', 'b.ts')
 
     fireEvent.contextMenu(tabEl('a.ts'), { clientX: 10, clientY: 10 })
-    await user.click(within(await menu()).getByRole('menuitem', { name: 'Pin Tab' }))
+    const contextMenu = await menu()
+    expect(contextMenu).toHaveClass('glass', 'border-line', 'shadow-lg')
+    await user.click(within(contextMenu).getByRole('menuitem', { name: 'Pin Tab' }))
     // Pinned tabs move to the start of the strip and show as an icon named by the file.
     await waitFor(() => expect(tabPaths()).toEqual(['a.ts', 'scratch.ts', 'b.ts']))
     expect(screen.getByRole('tab', { name: 'a.ts' })).toBeInTheDocument()
@@ -115,6 +117,24 @@ describe('tab strip', () => {
     await user.keyboard('{Control>}{Alt>}w{/Alt}{/Control}')
     await waitFor(() => expect(tabPaths()).toEqual(['scratch.ts']))
     expect(a.store.get(activePathAtom)).toBe('scratch.ts')
+  })
+
+  it('keeps the dirty dot visible until Ctrl+S saves the active file', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await screen.findByRole('tab', { name: /^scratch/ })
+    await openTabs(a.store, 'a.ts')
+    type(a.store, 'draft')
+
+    const dirty = screen.getByRole('img', { name: 'unsaved' })
+    expect(dirty).toHaveClass('size-1', 'rounded-full', 'bg-accent')
+
+    await user.keyboard('{Control>}s{/Control}')
+
+    await waitFor(async () => {
+      expect(await onDisk(a.store, 'a.ts')).toBe('draft')
+      expect(screen.queryByRole('img', { name: 'unsaved' })).toBeNull()
+    })
   })
 
   it('dragging a tab onto the right half of another moves it there', async () => {
@@ -186,5 +206,19 @@ describe('tab strip', () => {
     mount()
     await screen.findByRole('tab', { name: 'a.ts' })
     expect(tabPaths()).toEqual(['a.ts', 'scratch.ts'])
+  })
+
+  it('uses plain text tabs in a scrollable, auto-width strip', async () => {
+    const a = mount()
+    await screen.findByRole('tab', { name: /^scratch/ })
+    await openTabs(a.store, 'a.ts', 'b.ts')
+
+    const strip = screen.getByRole('tablist', { name: 'Open files' })
+    expect(strip).toHaveClass('overflow-x-auto', 'bg-transparent')
+    expect(strip).toHaveClass('[scrollbar-width:none]')
+    expect(strip.parentElement).toHaveClass('font-mono', 'text-xs', 'bg-transparent')
+    expect(tabEl('a.ts')).toHaveClass('opacity-50', 'hover:opacity-80')
+    expect(tabEl('b.ts').parentElement).not.toHaveClass('min-w-[100px]', 'max-w-[200px]')
+    expect(within(strip).queryByRole('button', { name: /close/i })).toBeNull()
   })
 })

@@ -18,6 +18,11 @@ describe('App', () => {
     await user.keyboard('{Control>}k{/Control}')
     const input = screen.getByRole('combobox')
     expect(input).toHaveFocus()
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toHaveClass(
+      'glass',
+      'border-line',
+      'shadow-lg',
+    )
     // `>` switches to commands. The query matches exactly one theme, so Enter is deterministic.
     await user.type(input, '>github dark{Enter}')
     await waitFor(() =>

@@ -150,7 +150,7 @@ describe('workspace opener (editor empty state)', () => {
     expect(store.get(activePathAtom)).toBeNull()
   }
 
-  const opener = () => screen.findByRole('region', { name: 'Open a workspace' })
+  const opener = () => screen.findByRole('region', { name: 'Workspace opener' })
 
   it('replaces the editor with the opener when no file is open', async () => {
     const a = mount()
@@ -161,6 +161,23 @@ describe('workspace opener (editor empty state)', () => {
       within(await opener()).getByText(/^(OPFS|IndexedDB) · on this device$/),
     ).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('names the open workspace instead of asking to open one', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await emptyWorkspace(a.store)
+    const o = await opener()
+    expect(within(o).getByRole('heading', { name: 'Workspace' })).toBeInTheDocument()
+    expect(within(o).queryByText('Open a workspace')).toBeNull()
+    expect(
+      within(o).getByText(/0 files in this workspace, none open/),
+    ).toBeInTheDocument()
+
+    await user.click(within(o).getByRole('button', { name: 'Show file tree' }))
+    expect(
+      await screen.findByRole('complementary', { name: 'File tree' }),
+    ).toBeInTheDocument()
   })
 
   it('creates a named workspace inline and lists it under recents', async () => {
