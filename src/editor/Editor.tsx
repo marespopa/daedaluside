@@ -2,9 +2,11 @@ import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
 import {
   activePathAtom,
+  importStatusAtom,
   snapshotAtom,
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
+import OpeningFolder from '../workspace/OpeningFolder'
 import WorkspaceOpener from '../workspace/WorkspaceOpener'
 import { useController } from '../workspace/useWorkspace'
 import { createEditor } from './createEditor'
@@ -16,6 +18,7 @@ export default function Editor() {
   const activePath = useAtomValue(activePathAtom)
   const status = useAtomValue(workspaceStatusAtom)
   const snapshot = useAtomValue(snapshotAtom)
+  const importing = useAtomValue(importStatusAtom)
   // Last session's file is being restored: show its place, not an empty editor.
   const restoring = status.state === 'loading' && snapshot?.activeFile != null
 
@@ -36,10 +39,20 @@ export default function Editor() {
 
   return (
     <div className="relative h-full">
-      <div ref={host} className="h-full" data-testid="editor" />
+      {/* Inert while importing: the scratch file must not take keystrokes under the overlay. */}
+      <div
+        ref={host}
+        inert={importing !== null}
+        className="h-full"
+        data-testid="editor"
+      />
       {restoring && <EditorSkeleton />}
-      {/* Not while storage is starting: the workspace is about to open a file. */}
-      {activePath === null && status.state !== 'loading' && <WorkspaceOpener />}
+      {importing ? (
+        <OpeningFolder status={importing} />
+      ) : (
+        /* Not while storage is starting: the workspace is about to open a file. */
+        activePath === null && status.state !== 'loading' && <WorkspaceOpener />
+      )}
     </div>
   )
 }

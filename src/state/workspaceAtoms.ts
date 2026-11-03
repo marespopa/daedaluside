@@ -28,7 +28,19 @@ export interface SessionSnapshot {
   activeFile: string | null
 }
 
+/**
+ * A folder or zip being read and copied in. `total` is null while still scanning
+ * or unpacking, when the item count is not known yet.
+ */
+export interface ImportStatus {
+  name: string
+  done: number
+  total: number | null
+}
+
 export const workspaceStatusAtom = atom<WorkspaceStatus>({ state: 'loading' })
+/** Set for the whole import, from picking the folder until its first file is open. */
+export const importStatusAtom = atom<ImportStatus | null>(null)
 /** Null when there is no saved session. Only read while the status is `loading`. */
 export const snapshotAtom = atom<SessionSnapshot | null>(null)
 export const workspacesAtom = atom<WorkspaceMeta[]>([])

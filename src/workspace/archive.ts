@@ -76,21 +76,30 @@ export function entriesFromFileList(files: Iterable<File>): {
   return { name, entries }
 }
 
-/** From `showDirectoryPicker()`. */
+/** How often progress callbacks fire, in entries; keeps React updates cheap on big folders. */
+const PROGRESS_EVERY = 25
+const SCAN_EVERY = 100
+
+/** From `showDirectoryPicker()`. `onScan` reports how many entries have been found so far. */
 export async function entriesFromDirectoryHandle(
   root: FileSystemDirectoryHandle,
+  onScan?: (found: number) => void,
 ): Promise<ImportEntry[]> {
   const out: ImportEntry[] = []
+  const push = (entry: ImportEntry) => {
+    out.push(entry)
+    if (onScan && out.length % SCAN_EVERY === 0) onScan(out.length)
+  }
   const walk = async (dir: FileSystemDirectoryHandle, prefix: string) => {
     for await (const [name, h] of dir.entries()) {
       if (IGNORED.has(name)) continue
       const path = joinPath(prefix, name)
       if (h.kind === 'directory') {
-        out.push({ kind: 'dir', path })
+        push({ kind: 'dir', path })
         await walk(h as FileSystemDirectoryHandle, path)
       } else {
         const fh = h as FileSystemFileHandle
-        out.push({
+        push({
           kind: 'file',
           path,
           read: async () => new Uint8Array(await (await fh.getFile()).arrayBuffer()),
@@ -99,18 +108,21 @@ export async function entriesFromDirectoryHandle(
     }
   }
   await walk(root, '')
+  onScan?.(out.length)
   return out
 }
 
+/** Writes entries in order. `onProgress(done, total)` counts folders and files alike. */
 export async function importEntries(
   fs: WorkspaceFS,
   entries: ImportEntry[],
+  onProgress?: (done: number, total: number) => void,
 ): Promise<{ files: number; dirs: number }> {
   if (entries.length > MAX_IMPORT_FILES)
     throw new FSError('EINVAL', 'Too many files to import')
   let files = 0
   let dirs = 0
-  for (const e of entries) {
+  for (const [i, e] of entries.entries()) {
     if (e.kind === 'dir') {
       await fs.mkdir(e.path)
       dirs++
@@ -118,6 +130,8 @@ export async function importEntries(
       await fs.writeBytes(e.path, await e.read())
       files++
     }
+    if (onProgress && ((i + 1) % PROGRESS_EVERY === 0 || i + 1 === entries.length))
+      onProgress(i + 1, entries.length)
   }
   return { files, dirs }
 }

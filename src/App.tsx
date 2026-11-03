@@ -3,7 +3,7 @@ import CommandPalette from './editor/CommandPalette'
 import Editor from './editor/Editor'
 import { activeBufferAtom } from './state/editorAtoms'
 import { MOD_KEY_LABEL } from './lib/platform'
-import { sidebarOpenAtom } from './state/workspaceAtoms'
+import { importStatusAtom, sidebarOpenAtom } from './state/workspaceAtoms'
 import { IconButton, Kbd } from './ui'
 import FileTree from './workspace/FileTree'
 import Notice from './workspace/Notice'
@@ -16,6 +16,7 @@ export default function App() {
   useWorkspaceLifecycle()
   const [sidebar, setSidebar] = useAtom(sidebarOpenAtom)
   const buffer = useAtomValue(activeBufferAtom)
+  const importing = useAtomValue(importStatusAtom)
   return (
     <div className="flex h-full bg-canvas text-text">
       <FileTree />
@@ -27,7 +28,8 @@ export default function App() {
             aria-expanded={sidebar}
             onClick={() => setSidebar((s) => !s)}
           />
-          <Tabs />
+          {/* Hidden while a folder opens: the old scratch tab must not outlive the blank page. */}
+          {importing === null && <Tabs />}
           <span className="sr-only">
             {buffer.name
               ? `Editing ${buffer.name}${buffer.dirty ? ', unsaved' : ''}`

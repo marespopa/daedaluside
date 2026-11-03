@@ -398,3 +398,94 @@ describe('command palette modes', () => {
     expect(input).toHaveFocus()
   })
 })
+
+describe('opening a folder shows a loading state', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+  })
+
+  /** A zip whose contents are held back until `release` is called, so the import can be paused. */
+  function gatedZip(files: Record<string, string>, name = 'proj.zip') {
+    const bytes = zipSync(
+      Object.fromEntries(Object.entries(files).map(([k, v]) => [k, strToU8(v)])),
+    )
+    const file = new File([bytes], name, { type: 'application/zip' })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: async () => {
+        await gate
+        return bytes.slice().buffer
+      },
+    })
+    return { file, release }
+  }
+
+  const overlay = () => screen.queryByRole('status', { name: 'Opening folder' })
+
+  it('covers the blank scratch page until the folder is open, then replaces it', async () => {
+    const a = mount()
+    await tab('scratch.ts')
+    const c = getController(a.store)
+    const { file, release } = gatedZip({ 'app.ts': 'zipped', 'lib/util.ts': 'util' })
+
+    void c.importZipFile(file)
+
+    const status = await screen.findByRole('status', { name: 'Opening folder' })
+    expect(within(status).getByRole('heading', { name: 'proj' })).toBeInTheDocument()
+    expect(within(status).getByText('Reading files')).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /^scratch/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Open folder' })).toBeDisabled()
+    expect(screen.getByTestId('editor')).toHaveAttribute('inert')
+
+    await act(async () => {
+      release()
+    })
+    await waitFor(() => expect(overlay()).toBeNull())
+    expect(a.store.get(activePathAtom)).toBe('app.ts')
+    expect(a.store.get(editorHandleAtom)!.view.state.doc.toString()).toBe('zipped')
+    expect(await tab('app.ts')).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /^scratch/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Open folder' })).toBeEnabled()
+    expect(screen.getByTestId('editor')).not.toHaveAttribute('inert')
+  })
+
+  it('brings the scratch file back when the folder cannot be read', async () => {
+    const a = mount()
+    await tab('scratch.ts')
+    const c = getController(a.store)
+
+    await act(async () => {
+      await c.importZipFile(new File(['not a zip'], 'broken.zip'))
+    })
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(overlay()).toBeNull()
+    expect(a.store.get(activePathAtom)).toBe('scratch.ts')
+    expect(screen.getByTestId('editor')).not.toHaveAttribute('inert')
+    expect(screen.getByRole('button', { name: 'Open folder' })).toBeEnabled()
+  })
+
+  it('refuses a second folder while one is still opening', async () => {
+    const a = mount()
+    await tab('scratch.ts')
+    const c = getController(a.store)
+    const first = gatedZip({ 'one.ts': '1' })
+    const second = gatedZip({ 'two.ts': '2' }, 'other.zip')
+
+    void c.importZipFile(first.file)
+    await screen.findByRole('status', { name: 'Opening folder' })
+    await act(async () => {
+      await c.importZipFile(second.file)
+    })
+
+    expect(await screen.findByText(/Another folder is still opening/)).toBeInTheDocument()
+    expect(a.store.get(workspacesAtom).some((w) => w.name === 'other')).toBe(false)
+
+    await act(async () => {
+      first.release()
+    })
+    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('one.ts'))
+    await waitFor(() => expect(overlay()).toBeNull())
+  })
+})

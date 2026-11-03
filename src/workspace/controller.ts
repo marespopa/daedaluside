@@ -11,6 +11,7 @@ import {
 import {
   activePathAtom,
   currentWorkspaceIdAtom,
+  importStatusAtom,
   noticeAtom,
   openBuffersAtom,
   settingsOpenAtom,
@@ -51,6 +52,10 @@ import { requestPersistence } from './storage'
 import type { WorkspaceFS } from './types'
 
 type Store = ReturnType<typeof createStore>
+type ReportImport = (done: number, total: number | null) => void
+
+/** Lets a just-shown overlay paint before synchronous work (zip unpacking) starts. */
+const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 export const AUTOSAVE_MS = 800
 const SESSION_SAVE_MS = 500
@@ -599,7 +604,31 @@ export class WorkspaceController {
 
   // ---- import / export -------------------------------------------------
 
-  private async importInto(name: string, entries: ImportEntry[]) {
+  /**
+   * Runs one import behind the loading overlay. Covers the whole open: reading the
+   * source, copying it in, and opening its first file. Only one runs at a time. On
+   * failure the notice explains why and the previous view (e.g. scratch) returns.
+   */
+  private async runImport(name: string, work: (report: ReportImport) => Promise<void>) {
+    if (this.store.get(importStatusAtom)) {
+      this.notify('info', 'Another folder is still opening. Try again when it is done.')
+      return
+    }
+    const label = name || 'Imported'
+    const report: ReportImport = (done, total) =>
+      this.store.set(importStatusAtom, { name: label, done, total })
+    report(0, null)
+    await nextTask()
+    try {
+      await work(report)
+    } catch (e) {
+      this.fail(e)
+    } finally {
+      this.store.set(importStatusAtom, null)
+    }
+  }
+
+  private async importInto(name: string, entries: ImportEntry[], report: ReportImport) {
     const manager = this.requireManager()
     const label = name || 'Imported'
     const source = await sourceKey(
@@ -619,7 +648,8 @@ export class WorkspaceController {
     }
     const meta = await manager.create(label, source)
     try {
-      const { files, dirs } = await importEntries(manager.fs(meta.id), entries)
+      report(0, entries.length)
+      const { files, dirs } = await importEntries(manager.fs(meta.id), entries, report)
       await this.refreshWorkspaces()
       await this.switchTo(meta.id)
       const firstFile = entries
@@ -640,29 +670,29 @@ export class WorkspaceController {
   }
 
   async importZipFile(file: File) {
-    try {
+    const name = file.name.replace(/\.zip$/i, '')
+    await this.runImport(name, async (report) => {
       const entries = readZip(new Uint8Array(await file.arrayBuffer()))
-      await this.importInto(file.name.replace(/\.zip$/i, ''), entries)
-    } catch (e) {
-      this.fail(e)
-    }
+      await this.importInto(name, entries, report)
+    })
   }
 
   async importFolderFiles(files: File[]) {
     try {
       const { name, entries } = entriesFromFileList(files)
-      await this.importInto(name, entries)
+      await this.runImport(name, (report) => this.importInto(name, entries, report))
     } catch (e) {
       this.fail(e)
     }
   }
 
   async importFolderHandle(handle: FileSystemDirectoryHandle) {
-    try {
-      await this.importInto(handle.name, await entriesFromDirectoryHandle(handle))
-    } catch (e) {
-      this.fail(e)
-    }
+    await this.runImport(handle.name, async (report) => {
+      const entries = await entriesFromDirectoryHandle(handle, (found) =>
+        report(found, null),
+      )
+      await this.importInto(handle.name, entries, report)
+    })
   }
 
   async exportCurrentZip() {

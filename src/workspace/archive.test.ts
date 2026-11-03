@@ -113,3 +113,25 @@ describe('WorkspaceManager', () => {
     expect(await m.fs(ws.id).list('')).toEqual([])
   })
 })
+
+describe('import progress', () => {
+  it('reports every 25 entries and always the final count', async () => {
+    const db = await openDB('p', new IDBFactory())
+    const fs = new IdbBackend(db).open('p')
+    const entries = Array.from({ length: 60 }, (_, i) => ({
+      kind: 'file' as const,
+      path: `f${i}.txt`,
+      read: async () => new TextEncoder().encode(String(i)),
+    }))
+    const seen: [number, number][] = []
+    const result = await importEntries(fs, entries, (done, total) => {
+      seen.push([done, total])
+    })
+    expect(result).toEqual({ files: 60, dirs: 0 })
+    expect(seen).toEqual([
+      [25, 60],
+      [50, 60],
+      [60, 60],
+    ])
+  })
+})
