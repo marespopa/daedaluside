@@ -24,6 +24,7 @@ import {
 } from '@codemirror/view'
 import { loadLanguage } from './languages'
 import { editorTheme } from './theme'
+import { vimCompartment, vimExtension } from './vimMode'
 
 export interface EditorOptions {
   parent: HTMLElement
@@ -42,6 +43,8 @@ export interface EditorHandle {
   createState(doc: string): EditorState
   /** Swaps the whole state (document, history, selection). Language is not carried over. */
   setState(state: EditorState): void
+  /** Turns Vim keybindings on or off. The document, selection and undo history are kept. */
+  setVim(on: boolean): void
   destroy(): void
 }
 
@@ -54,8 +57,18 @@ export function createEditor({
 }: EditorOptions): EditorHandle {
   const language = new Compartment()
   let langRequest = 0
+  let vimOn = false
+
+  const vimFor = (on: boolean): Extension => (on ? vimExtension : [])
+  const isVimOn = (state: EditorState) => vimCompartment.get(state) === vimExtension
+  // Stashed buffers keep the Vim setting they were saved with. Bring them in line.
+  const withVim = (state: EditorState): EditorState => {
+    if (vimCompartment.get(state) === undefined || isVimOn(state) === vimOn) return state
+    return state.update({ effects: vimCompartment.reconfigure(vimFor(vimOn)) }).state
+  }
 
   const baseExtensions: Extension[] = [
+    vimCompartment.of([]),
     history(),
     drawSelection(),
     lineNumbers(),
@@ -84,7 +97,7 @@ export function createEditor({
     ...extensions,
   ]
   const createState = (d: string) =>
-    EditorState.create({ doc: d, extensions: baseExtensions })
+    withVim(EditorState.create({ doc: d, extensions: baseExtensions }))
 
   const view = new EditorView({ parent, state: createState(doc) })
 
@@ -105,7 +118,12 @@ export function createEditor({
     createState,
     setState: (state) => {
       langRequest++ // a pending language load belongs to the old state
-      view.setState(state)
+      view.setState(withVim(state))
+    },
+    setVim: (on) => {
+      vimOn = on
+      if (isVimOn(view.state) === on) return
+      view.dispatch({ effects: vimCompartment.reconfigure(vimFor(on)) })
     },
     destroy: () => view.destroy(),
   }

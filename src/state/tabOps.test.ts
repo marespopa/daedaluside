@@ -3,6 +3,7 @@ import {
   clampSlot,
   insertIndex,
   moveTab,
+  nextTab,
   openTab,
   othersToClose,
   partitionPinned,
@@ -17,6 +18,33 @@ import {
 
 const t = (path: string, pinned = false): TabRef => ({ path, pinned })
 const paths = (tabs: readonly TabRef[]) => tabs.map((x) => x.path)
+
+describe('nextTab', () => {
+  const s: TabState = { tabs: [t('a'), t('b'), t('c')], active: 'b' }
+
+  it('steps forward and back from the active tab', () => {
+    expect(nextTab(s, 1)).toBe('c')
+    expect(nextTab(s, -1)).toBe('a')
+  })
+
+  it('wraps at both ends', () => {
+    expect(nextTab({ ...s, active: 'c' }, 1)).toBe('a')
+    expect(nextTab({ ...s, active: 'a' }, -1)).toBe('c')
+  })
+
+  it('stays on the only tab', () => {
+    expect(nextTab({ tabs: [t('a')], active: 'a' }, 1)).toBe('a')
+  })
+
+  it('starts at the first or last tab when none is active', () => {
+    expect(nextTab({ ...s, active: null }, 1)).toBe('a')
+    expect(nextTab({ ...s, active: null }, -1)).toBe('c')
+  })
+
+  it('returns null with no tabs', () => {
+    expect(nextTab({ tabs: [], active: null }, 1)).toBeNull()
+  })
+})
 
 describe('openTab', () => {
   it('appends an absent tab and makes it active', () => {

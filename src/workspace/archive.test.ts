@@ -13,12 +13,9 @@ import {
 import { openDB } from './db'
 import { IdbBackend } from './fallback-idb'
 import { WorkspaceManager } from './manager'
-import { OpfsBackend } from './opfs-fs'
-import { memoryRoot } from './testing/memoryOpfs'
 import type { FSBackend } from './types'
 
 const backends: [string, () => Promise<FSBackend>][] = [
-  ['OPFS', async () => new OpfsBackend(async () => memoryRoot())],
   ['IDB', async () => new IdbBackend(await openDB('a', new IDBFactory()))],
 ]
 

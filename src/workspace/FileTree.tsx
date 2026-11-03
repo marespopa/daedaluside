@@ -1,9 +1,10 @@
 import { useAtom, useAtomValue, useStore } from 'jotai'
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { matchFiles } from '../editor/paletteSearch'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   activePathAtom,
   copyStatusAtom,
+  deletingPathsAtom,
+  fileTreeFocusAtom,
   linkedFolderAtom,
   pendingPathsAtom,
   sidebarOpenAtom,
@@ -12,6 +13,7 @@ import {
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
 import { Button, ContextMenu, Icon, IconButton, type ContextMenuItem } from '../ui'
+import FileFinder from './FileFinder'
 import NameInput from './NameInput'
 import TreeSkeleton from './TreeSkeleton'
 import { dirname, joinPath } from './path'
@@ -33,33 +35,53 @@ type Editing =
   | { kind: 'rename'; path: string }
   | null
 
-/** Right-click menu. `parent` is the folder a new file or folder goes into ('' is the root). */
-type TreeMenu = { parent: string; x: number; y: number }
+/** Right-click menu. `parent` is where new files and folders go ('' is the root). */
+type TreeMenu = { parent: string; entry: Entry | null; x: number; y: number }
 
 function treeMenuItems(
   parent: string,
+  entry: Entry | null,
   startNew: (kind: 'new-file' | 'new-folder', parent: string) => void,
+  startRename: (entry: Entry) => void,
+  startDelete: (entry: Entry) => void,
 ): ContextMenuItem[] {
-  return [
+  const items: ContextMenuItem[] = [
     { id: 'new-file', label: 'New file', run: () => startNew('new-file', parent) },
     { id: 'new-folder', label: 'New folder', run: () => startNew('new-folder', parent) },
   ]
+  if (entry) {
+    items.push(
+      { id: 'rename', label: 'Rename', run: () => startRename(entry) },
+      { id: 'delete', label: 'Delete', run: () => startDelete(entry) },
+    )
+  }
+  return items
 }
 
-/** File tree overlay, toggled with Mod-B. Only the rows on screen are rendered. */
+/**
+ * File tree: a floating glass panel over the left of the editor. :Explore or Mod-B opens
+ * it; q closes it. The editor keeps its width. Only the rows on screen are rendered.
+ */
 export default function FileTree() {
   const open = useAtomValue(sidebarOpenAtom)
-  return open ? <Sidebar /> : null
+  return (
+    <div className="relative h-full w-0 shrink-0">
+      <Sidebar open={open} />
+    </div>
+  )
 }
 
-function Sidebar() {
+function Sidebar({ open }: { open: boolean }) {
   const store = useStore()
   const controller = useController()
   const [, setOpen] = useAtom(sidebarOpenAtom)
+  const focusRequest = useAtomValue(fileTreeFocusAtom)
   const status = useAtomValue(workspaceStatusAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const link = useAtomValue(linkedFolderAtom)
   const tree = useAtomValue(treeAtom)
+  const deleting = useAtomValue(deletingPathsAtom)
+  const treeBusy = deleting.size > 0
   const activePath = useAtomValue(activePathAtom)
   const pending = useAtomValue(pendingPathsAtom)
   const copy = useAtomValue(copyStatusAtom)
@@ -70,8 +92,6 @@ function Sidebar() {
   const [confirm, setConfirm] = useState<string | null>(null)
   const [menu, setMenu] = useState<TreeMenu | null>(null)
   const [query, setQuery] = useState('')
-  const [highlight, setHighlight] = useState(0)
-  const listId = useId()
   const [seenActive, setSeenActive] = useState<string | null>(null)
   // Virtual list state. `cursor` is the keyboard position; `focusTick` asks for DOM focus
   // to follow it after a keyboard move.
@@ -113,19 +133,7 @@ function Sidebar() {
     () => flattenTree(byParent, expanded, newParent),
     [byParent, expanded, newParent],
   )
-  // Quick finder: files whose path has every typed word. Null while the box is empty.
-  const matches = useMemo(
-    () =>
-      query.trim()
-        ? matchFiles(
-            tree.filter((e) => e.kind === 'file'),
-            query,
-          )
-        : null,
-    [tree, query],
-  )
-  const searching = matches !== null
-  const active = matches ? Math.min(highlight, Math.max(matches.length - 1, 0)) : 0
+  const searching = query.trim() !== ''
   const { start, end } = visibleRange(
     scrollTop,
     viewport || FALLBACK_VIEWPORT,
@@ -158,6 +166,14 @@ function Sidebar() {
     focused.current = focusTick
     rowElement(root.current, tabStop)?.focus()
   }, [focusTick, tabStop])
+
+  const handledFocusRequest = useRef(0)
+  useEffect(() => {
+    if (!open || handledFocusRequest.current === focusRequest) return
+    handledFocusRequest.current = focusRequest
+    setCursor(tabStop)
+    setFocusTick((t) => t + 1)
+  }, [focusRequest, open, tabStop])
 
   /** Scrolls so row `index` is fully visible. Sets state too, since jsdom does not scroll. */
   const reveal = (index: number) => {
@@ -198,19 +214,17 @@ function Sidebar() {
     selected === '' || kindOf.get(selected) === 'dir' ? selected : dirname(selected)
 
   const startNew = (kind: 'new-file' | 'new-folder', parent = targetDir()) => {
+    if (treeBusy) return
     if (parent) expand(parent, true)
     setConfirm(null)
     setEditing({ kind, parent })
   }
 
-  const expandAll = () =>
-    setExpanded(new Set(tree.filter((e) => e.kind === 'dir').map((e) => e.path)))
-  const collapseAll = () => setExpanded(new Set())
-
   /** A file's new entries go next to it, in its folder. A folder's go inside it. */
   const openMenu = (x: number, y: number, entry: Entry | null) => {
+    if (treeBusy) return
     const parent = entry ? (entry.kind === 'dir' ? entry.path : dirname(entry.path)) : ''
-    setMenu({ parent, x, y })
+    setMenu({ parent, entry, x, y })
   }
 
   const close = () => {
@@ -224,89 +238,117 @@ function Sidebar() {
     if (!searching && scroller.current) scroller.current.scrollTop = savedScroll.current
   }, [searching])
 
-  // Keep the highlighted result in view as the arrow keys move through the list.
-  useEffect(() => {
-    if (matches)
-      document
-        .getElementById(`${listId}-${active}`)
-        ?.scrollIntoView?.({ block: 'nearest' })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
-
-  const openMatch = (path: string) => void controller.openFile(path)
-
-  const onFinderKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape') {
-      // First Escape clears the search; a second one closes the tree (handled above).
-      if (query === '') return
-      e.preventDefault()
-      e.stopPropagation()
-      setQuery('')
-      return
-    }
-    if (!matches || matches.length === 0) return
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      const step = e.key === 'ArrowDown' ? 1 : -1
-      setHighlight((active + step + matches.length) % matches.length)
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      openMatch(matches[active]!.path)
-    }
-  }
-
   const focusIndex = (i: number) => {
     const row = rows[i]
     if (row?.type !== 'entry') return
+    setSelected(row.key)
     setCursor(row.key)
     reveal(i)
     setFocusTick((t) => t + 1)
   }
 
-  // Tree keys follow the WAI-ARIA tree pattern. Only the focused row is a tab stop.
+  const pendingG = useRef(-Infinity)
+
+  // netrw-style keys, with the arrow-key equivalents kept for accessibility.
   const onRowKey = (e: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (treeBusy) {
+      e.preventDefault()
+      return
+    }
     if (e.target !== e.currentTarget) return
     const row = rows[index]
     if (row?.type !== 'entry') return
     const { entry } = row
+    if (e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'r') {
+      e.preventDefault()
+      void controller.refreshWorkspace()
+      return
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return
+
     const move = (to: number) => {
       if (to < 0) return
       e.preventDefault()
       focusIndex(to)
     }
+    const focusParent = () => {
+      const parent = dirname(entry.path)
+      if (parent === '') return
+      e.preventDefault()
+      const j = rows.findIndex((r) => r.type === 'entry' && r.key === parent)
+      if (j >= 0) focusIndex(j)
+    }
+
+    if (e.key === 'g') {
+      e.preventDefault()
+      const repeated = e.timeStamp - pendingG.current < 1000
+      pendingG.current = repeated ? 0 : e.timeStamp
+      if (repeated) move(nextEntryIndex(rows, -1, 1))
+      return
+    }
+    pendingG.current = 0
+
     switch (e.key) {
+      case 'j':
       case 'ArrowDown':
         return move(nextEntryIndex(rows, index, 1))
+      case 'k':
       case 'ArrowUp':
         return move(nextEntryIndex(rows, index, -1))
       case 'Home':
         return move(nextEntryIndex(rows, -1, 1))
+      case 'G':
       case 'End':
         return move(nextEntryIndex(rows, rows.length, -1))
+      case 'Enter':
+        e.preventDefault()
+        return activate(entry)
+      case 'l':
       case 'ArrowRight':
         e.preventDefault()
         if (entry.kind === 'dir') {
           if (!expanded.has(entry.path)) expand(entry.path, true)
         } else void controller.openFile(entry.path)
         return
-      case 'ArrowLeft': {
+      case 'h':
+      case 'ArrowLeft':
         if (entry.kind === 'dir' && expanded.has(entry.path)) {
           e.preventDefault()
           return expand(entry.path, false)
         }
-        const parent = dirname(entry.path)
-        if (parent === '') return
+        return focusParent()
+      case '-':
+        return focusParent()
+      case 'a':
         e.preventDefault()
-        const j = rows.findIndex((r) => r.type === 'entry' && r.key === parent)
-        if (j >= 0) focusIndex(j)
-        return
-      }
+        return startNew(
+          'new-file',
+          entry.kind === 'dir' ? entry.path : dirname(entry.path),
+        )
+      case 'A':
+        e.preventDefault()
+        return startNew(
+          'new-folder',
+          entry.kind === 'dir' ? entry.path : dirname(entry.path),
+        )
+      case 'r':
       case 'F2':
         e.preventDefault()
         return setEditing({ kind: 'rename', path: entry.path })
+      case 'd':
+      case 'D':
       case 'Delete':
         e.preventDefault()
         return setConfirm(entry.path)
+      case 'y':
+        e.preventDefault()
+        return void controller.copyPath(entry.path)
+      case 'Y':
+        e.preventDefault()
+        return void controller.copyAbsolutePath(entry.path)
+      case 'q':
+        e.preventDefault()
+        return close()
       case 'ContextMenu':
       case 'F10':
         if (e.key === 'F10' && !e.shiftKey) return
@@ -321,6 +363,7 @@ function Sidebar() {
   }
 
   const activate = (entry: Entry) => {
+    if (treeBusy) return
     setSelected(entry.path)
     setCursor(entry.path)
     if (entry.kind === 'dir') expand(entry.path, !expanded.has(entry.path))
@@ -470,8 +513,12 @@ function Sidebar() {
     <aside
       ref={root}
       aria-label="File tree"
-      aria-busy={status.state === 'loading'}
+      aria-busy={status.state === 'loading' || treeBusy}
       onContextMenu={(e) => {
+        if (treeBusy) {
+          e.preventDefault()
+          return
+        }
         // Rows open their own menu; name fields keep the native one.
         if ((e.target as Element).closest('li[role="treeitem"], input')) return
         e.preventDefault()
@@ -483,27 +530,28 @@ function Sidebar() {
           close()
         }
       }}
-      className="glass fixed top-header bottom-0 left-0 z-40 flex w-sidebar max-w-full flex-col border-r border-line/60 font-sans text-sm"
+      aria-hidden={!open}
+      inert={!open}
+      className={`absolute top-[calc(var(--spacing-header)+0.5rem)] bottom-2 left-2 z-20 flex w-sidebar max-w-[calc(100vw-1rem)] flex-col rounded-xl border border-line/60 bg-surface/80 font-sans text-sm shadow-xl backdrop-blur-xl transition-transform duration-200 ease-out motion-reduce:transition-none ${
+        open ? 'translate-x-0' : '-translate-x-[110%]'
+      }`}
     >
-      <div className="flex h-9 shrink-0 items-center justify-between pr-1 pl-3">
+      <div className="flex h-9 shrink-0 items-center px-3">
         <span className="text-xs font-medium text-muted">Files</span>
-        <div className="flex items-center gap-0.5">
-          <IconButton
-            size="sm"
-            icon="expand-all"
-            label="Expand all folders"
-            disabled={status.state !== 'ready'}
-            onClick={expandAll}
-          />
-          <IconButton
-            size="sm"
-            icon="collapse-all"
-            label="Collapse all folders"
-            disabled={status.state !== 'ready'}
-            onClick={collapseAll}
-          />
-        </div>
       </div>
+
+      {treeBusy && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center gap-2 px-3 pb-2 text-xs text-muted"
+        >
+          <span
+            aria-hidden
+            className="size-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+          />
+          <span>Deleting {[...deleting][0]?.split('/').pop()}…</span>
+        </div>
+      )}
 
       {link && (
         <div className="flex h-7 shrink-0 items-center justify-between gap-2 px-3 pb-1 text-xs text-muted">
@@ -517,6 +565,7 @@ function Sidebar() {
             <Button
               size="xs"
               variant="quiet"
+              disabled={treeBusy}
               onClick={() => void controller.reconnectFolder()}
             >
               Reconnect
@@ -544,57 +593,15 @@ function Sidebar() {
         </div>
       )}
 
-      <div className="shrink-0 px-2 pb-2">
-        <label className="flex h-7 items-center gap-2 rounded-md bg-surface px-2 text-muted focus-within:text-text focus-within:ring-1 focus-within:ring-accent/50">
-          <Icon name="search" className="size-3.5 shrink-0" />
-          <input
-            type="text"
-            aria-label="Find a file"
-            aria-autocomplete="list"
-            aria-controls={listId}
-            aria-activedescendant={matches?.length ? `${listId}-${active}` : undefined}
-            placeholder="Find a file"
-            value={query}
-            spellCheck={false}
-            autoComplete="off"
-            onChange={(e) => {
-              setQuery(e.target.value)
-              setHighlight(0)
-            }}
-            onKeyDown={onFinderKey}
-            className="min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-muted"
-          />
-        </label>
-      </div>
-
-      {matches ? (
-        <ul
-          id={listId}
-          role="listbox"
-          aria-label="Matching files"
-          className="min-h-0 flex-1 overflow-auto px-2 pb-2"
-        >
-          {matches.length === 0 && (
-            <li className="px-2 py-1.5 text-xs text-muted">No matching files</li>
-          )}
-          {matches.map((entry, i) => (
-            <li
-              key={entry.path}
-              id={`${listId}-${i}`}
-              role="option"
-              aria-selected={i === active}
-              onMouseEnter={() => setHighlight(i)}
-              onClick={() => openMatch(entry.path)}
-              className={`flex cursor-pointer flex-col rounded-md px-2 py-1.5 ${i === active ? 'bg-surface' : ''}`}
-            >
-              <span className="truncate text-sm text-text">{entry.name}</span>
-              <span className="truncate text-xs text-muted">
-                {dirname(entry.path) || '/'}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      <FileFinder
+        tree={tree}
+        value={query}
+        onChange={setQuery}
+        onOpen={(path) => void controller.openFile(path)}
+        label="Find a file"
+        disabled={treeBusy}
+        className={searching ? 'min-h-0 flex-1' : 'shrink-0'}
+      />
 
       <div
         ref={scroller}
@@ -634,12 +641,24 @@ function Sidebar() {
         )}
       </div>
 
-      {menu && (
+      {menu && !treeBusy && (
         <ContextMenu
           label="Tree actions"
           x={menu.x}
           y={menu.y}
-          items={treeMenuItems(menu.parent, startNew)}
+          items={treeMenuItems(
+            menu.parent,
+            menu.entry,
+            startNew,
+            (entry) => {
+              setConfirm(null)
+              setEditing({ kind: 'rename', path: entry.path })
+            },
+            (entry) => {
+              setEditing(null)
+              setConfirm(entry.path)
+            },
+          )}
           onDone={(restoreFocus) => {
             setMenu(null)
             if (restoreFocus) rowElement(root.current, tabStop)?.focus()

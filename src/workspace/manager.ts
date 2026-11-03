@@ -1,4 +1,4 @@
-import { idbAll, idbDelete, idbGet, idbPut } from './db'
+import { idbAll, idbGet, idbPut, linkKey } from './db'
 import type { LinkedFolder } from './diskMirror'
 import type { FSBackend, WorkspaceFS } from './types'
 
@@ -23,6 +23,85 @@ export interface WorkspaceMeta {
 
 const MAX_NAME = 100
 
+const CHANNEL_NAME = 'daedalus-workspaces'
+
+/**
+ * A change made in another tab. `ws` is the workspace whose files changed, or null when
+ * the workspace list changed.
+ */
+export interface RemoteChange {
+  ws: string | null
+}
+
+type Listener = (change: RemoteChange) => void
+const listeners = new Set<Listener>()
+let channel: BroadcastChannel | null = null
+
+/** One channel per page, shared by every manager. Null where BroadcastChannel is missing. */
+function bus(): BroadcastChannel | null {
+  if (channel) return channel
+  if (typeof BroadcastChannel !== 'function') return null
+  channel = new BroadcastChannel(CHANNEL_NAME)
+  channel.onmessage = (e: MessageEvent<RemoteChange>) => {
+    for (const fn of listeners) fn(e.data)
+  }
+  // Do not keep a Node test process alive; browsers ignore this.
+  ;(channel as unknown as { unref?: () => void }).unref?.()
+  return channel
+}
+
+function announce(change: RemoteChange) {
+  bus()?.postMessage(change)
+}
+
+/** Runs writes through the backend, then tells the other tabs which workspace changed. */
+class AnnouncingFS implements WorkspaceFS {
+  private readonly inner: WorkspaceFS
+  private readonly ws: string
+
+  constructor(inner: WorkspaceFS, ws: string) {
+    this.inner = inner
+    this.ws = ws
+  }
+
+  private async changed<T>(op: Promise<T>): Promise<T> {
+    const result = await op
+    announce({ ws: this.ws })
+    return result
+  }
+
+  list(dir: string) {
+    return this.inner.list(dir)
+  }
+  listAll() {
+    return this.inner.listAll()
+  }
+  stat(path: string) {
+    return this.inner.stat(path)
+  }
+  read(path: string) {
+    return this.inner.read(path)
+  }
+  readBytes(path: string) {
+    return this.inner.readBytes(path)
+  }
+  write(path: string, content: string) {
+    return this.changed(this.inner.write(path, content))
+  }
+  writeBytes(path: string, data: Uint8Array) {
+    return this.changed(this.inner.writeBytes(path, data))
+  }
+  mkdir(path: string) {
+    return this.changed(this.inner.mkdir(path))
+  }
+  remove(path: string) {
+    return this.changed(this.inner.remove(path))
+  }
+  rename(from: string, to: string) {
+    return this.changed(this.inner.rename(from, to))
+  }
+}
+
 export function cleanWorkspaceName(name: string): string {
   const n = name.trim()
   if (!n) throw new Error('Workspace name cannot be empty')
@@ -42,10 +121,6 @@ export async function sourceKey(name: string, filePaths: string[]): Promise<stri
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-function linkKey(id: string): string {
-  return `link:${id}`
-}
-
 export class WorkspaceManager {
   readonly backend: FSBackend
   private readonly db: IDBDatabase
@@ -56,7 +131,17 @@ export class WorkspaceManager {
   }
 
   fs(id: string): WorkspaceFS {
-    return this.backend.open(id)
+    // Writes are refused once the workspace record is gone (deleted here or in another tab).
+    return new AnnouncingFS(this.backend.open(id, { requireWorkspace: true }), id)
+  }
+
+  /** Calls `fn` when another tab changes a workspace's files or the workspace list. */
+  onRemoteChange(fn: Listener): () => void {
+    bus()
+    listeners.add(fn)
+    return () => {
+      listeners.delete(fn)
+    }
   }
 
   async list(): Promise<WorkspaceMeta[]> {
@@ -88,8 +173,9 @@ export class WorkspaceManager {
       ...(source ? { source } : {}),
       ...(importing ? { importing: true } : {}),
     }
-    await this.fs(meta.id).mkdir('')
+    // The record comes first: writes to a workspace are refused without one.
     await idbPut(this.db, 'workspaces', meta.id, meta)
+    announce({ ws: null })
     return meta
   }
 
@@ -113,8 +199,10 @@ export class WorkspaceManager {
     return this.update(id, { scratchChecked: true })
   }
 
-  rename(id: string, name: string): Promise<WorkspaceMeta> {
-    return this.update(id, { name: cleanWorkspaceName(name) })
+  async rename(id: string, name: string): Promise<WorkspaceMeta> {
+    const meta = await this.update(id, { name: cleanWorkspaceName(name) })
+    announce({ ws: null })
+    return meta
   }
 
   saveSession(
@@ -135,11 +223,10 @@ export class WorkspaceManager {
     return idbPut(this.db, 'settings', linkKey(id), folder)
   }
 
-  /** Deletes files first, so a crash leaves a visible (empty) workspace, not leaked data. */
+  /** Files, record and link are removed in one transaction (see `IdbBackend.destroy`). */
   async remove(id: string): Promise<void> {
     await this.backend.destroy(id)
-    await idbDelete(this.db, 'workspaces', id)
-    await idbDelete(this.db, 'settings', linkKey(id))
+    announce({ ws: null })
   }
 
   async getLastId(): Promise<string | null> {

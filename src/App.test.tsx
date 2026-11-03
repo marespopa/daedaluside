@@ -1,8 +1,36 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { getDefaultStore } from 'jotai'
 import App from './App'
+import { runEx } from './editor/testing/runEx'
+import { editorHandleAtom } from './state/editorAtoms'
 
 describe('App', () => {
+  it('opens the file tree with :Explore and closes it when the editor is clicked', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const tree = screen.getByLabelText('File tree')
+    expect(tree).toHaveAttribute('aria-hidden', 'true')
+
+    const view = getDefaultStore().get(editorHandleAtom)!.view
+    act(() => runEx(view, 'Explore'))
+    expect(tree).toHaveAttribute('aria-hidden', 'false')
+
+    await user.click(screen.getByRole('main'))
+    expect(tree).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it('toggles the file tree with Mod-B', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const tree = screen.getByLabelText('File tree')
+
+    await user.keyboard('{Control>}b{/Control}')
+    expect(tree).toHaveAttribute('aria-hidden', 'false')
+    await user.keyboard('{Control>}b{/Control}')
+    expect(tree).toHaveAttribute('aria-hidden', 'true')
+  })
+
   it('renders the editor with no visible chrome', () => {
     render(<App />)
     expect(

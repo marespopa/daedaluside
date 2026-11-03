@@ -167,6 +167,69 @@ describe('tab strip', () => {
     })
   })
 
+  it('saves the active dirty file from the header button', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await scratchTab()
+    await openTabs(a.store, 'a.ts')
+
+    const save = screen.getByRole('button', { name: 'Save' })
+    expect(save).toBeDisabled()
+
+    type(a.store, 'draft')
+    expect(save).toBeEnabled()
+
+    const fs = (ctl(a.store) as unknown as { fs: WorkspaceFS }).fs
+    const originalWrite = fs.write.bind(fs)
+    let finishWrite!: () => void
+    vi.spyOn(fs, 'write').mockImplementation(async (path, text) => {
+      await new Promise<void>((resolve) => {
+        finishWrite = resolve
+      })
+      await originalWrite(path, text)
+    })
+    await user.click(save)
+
+    const saving = screen.getByRole('button', { name: 'Saving' })
+    expect(saving).toBeDisabled()
+    expect(saving.querySelector('span')).toHaveClass('animate-spin')
+    await act(async () => finishWrite())
+
+    await waitFor(async () => {
+      expect(await onDisk(a.store, 'a.ts')).toBe('draft')
+      expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    })
+  })
+
+  it('shows a failed-save state on the header button and allows retry', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await scratchTab()
+    await openTabs(a.store, 'a.ts')
+    type(a.store, 'draft')
+
+    const fs = (ctl(a.store) as unknown as { fs: WorkspaceFS }).fs
+    let failWrite!: (error: Error) => void
+    vi.spyOn(fs, 'write').mockImplementation(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          failWrite = reject
+        }),
+    )
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    const saving = screen.getByRole('button', { name: 'Saving' })
+    expect(saving).toBeDisabled()
+    expect(saving.querySelector('span')).toHaveClass('animate-spin')
+    await act(async () => failWrite(new Error('disk full')))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('disk full')
+    const save = screen.getByRole('button', { name: 'Save failed' })
+    expect(save).toBeEnabled()
+    expect(save).toHaveClass('text-diff-remove-fg')
+    expect(save).toHaveAttribute('title', 'Save failed — retry (Ctrl+S)')
+  })
+
   it('dragging a tab onto the right half of another moves it there', async () => {
     const a = mount()
     await scratchTab()

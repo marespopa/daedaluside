@@ -1,4 +1,4 @@
-import { EditorState, StateEffect, type Text } from '@codemirror/state'
+import { EditorSelection, EditorState, StateEffect, type Text } from '@codemirror/state'
 import { EditorView, type ViewUpdate } from '@codemirror/view'
 import type { createStore } from 'jotai'
 import type { EditorHandle } from '../editor/createEditor'
@@ -12,8 +12,10 @@ import {
   activePathAtom,
   copyStatusAtom,
   currentWorkspaceIdAtom,
+  deletingPathsAtom,
   importStatusAtom,
   linkedFolderAtom,
+  reconnectPromptAtom,
   noticeAtom,
   openBuffersAtom,
   pendingPathsAtom,
@@ -25,6 +27,7 @@ import {
 } from '../state/workspaceAtoms'
 import {
   moveTab,
+  nextTab,
   openTab,
   othersToClose,
   partitionPinned,
@@ -50,7 +53,12 @@ import { openDB } from './db'
 import { DiskMirror, isAccessDenied, type LinkedFolder } from './diskMirror'
 import { ImportQueue, type CopyProgress } from './importQueue'
 import { createBackend } from './fs'
-import { sourceKey, WorkspaceManager, type WorkspaceMeta } from './manager'
+import {
+  sourceKey,
+  WorkspaceManager,
+  type RemoteChange,
+  type WorkspaceMeta,
+} from './manager'
 import { startSnapshotSync } from './snapshot'
 import { depthFirst, isWithin, normalizePath } from './path'
 import { requestPersistence } from './storage'
@@ -73,6 +81,8 @@ const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 export const AUTOSAVE_MS = 800
 const SESSION_SAVE_MS = 500
+/** Changes from other tabs arrive in bursts (one per autosave); refresh once per burst. */
+const REMOTE_DEBOUNCE_MS = 50
 const MAX_OPEN_BYTES = 5 * 1024 * 1024
 const DEFAULT_WORKSPACE = 'Workspace'
 const ENCODER = new TextEncoder()
@@ -116,6 +126,8 @@ export class WorkspaceController {
   private linkPaused = false
   /** Disk writes run one at a time, in order, so a rename cannot race a save. */
   private diskChain: Promise<unknown> = Promise.resolve()
+  private remoteTimer: ReturnType<typeof setTimeout> | undefined
+  private unsubscribeRemote: (() => void) | null = null
 
   constructor(store: Store) {
     this.store = store
@@ -136,6 +148,8 @@ export class WorkspaceController {
     const db = await openDB()
     const backend = await createBackend(db)
     const manager = (this.manager = new WorkspaceManager(db, backend))
+    this.unsubscribeRemote?.()
+    this.unsubscribeRemote = manager.onRemoteChange((c) => this.onRemoteChange(c))
     let list = await manager.list()
     // A page closed mid-import leaves a partial copy behind. It cannot be resumed, so remove it.
     const interrupted = list.filter((w) => w.importing)
@@ -242,6 +256,15 @@ export class WorkspaceController {
     this.store.set(copyStatusAtom, queue.status())
   }
 
+  /** Refreshes the tree on demand (Ctrl-R), reporting storage failures as a notice. */
+  async refreshWorkspace() {
+    try {
+      await this.refreshTree()
+    } catch (e) {
+      this.fail(e)
+    }
+  }
+
   private currentImport(): ImportQueue | undefined {
     return this.wsId ? this.imports.get(this.wsId) : undefined
   }
@@ -255,6 +278,118 @@ export class WorkspaceController {
 
   private async refreshWorkspaces() {
     if (this.manager) this.store.set(workspacesAtom, await this.manager.list())
+  }
+
+  // ---- other tabs -----------------------------------------------------
+
+  /**
+   * Another tab wrote to this page's storage. The workspace list is cheap to reload. The
+   * current workspace's tree and open files are refreshed, debounced over a burst.
+   */
+  private onRemoteChange(change: RemoteChange) {
+    if (change.ws === null) {
+      void this.refreshWorkspaces().then(() => this.leaveIfDeleted())
+      return
+    }
+    if (change.ws !== this.wsId) return
+    clearTimeout(this.remoteTimer)
+    this.remoteTimer = setTimeout(() => {
+      this.remoteTimer = undefined
+      void this.syncFromDisk()
+    }, REMOTE_DEBOUNCE_MS)
+  }
+
+  /**
+   * Another tab deleted the workspace open here. Its tabs are dropped without saving (a save
+   * would fail anyway), and another workspace opens.
+   */
+  private async leaveIfDeleted() {
+    const manager = this.manager
+    const id = this.wsId
+    if (!manager || !id || (await manager.get(id))) return
+    this.discardCurrent()
+    this.wsId = null
+    this.fs = null
+    this.notify('info', 'This workspace was deleted in another tab.')
+    let list = await manager.list()
+    if (list.length === 0) {
+      await this.createDefault(manager)
+      list = await manager.list()
+    }
+    this.store.set(workspacesAtom, list)
+    await this.switchTo(list[0]!.id)
+  }
+
+  /**
+   * Brings the tree and open tabs up to date with storage. A tab with unsaved edits keeps
+   * them: its text is not replaced, and the user is told the file changed elsewhere.
+   */
+  private async syncFromDisk() {
+    const fs = this.fs
+    if (!fs) return
+    const epoch = this.epoch
+    await this.refreshTree()
+    for (const path of [...this.buffers.keys()]) {
+      if (epoch !== this.epoch) return
+      const b = this.buffers.get(path)
+      if (!b || b.timer !== undefined || b.saveError) continue
+      const st = await fs.stat(path)
+      if (epoch !== this.epoch || this.buffers.get(path) !== b) return
+      if (!st || st.kind !== 'file') {
+        if (!b.dirty) await this.closeTabs([path])
+        else
+          this.notify('error', `${path} was deleted in another tab. Save to recreate it.`)
+        continue
+      }
+      const disk = await fs.read(path)
+      if (epoch !== this.epoch || this.buffers.get(path) !== b) return
+      const savedText = b.saved.toString()
+      if (disk === savedText) continue
+      if (b.dirty) {
+        this.notify(
+          'info',
+          `${path} changed in another tab. Your unsaved edits are kept and will replace it on save.`,
+        )
+        continue
+      }
+      this.replaceClean(path, b, disk)
+    }
+  }
+
+  /** Swaps a clean buffer's text for the text on disk, keeping the cursor where it was. */
+  private replaceClean(path: string, b: Buffer, text: string) {
+    const live = path === this.active && this.handle ? this.handle.view.state : null
+    const oldHead = (live ?? b.state).selection.main.head
+    const created = this.handle
+      ? this.handle.createState(text)
+      : EditorState.create({ doc: text })
+    const state = created.update({
+      selection: EditorSelection.cursor(Math.min(oldHead, text.length)),
+    }).state
+    b.state = state
+    b.saved = state.doc
+    b.dirty = false
+    // A new state has no language. It is set again here (active) or when the tab is shown.
+    b.languageSet = false
+    if (live && this.handle) {
+      const h = this.handle
+      h.setState(state)
+      b.languageSet = true
+      void h.setLanguage(path).then((language) => {
+        if (this.active === path)
+          this.store.set(activeBufferAtom, (m) => ({ ...m, language }))
+      })
+      const head = state.selection.main.head
+      const line = state.doc.lineAt(head)
+      this.store.set(activeBufferAtom, (m) => ({
+        ...m,
+        dirty: false,
+        line: line.number,
+        column: head - line.from + 1,
+        length: state.doc.length,
+      }))
+    }
+    this.publishBuffers()
   }
 
   // ---- showing buffers in the editor ----------------------------------
@@ -403,13 +538,24 @@ export class WorkspaceController {
     this.scheduleSession()
   }
 
-  /** Closes tabs, saving dirty ones first. A tab whose save fails stays open with its edits. */
-  async closeTabs(paths: readonly string[], prefer?: string) {
+  /**
+   * Closes tabs, saving dirty ones first. A tab whose save fails stays open with its edits.
+   * With `discard`, unsaved edits are dropped and nothing is written.
+   */
+  async closeTabs(
+    paths: readonly string[],
+    prefer?: string,
+    opts: { discard?: boolean } = {},
+  ) {
     const epoch = this.epoch
     const ready: string[] = []
     for (const p of paths) {
       const b = this.buffers.get(p)
       if (!b) continue
+      if (opts.discard) {
+        ready.push(p)
+        continue
+      }
       if (b.dirty) await this.save(p) // autosave semantics: closing never discards edits
       if (epoch !== this.epoch) return // the workspace changed while saving
       if (this.buffers.get(p)?.saveError) continue
@@ -421,6 +567,16 @@ export class WorkspaceController {
 
   closeBuffer(path: string) {
     return this.closeTabs([path])
+  }
+
+  /** Closes a tab without saving its unsaved edits. The file keeps its last saved text. */
+  discardBuffer(path: string) {
+    return this.closeTabs([path], undefined, { discard: true })
+  }
+
+  cycleTab(delta: 1 | -1) {
+    const next = nextTab(this.tabState(), delta)
+    if (next !== null && next !== this.active) this.activate(next)
   }
 
   closeOthers(path: string) {
@@ -452,6 +608,17 @@ export class WorkspaceController {
     try {
       await navigator.clipboard.writeText(path)
       this.notify('info', `Copied ${path}`)
+    } catch {
+      this.notify('error', 'Could not copy to the clipboard')
+    }
+  }
+
+  /** Browser workspaces expose no OS path, so the absolute form is workspace-rooted. */
+  async copyAbsolutePath(path: string) {
+    try {
+      const absolute = `/${path}`
+      await navigator.clipboard.writeText(absolute)
+      this.notify('info', `Copied ${absolute}`)
     } catch {
       this.notify('error', 'Could not copy to the clipboard')
     }
@@ -499,6 +666,78 @@ export class WorkspaceController {
 
   async flushAll(): Promise<void> {
     await Promise.all([...this.buffers.keys()].map((p) => this.save(p)))
+  }
+
+  /** Keys typed on the blank page while an untitled file is being created. */
+  private untitledTyping: { text: string } | null = null
+
+  /**
+   * Creates Untitled-N.md and opens it. Keys typed while it opens are kept and inserted
+   * once it is shown, so typing on the blank page loses nothing.
+   */
+  async startUntitled(initial = ''): Promise<void> {
+    if (this.untitledTyping) {
+      this.untitledTyping.text += initial
+      return
+    }
+    const typing = { text: initial }
+    this.untitledTyping = typing
+    try {
+      this.assertCopied('New files')
+      const fs = this.requireFS()
+      const path = await this.nextUntitledPath(fs)
+      await fs.write(path, '')
+      await this.mirrored((m) => m.writeFile(path, new Uint8Array()))
+      await this.refreshTree()
+      await this.openFile(path)
+      // openFile has focused the editor, so later keys go there directly.
+      this.untitledTyping = null
+      if (typing.text) this.appendToBuffer(path, typing.text)
+    } catch (e) {
+      this.fail(e)
+    } finally {
+      this.untitledTyping = null
+    }
+  }
+
+  private async nextUntitledPath(fs: WorkspaceFS): Promise<string> {
+    for (let n = 1; ; n++) {
+      const path = `Untitled-${n}.md`
+      if (!(await fs.stat(path))) return path
+    }
+  }
+
+  /** Adds text at the end of an open buffer, as typing would. Autosave picks it up. */
+  private appendToBuffer(path: string, text: string) {
+    const b = this.buffers.get(path)
+    if (!b) return
+    if (this.handle && this.active === path) {
+      const at = this.handle.view.state.doc.length
+      // The editor's update listener marks the buffer dirty and schedules the save.
+      this.handle.view.dispatch({
+        changes: { from: at, insert: text },
+        selection: EditorSelection.cursor(at + text.length),
+      })
+      return
+    }
+    const at = b.state.doc.length
+    b.state = b.state.update({
+      changes: { from: at, insert: text },
+      selection: EditorSelection.cursor(at + text.length),
+    }).state
+    b.dirty = !b.state.doc.eq(b.saved)
+    clearTimeout(b.timer)
+    b.timer = b.dirty ? setTimeout(() => void this.save(path), AUTOSAVE_MS) : undefined
+    this.publishBuffers()
+  }
+
+  /**
+   * Shows the blank page (the opener) without closing any tab. The open tabs stay in the
+   * strip; clicking one brings its file back.
+   */
+  showHome() {
+    if (this.active === null) return
+    this.commit({ tabs: this.tabs, active: null })
   }
 
   // ---- files and folders ----------------------------------------------
@@ -575,17 +814,61 @@ export class WorkspaceController {
   }
 
   async deletePath(rawPath: string) {
+    let deletingPath: string | null = null
+    let fs: WorkspaceFS | null = null
+    let epoch = this.epoch
+    let before: Awaited<ReturnType<typeof walkTree>> = []
+    let started = false
     try {
       const path = normalizePath(rawPath)
+      deletingPath = path
       this.assertCopied('Deleting')
-      const fs = this.requireFS()
+      fs = this.requireFS()
+      epoch = this.epoch
+      if (this.store.get(deletingPathsAtom).size > 0) return
+      before = this.store.get(treeAtom)
+      this.store.set(deletingPathsAtom, (current) => new Set(current).add(path))
+      started = true
+      this.store.set(treeAtom, (entries) =>
+        entries.filter((entry) => !isWithin(entry.path, path)),
+      )
+
       await fs.remove(path)
-      await this.mirrored((m) => m.remove(path))
+      if (this.fs !== fs || this.epoch !== epoch) return
+
       const gone = [...this.buffers.keys()].filter((p) => isWithin(p, path))
       this.commit(removeTabs(this.tabState(), gone), { removed: gone })
+      const diskError = await this.toDisk((m) => m.remove(path))
+      if (this.fs !== fs || this.epoch !== epoch) return
       await this.refreshTree()
+      if (diskError) {
+        const detail = diskError.message.replace(/^Saved in the app, not on disk:\s*/, '')
+        this.notify(
+          'error',
+          `Deleted "${path}" in the app, but could not remove it from the linked folder: ${detail}`,
+        )
+      } else {
+        this.notify('info', `Deleted "${path}".`)
+      }
     } catch (e) {
+      if (fs && this.fs === fs && this.epoch === epoch) {
+        try {
+          await this.refreshTree()
+        } catch {
+          // Keep the pre-delete tree visible if the filesystem cannot be listed either.
+          this.store.set(treeAtom, before)
+        }
+      }
       this.fail(e)
+    } finally {
+      if (started && deletingPath !== null) {
+        const path = deletingPath
+        this.store.set(deletingPathsAtom, (current) => {
+          const next = new Set(current)
+          next.delete(path)
+          return next
+        })
+      }
     }
   }
 
@@ -594,6 +877,23 @@ export class WorkspaceController {
   private requireManager(): WorkspaceManager {
     if (!this.manager) throw new Error('Workspaces are not ready yet')
     return this.manager
+  }
+
+  /** Forgets the open tabs and their timers, without saving. The caller has decided to drop them. */
+  private discardCurrent() {
+    for (const b of this.buffers.values()) clearTimeout(b.timer)
+    this.mirror = null
+    this.buffers = new Map()
+    this.tabs = []
+    this.active = null
+  }
+
+  /** Creates a workspace named "Workspace N", the first N not already used, and opens it. */
+  async newWorkspace() {
+    const names = new Set(this.store.get(workspacesAtom).map((w) => w.name))
+    let n = 1
+    while (names.has(`Workspace ${n}`)) n++
+    await this.createWorkspace(`Workspace ${n}`)
   }
 
   async switchTo(id: string) {
@@ -681,13 +981,7 @@ export class WorkspaceController {
     try {
       const manager = this.requireManager()
       this.cancelCopy(id)
-      if (id === this.wsId) {
-        for (const b of this.buffers.values()) clearTimeout(b.timer)
-        this.mirror = null // nothing to write back: the workspace is going away
-        this.buffers = new Map() // nothing to save: the workspace is going away
-        this.tabs = []
-        this.active = null
-      }
+      if (id === this.wsId) this.discardCurrent() // the workspace is going away: nothing to save
       await manager.remove(id)
       let list = await manager.list()
       if (list.length === 0) {
@@ -879,10 +1173,10 @@ export class WorkspaceController {
 
   private publishLink() {
     const m = this.mirror
-    this.store.set(
-      linkedFolderAtom,
-      m ? { name: m.root.name, paused: this.linkPaused } : null,
-    )
+    const paused = m ? this.linkPaused : false
+    this.store.set(linkedFolderAtom, m ? { name: m.root.name, paused } : null)
+    // Ask on open and after a failed write. A dismissed prompt stays dismissed until then.
+    this.store.set(reconnectPromptAtom, paused)
   }
 
   /** Reads the folder linked to a workspace. Write access is checked without prompting. */
@@ -913,7 +1207,7 @@ export class WorkspaceController {
     if (this.linkPaused)
       return Promise.resolve(
         new Error(
-          `Saved in the app, not on disk: "${m.root.name}" is not connected. Reconnect it in the sidebar.`,
+          `Saved in the app, not on disk: "${m.root.name}" is not connected. Reconnect the folder to write it to disk.`,
         ),
       )
     const run = this.diskChain.then(async (): Promise<Error | null> => {

@@ -1,6 +1,6 @@
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
-import { editorWidthAtom } from '../state/editorAtoms'
+import { editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
 import {
   activePathAtom,
   importStatusAtom,
@@ -16,6 +16,7 @@ import EditorSkeleton from './EditorSkeleton'
 export default function Editor() {
   const host = useRef<HTMLDivElement>(null)
   const controller = useController()
+  const store = useStore()
   const activePath = useAtomValue(activePathAtom)
   const status = useAtomValue(workspaceStatusAtom)
   const snapshot = useAtomValue(snapshotAtom)
@@ -32,12 +33,17 @@ export default function Editor() {
       // Only metadata goes to Jotai; the controller owns buffer text and states.
       onUpdate: (u) => controller.onEditorUpdate(u),
     })
+    handle.setVim(store.get(vimEnabledAtom))
     controller.attach(handle)
+    const unsubscribe = store.sub(vimEnabledAtom, () =>
+      handle.setVim(store.get(vimEnabledAtom)),
+    )
     return () => {
+      unsubscribe()
       controller.detach()
       handle.destroy()
     }
-  }, [controller])
+  }, [controller, store])
 
   return (
     <div className="relative h-full" data-editor-width={width}>

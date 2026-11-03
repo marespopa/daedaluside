@@ -112,19 +112,24 @@ describe('write-back to a linked folder', () => {
     const store = mount()
     await openFolder(store, disk, 'README.md')
     const tree = await screen.findByRole('complementary', { name: 'File tree' })
-    await user.click(within(tree).getByRole('button', { name: 'Expand all folders' }))
+    await user.click(within(tree).getByRole('button', { name: 'src' }))
 
     fireEvent.contextMenu(tree)
     await user.click(await screen.findByRole('menuitem', { name: 'New file' }))
     await user.type(within(tree).getByLabelText('New file name'), 'lib/b.ts{Enter}')
-    await waitFor(() => expect(disk.files.has('lib/b.ts')).toBe(true))
+    await waitFor(() => {
+      expect(disk.files.has('lib/b.ts')).toBe(true)
+      expect(store.get(treeAtom).some((entry) => entry.path === 'lib')).toBe(true)
+    })
+    await user.click(within(tree).getByRole('button', { name: 'lib' }))
 
     fireEvent.contextMenu(tree)
     await user.click(await screen.findByRole('menuitem', { name: 'New folder' }))
     await user.type(within(tree).getByLabelText('New folder name'), 'empty{Enter}')
     await waitFor(() => expect(disk.dirs.has('empty')).toBe(true))
 
-    await user.click(within(tree).getByRole('button', { name: 'Rename a.ts' }))
+    fireEvent.contextMenu(within(tree).getByRole('button', { name: 'a.ts' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Rename' }))
     await user.type(
       within(tree).getByLabelText('Rename a.ts'),
       '{Control>}a{/Control}c.ts{Enter}',
@@ -133,10 +138,11 @@ describe('write-back to a linked folder', () => {
     expect(disk.files.has('src/a.ts')).toBe(false)
     expect(dec(disk.files.get('src/c.ts'))).toBe('export const a = 1\n')
 
-    // The trash button leaves the DOM once the row asks to confirm, so keep the row itself.
-    const deleteB = await within(tree).findByRole('button', { name: 'Delete b.ts' })
-    const row = deleteB.closest<HTMLElement>('li[role="treeitem"]')!
-    await user.click(deleteB)
+    fireEvent.contextMenu(within(tree).getByRole('button', { name: 'b.ts' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    const row = within(tree)
+      .getByText('Delete b.ts?')
+      .closest<HTMLElement>('li[role="treeitem"]')!
     await user.click(within(row).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(disk.files.has('lib/b.ts')).toBe(false))
   })
@@ -179,6 +185,49 @@ describe('write-back to a linked folder', () => {
     second.set(sidebarOpenAtom, true)
     expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeInTheDocument()
     expect(second.get(treeAtom).some((e) => e.path === 'src/a.ts')).toBe(true)
+  })
+
+  it('reconnect dialog: shown on open without the grant, and Reconnect folder restores it', async () => {
+    const user = userEvent.setup()
+    const disk = sampleDisk()
+    const first = mount()
+    await openFolder(first, disk, 'README.md')
+    cleanup()
+
+    disk.access = 'prompt' // a new page load: the browser asks again
+    const second = mount()
+    await ready(second)
+    const dialog = await screen.findByRole('dialog', { name: 'Reconnect proj?' })
+    await user.click(within(dialog).getByRole('button', { name: 'Reconnect folder' }))
+
+    await waitFor(() =>
+      expect(second.get(linkedFolderAtom)).toEqual({ name: 'proj', paused: false }),
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('reconnect dialog: Later hides it until the next open', async () => {
+    const user = userEvent.setup()
+    const disk = sampleDisk()
+    const first = mount()
+    await openFolder(first, disk, 'README.md')
+    cleanup()
+
+    disk.access = 'prompt'
+    const second = mount()
+    await ready(second)
+    const dialog = await screen.findByRole('dialog', { name: 'Reconnect proj?' })
+    await user.click(within(dialog).getByRole('button', { name: 'Later' }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(second.get(linkedFolderAtom)).toEqual({ name: 'proj', paused: true })
+    cleanup()
+
+    const third = mount()
+    await ready(third)
+    expect(
+      await screen.findByRole('dialog', { name: 'Reconnect proj?' }),
+    ).toBeInTheDocument()
   })
 
   it('a file finishing its open does not take focus from a name being typed', async () => {

@@ -46,10 +46,21 @@ export interface WorkspaceFS {
   rename(from: string, to: string): Promise<void>
 }
 
+export interface OpenOptions {
+  /**
+   * Writes fail once the workspace record is gone (deleted, possibly in another tab),
+   * so a stale tab cannot recreate files for a deleted workspace.
+   */
+  requireWorkspace?: boolean
+}
+
 export interface FSBackend {
-  readonly kind: 'opfs' | 'idb'
-  open(workspaceId: string): WorkspaceFS
-  /** Deletes all data of a workspace. */
+  readonly kind: 'idb'
+  open(workspaceId: string, opts?: OpenOptions): WorkspaceFS
+  /**
+   * Deletes a workspace: its files, its metadata and its linked-folder record, in one
+   * transaction so no write can land in between.
+   */
   destroy(workspaceId: string): Promise<void>
   close(): void
 }

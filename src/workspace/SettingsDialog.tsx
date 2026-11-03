@@ -1,5 +1,6 @@
 import { useAtom, useAtomValue, useStore } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
+import { vimEnabledAtom } from '../state/editorAtoms'
 import { settingsOpenAtom, workspaceStatusAtom } from '../state/workspaceAtoms'
 import { Button } from '../ui'
 import {
@@ -18,6 +19,7 @@ export default function SettingsDialog() {
 function Dialog({ onClose }: { onClose: () => void }) {
   const store = useStore()
   const status = useAtomValue(workspaceStatusAtom)
+  const [vim, setVim] = useAtom(vimEnabledAtom)
   const [info, setInfo] = useState<StorageInfo | null>(null)
   const closeBtn = useRef<HTMLButtonElement>(null)
 
@@ -71,11 +73,7 @@ function Dialog({ onClose }: { onClose: () => void }) {
           </h3>
           <p>
             Files are stored on this device using{' '}
-            {status.state === 'ready'
-              ? status.backend === 'opfs'
-                ? 'the origin private file system'
-                : 'IndexedDB (OPFS is unavailable in this browser)'
-              : '…'}
+            {status.state === 'ready' ? 'IndexedDB' : '…'}
             .
           </p>
           {info?.usage != null && info.quota != null ? (
@@ -121,6 +119,28 @@ function Dialog({ onClose }: { onClose: () => void }) {
               </Button>
             </>
           )}
+        </section>
+
+        <section aria-labelledby="editing-h" className="mt-5 space-y-2">
+          <h3 id="editing-h" className="text-xs tracking-wide text-muted uppercase">
+            Editing
+          </h3>
+          <div className="flex items-center justify-between gap-3">
+            <p>Vim mode</p>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-label="Vim mode"
+              aria-pressed={vim}
+              onClick={() => setVim(!vim)}
+            >
+              {vim ? 'On' : 'Off'}
+            </Button>
+          </div>
+          <p className="text-muted">
+            Modal editing with motions, text objects and : commands. :Explore opens the
+            file tree.
+          </p>
         </section>
       </div>
     </div>

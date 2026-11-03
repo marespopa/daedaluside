@@ -1,10 +1,15 @@
 import { useStore } from 'jotai'
 import { useEffect, useMemo } from 'react'
-import { editorHandleAtom } from '../state/editorAtoms'
+import { bindVimHost } from '../editor/vimMode'
+import { matchFiles } from '../editor/paletteSearch'
+import { editorHandleAtom, vimStatusAtom } from '../state/editorAtoms'
 import {
   activePathAtom,
+  fileTreeFocusAtom,
+  noticeAtom,
   settingsOpenAtom,
   sidebarOpenAtom,
+  treeAtom,
 } from '../state/workspaceAtoms'
 import { getController } from './controller'
 
@@ -14,7 +19,8 @@ export function useController() {
 }
 
 /**
- * Starts the workspace and installs Mod-B / Mod-S / Mod-, / Mod-Alt-W plus flush-on-hide.
+ * Starts the workspace, binds the Vim host, and installs Mod-B / Mod-S / Mod-, /
+ * Mod-Alt-W / Ctrl-W W plus flush-on-hide.
  * Mod-W is reserved by browsers, so closing a tab uses Mod-Alt-W.
  */
 export function useWorkspaceLifecycle() {
@@ -22,7 +28,50 @@ export function useWorkspaceLifecycle() {
   const controller = useController()
 
   useEffect(() => {
+    const notify = (text: string) => store.set(noticeAtom, { kind: 'error', text })
+    const closeActive = (discard: boolean) => {
+      const active = store.get(activePathAtom)
+      if (!active) return
+      void (discard ? controller.discardBuffer(active) : controller.closeBuffer(active))
+    }
+    bindVimHost({
+      save: () => void controller.saveActive(),
+      close: () => closeActive(false),
+      discard: () => closeActive(true),
+      open: (name) => {
+        if (name === '') return notify('Name a file to open, for example :e notes.md')
+        const files = store.get(treeAtom).filter((e) => e.kind === 'file')
+        const exact = files.find((f) => f.path === name)
+        const found = exact ? [exact] : matchFiles(files, name)
+        if (found.length === 1) return void controller.openFile(found[0]!.path)
+        if (found.length === 0) return notify(`No file matches ${name}`)
+        notify(
+          `${found.length} files match ${name}: ${found.map((f) => f.path).join(', ')}`,
+        )
+      },
+      cycle: (delta) => controller.cycleTab(delta),
+      explore: () => focusFileTree(store),
+      notify,
+      status: (next) => store.set(vimStatusAtom, next),
+    })
     void controller.init()
+    let windowPrefixAt = 0
+    const onWindowPrefix = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase()
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && key === 'w') {
+        // Stop the browser closing the tab before the second half of Ctrl-W W arrives.
+        e.preventDefault()
+        windowPrefixAt = Date.now()
+        return
+      }
+      const secondW = key === 'w' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+      if (secondW && Date.now() - windowPrefixAt < 1000) {
+        e.preventDefault()
+        e.stopPropagation()
+        toggleFileTreeFocus(store)
+      }
+      windowPrefixAt = 0
+    }
     const onKey = (e: KeyboardEvent) => {
       // Match the physical key: with Alt held, e.key can be a symbol (Option+W on macOS).
       if ((e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey && e.code === 'KeyW') {
@@ -35,7 +84,7 @@ export function useWorkspaceLifecycle() {
       const key = e.key.toLowerCase()
       if (key === 'b') {
         e.preventDefault()
-        store.set(sidebarOpenAtom, (o) => !o)
+        toggleFileTree(store)
       } else if (key === 's') {
         e.preventDefault() // never open the browser's "save page" dialog
         void controller.saveActive()
@@ -48,10 +97,13 @@ export function useWorkspaceLifecycle() {
       if (document.visibilityState === 'hidden') controller.flushOnHide()
     }
     const onPageHide = () => controller.flushOnHide()
+    window.addEventListener('keydown', onWindowPrefix, true)
     window.addEventListener('keydown', onKey)
     document.addEventListener('visibilitychange', onHide)
     window.addEventListener('pagehide', onPageHide)
     return () => {
+      bindVimHost(null)
+      window.removeEventListener('keydown', onWindowPrefix, true)
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('visibilitychange', onHide)
       window.removeEventListener('pagehide', onPageHide)
@@ -61,4 +113,27 @@ export function useWorkspaceLifecycle() {
 
 export function focusEditor(store: ReturnType<typeof useStore>) {
   store.get(editorHandleAtom)?.view.focus()
+}
+
+function fileTreeHasFocus() {
+  const active = document.activeElement
+  return active instanceof Element && active.closest('[aria-label="File tree"]') !== null
+}
+
+export function focusFileTree(store: ReturnType<typeof useStore>) {
+  store.set(sidebarOpenAtom, true)
+  store.set(fileTreeFocusAtom, (n) => n + 1)
+}
+
+export function toggleFileTree(store: ReturnType<typeof useStore>) {
+  if (store.get(sidebarOpenAtom)) {
+    store.set(sidebarOpenAtom, false)
+    if (fileTreeHasFocus()) focusEditor(store)
+  } else focusFileTree(store)
+}
+
+/** Ctrl-W W: change focus without closing the drawer. */
+export function toggleFileTreeFocus(store: ReturnType<typeof useStore>) {
+  if (fileTreeHasFocus()) focusEditor(store)
+  else focusFileTree(store)
 }

@@ -10,12 +10,15 @@ import {
   editorWidthAtom,
   paletteOpenAtom,
   paletteQueryAtom,
+  vimEnabledAtom,
 } from '../state/editorAtoms'
 import {
   activePathAtom,
+  currentWorkspaceIdAtom,
   settingsOpenAtom,
   sidebarOpenAtom,
   treeAtom,
+  workspacesAtom,
 } from '../state/workspaceAtoms'
 import { GlassPopover, Input } from '../ui'
 import { joinPath } from '../workspace/path'
@@ -50,6 +53,8 @@ export default function CommandPalette() {
   const setWidth = useSetAtom(editorWidthAtom)
   const tree = useAtomValue(treeAtom)
   const activePath = useAtomValue(activePathAtom)
+  const workspaces = useAtomValue(workspacesAtom)
+  const currentId = useAtomValue(currentWorkspaceIdAtom)
   const folders = useMemo(() => tree.filter((e) => e.kind === 'dir'), [tree])
   const createEntry = useCallback(
     (kind: NewEntryRequest['kind'], path: string) =>
@@ -74,6 +79,12 @@ export default function CommandPalette() {
         e.preventDefault()
         if (store.get(paletteOpenAtom)) store.set(paletteOpenAtom, false)
         else show('')
+      } else if (key === 'n' && !e.shiftKey) {
+        e.preventDefault()
+        void controller.startUntitled('')
+      } else if (key === 'o' && !e.shiftKey) {
+        e.preventDefault()
+        show(`${COMMAND_PREFIX}Workspace: `)
       }
     }
     // Double Shift also opens the command palette (IntelliJ-style). Ignored while it is open.
@@ -91,7 +102,7 @@ export default function CommandPalette() {
       window.removeEventListener('keydown', onDown)
       window.removeEventListener('keyup', onUp)
     }
-  }, [store])
+  }, [store, controller])
 
   const openFile = useCallback(
     (path: string) => void controller.openFile(path),
@@ -119,11 +130,16 @@ export default function CommandPalette() {
         label: 'File: Close Buffer',
         run: () => activePath && void controller.closeBuffer(activePath),
       },
-      { id: 'tree', label: 'View: Toggle File Tree', run: () => setSidebar((o) => !o) },
+      { id: 'tree', label: 'View: Open File Tree (:Explore)', run: () => setSidebar(true) },
       {
         id: 'width',
         label: 'View: Toggle Full Width',
         run: () => setWidth(store.get(editorWidthAtom) === 'full' ? 'measured' : 'full'),
+      },
+      {
+        id: 'vim',
+        label: 'Editor: Toggle Vim Mode',
+        run: () => store.set(vimEnabledAtom, !store.get(vimEnabledAtom)),
       },
       {
         id: 'tab-close-others',
@@ -163,6 +179,31 @@ export default function CommandPalette() {
       { id: 'settings', label: 'Settings: Storage', run: () => setSettings(true) },
       { id: 'new-file', label: 'File: New File', enter: { kind: 'file' } },
       { id: 'new-folder', label: 'File: New Folder', enter: { kind: 'folder' } },
+      {
+        id: 'new-scratch',
+        label: 'File: New Scratch Buffer',
+        run: () => void controller.startUntitled(''),
+      },
+      { id: 'ws-new', label: 'Workspace: New', run: () => void controller.newWorkspace() },
+      {
+        id: 'ws-delete',
+        label: 'Workspace: Delete Current',
+        run: () => {
+          const current = workspaces.find((w) => w.id === currentId)
+          if (!current) return
+          if (window.confirm(`Delete "${current.name}" and all its files? This cannot be undone.`))
+            void controller.deleteWorkspace(current.id)
+        },
+      },
+      ...workspaces
+        .filter((w) => w.id !== currentId)
+        .map(
+          (w): PaletteItem => ({
+            id: `ws-open-${w.id}`,
+            label: `Workspace: Switch to ${w.name}`,
+            run: () => void controller.switchTo(w.id),
+          }),
+        ),
       // Label carries the kind, so typing "dark" or "light" finds the matching group.
       ...THEMES.map((t) => theme(t.id, `${t.name} (${t.kind})`)),
       theme('system', 'System'),
@@ -191,6 +232,8 @@ export default function CommandPalette() {
     setSidebar,
     setWidth,
     store,
+    workspaces,
+    currentId,
   ])
 
   const files = useMemo(() => tree.filter((e) => e.kind === 'file'), [tree])

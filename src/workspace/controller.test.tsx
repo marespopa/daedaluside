@@ -3,16 +3,19 @@ import userEvent from '@testing-library/user-event'
 import { strToU8, zipSync } from 'fflate'
 import { IDBFactory } from 'fake-indexeddb'
 import { createStore, Provider } from 'jotai'
+import { vi } from 'vitest'
 import App from '../App'
 import { editorHandleAtom, paletteOpenAtom } from '../state/editorAtoms'
+import { runEx } from '../editor/testing/runEx'
 import {
   activePathAtom,
   currentWorkspaceIdAtom,
+  sidebarOpenAtom,
   treeAtom,
   workspacesAtom,
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
-import { getController } from './controller'
+import { AUTOSAVE_MS, getController } from './controller'
 import { openDB } from './db'
 import { IdbBackend } from './fallback-idb'
 import { WorkspaceManager } from './manager'
@@ -105,6 +108,33 @@ describe('workspace in the app', () => {
     })
   })
 
+  it('discarding a tab drops its unsaved edits and never writes them', async () => {
+    const a = mount()
+    await scratchTab()
+    type(a.store, 'draft')
+    await act(() => getController(a.store).discardBuffer('scratch.ts'))
+    await new Promise((r) => setTimeout(r, AUTOSAVE_MS + 200))
+    expect(await onDisk(a.store, 'scratch.ts')).toBe('')
+    expect(screen.queryByRole('tab', { name: /^scratch\.ts/ })).toBeNull()
+  })
+
+  it('Ctrl-W W switches focus between the tree and editor without closing the tree', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await scratchTab()
+    const view = a.store.get(editorHandleAtom)!.view
+    act(() => view.focus())
+
+    await user.keyboard('{Control>}w{/Control}w')
+    const tree = screen.getByRole('complementary', { name: 'File tree' })
+    expect(tree).toHaveAttribute('aria-hidden', 'false')
+    expect((document.activeElement as HTMLElement).dataset.rowKey).toBe('scratch.ts')
+
+    await user.keyboard('{Control>}w{/Control}w')
+    expect(view.contentDOM).toHaveFocus()
+    expect(tree).toHaveAttribute('aria-hidden', 'false')
+  })
+
   it('opens the first file when a folder is opened', async () => {
     const user = userEvent.setup()
     const app = mount()
@@ -128,7 +158,7 @@ describe('workspace in the app', () => {
     const user = userEvent.setup()
     const a = mount()
     await scratchTab()
-    await user.keyboard('{Control>}b{/Control}')
+    act(() => runEx(a.store.get(editorHandleAtom)!.view, 'Explore'))
     const tree = await screen.findByRole('complementary', { name: 'File tree' })
 
     // New entries come from the tree's right-click menu, on the empty space at the root.
@@ -160,6 +190,24 @@ describe('workspace in the app', () => {
     expect(a.store.get(activePathAtom)).toBe('scratch.ts')
   })
 
+  it('home goes to the blank page and keeps the open tabs', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    const t = await scratchTab()
+    expect(a.store.get(activePathAtom)).toBe('scratch.ts')
+
+    await user.click(screen.getByRole('button', { name: 'Home' }))
+
+    expect(
+      await screen.findByRole('region', { name: 'Workspace opener' }),
+    ).toBeInTheDocument()
+    expect(a.store.get(activePathAtom)).toBeNull()
+    expect(t).toBeInTheDocument()
+    // Clicking the tab brings the file back.
+    await user.click(t)
+    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('scratch.ts'))
+  })
+
   it('opens settings with storage details', async () => {
     const user = userEvent.setup()
     mount()
@@ -189,60 +237,72 @@ describe('workspace opener (editor empty state)', () => {
   it('replaces the editor with the opener when no file is open', async () => {
     const a = mount()
     await emptyWorkspace(a.store)
-    expect(await opener()).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Open local folder/ })).toBeEnabled()
-    expect(
-      within(await opener()).getByText(/^(OPFS|IndexedDB) · on this device$/),
-    ).toBeInTheDocument()
+    const o = await opener()
+    expect(o).toBeInTheDocument()
+    for (const label of [
+      'Command Palette',
+      'Search Files',
+      'New Scratch Buffer',
+      'Switch Workspace',
+    ])
+      expect(within(o).getByText(label)).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('names the open workspace instead of asking to open one', async () => {
-    const user = userEvent.setup()
+  it('shows the workspace name as the only heading, with no buttons or cards', async () => {
     const a = mount()
     await emptyWorkspace(a.store)
     const o = await opener()
     expect(within(o).getByRole('heading', { name: 'Workspace' })).toBeInTheDocument()
-    expect(within(o).queryByText('Open a workspace')).toBeNull()
-    expect(
-      within(o).getByText(/0 files in this workspace, none open/),
-    ).toBeInTheDocument()
-
-    await user.click(within(o).getByRole('button', { name: 'Show file tree' }))
-    expect(
-      await screen.findByRole('complementary', { name: 'File tree' }),
-    ).toBeInTheDocument()
+    expect(within(o).queryAllByRole('button')).toHaveLength(0)
   })
 
-  it('creates a named workspace inline and lists it under recents', async () => {
+  it('Mod-O lists workspace commands; Workspace: New opens a new workspace', async () => {
     const user = userEvent.setup()
     const a = mount()
     await emptyWorkspace(a.store)
     const original = a.store.get(currentWorkspaceIdAtom)
-    await user.click(await screen.findByRole('button', { name: /^New workspace/ }))
-    await user.type(screen.getByLabelText('Workspace name'), 'Fresh{Enter}')
+
+    await user.keyboard('{Control>}o{/Control}')
+    expect(screen.getByRole('option', { name: 'Workspace: New' })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'Workspace: New' }))
 
     await waitFor(() => expect(a.store.get(currentWorkspaceIdAtom)).not.toBe(original))
     await emptyWorkspace(a.store)
     expect(a.store.get(treeAtom)).toEqual([])
-    const fresh = a.store.get(currentWorkspaceIdAtom)
-    expect(fresh).not.toBe(original)
 
-    const recents = await screen.findByRole('region', { name: 'Recent workspaces' })
-    expect(within(recents).getByRole('button', { name: /^Fresh/ })).toBeInTheDocument()
-    await user.click(within(recents).getByRole('button', { name: /^Workspace/ }))
+    await user.keyboard('{Control>}o{/Control}')
+    await user.click(
+      screen.getByRole('option', { name: 'Workspace: Switch to Workspace' }),
+    )
     await waitFor(() => expect(a.store.get(currentWorkspaceIdAtom)).toBe(original))
   })
 
-  it('cancels the inline name field with Escape', async () => {
+  it('searches files from the blank page with the tree finder, and opens the chosen one', async () => {
     const user = userEvent.setup()
     const a = mount()
     await emptyWorkspace(a.store)
-    await user.click(await screen.findByRole('button', { name: /^New workspace/ }))
-    await user.type(screen.getByLabelText('Workspace name'), 'Nope{Escape}')
-    expect(screen.queryByLabelText('Workspace name')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^New workspace/ })).toBeInTheDocument()
+    await act(async () => {
+      await getController(a.store).importZipFile(
+        new File(
+          [zipSync({ 'src/app.ts': strToU8('export {}'), 'README.md': strToU8('# r') })],
+          'finder.zip',
+          { type: 'application/zip' },
+        ),
+      )
+    })
+    await act(async () => {
+      getController(a.store).showHome()
+    })
     expect(a.store.get(activePathAtom)).toBeNull()
+
+    const o = await opener()
+    await user.type(within(o).getByRole('textbox', { name: 'Search files' }), 'app')
+    // Typing in the search box is not a keystroke for a new untitled file.
+    expect(a.store.get(activePathAtom)).toBeNull()
+    await user.click(within(o).getByRole('option', { name: /app\.ts/ }))
+
+    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('src/app.ts'))
   })
 
   it('unpacks a dropped zip into a new workspace and opens its first file', async () => {
@@ -267,6 +327,38 @@ describe('workspace opener (editor empty state)', () => {
       'Drop a single .zip archive',
     )
     expect(a.store.get(activePathAtom)).toBeNull()
+  })
+
+  it('a key typed on the blank page starts Untitled-1.md with that text', async () => {
+    const a = mount()
+    await emptyWorkspace(a.store)
+
+    // Both keys arrive before the file has opened: neither may be lost.
+    fireEvent.keyDown(document.body, { key: 'h' })
+    fireEvent.keyDown(document.body, { key: 'i' })
+
+    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('Untitled-1.md'))
+    await waitFor(() =>
+      expect(a.store.get(editorHandleAtom)!.view.state.doc.toString()).toBe('hi'),
+    )
+    await waitFor(async () => expect(await onDisk(a.store, 'Untitled-1.md')).toBe('hi'), {
+      timeout: 3000,
+    })
+  })
+
+  it('Mod-N starts Untitled-N.md, numbering past names already in use', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await emptyWorkspace(a.store)
+
+    await user.keyboard('{Control>}n{/Control}')
+    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('Untitled-1.md'))
+    await user.keyboard('{Control>}n{/Control}')
+    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('Untitled-2.md'))
+    expect(a.store.get(treeAtom).map((e) => e.name)).toEqual([
+      'Untitled-1.md',
+      'Untitled-2.md',
+    ])
   })
 })
 
@@ -326,24 +418,30 @@ describe('re-opening a folder', () => {
     expect(a.store.get(workspacesAtom).filter((w) => w.name === 'proj')).toHaveLength(2)
   })
 
-  it('removes a recent workspace after a second click on Delete', async () => {
+  it('deletes the current workspace from the palette only after confirmation', async () => {
     const user = userEvent.setup()
     const a = mount()
     await emptyWorkspace(a.store)
-    await user.click(await screen.findByRole('button', { name: /^New workspace/ }))
-    await user.type(screen.getByLabelText('Workspace name'), 'Fresh{Enter}')
-    await waitFor(() => expect(a.store.get(currentWorkspaceIdAtom)).not.toBeNull())
+    const original = a.store.get(currentWorkspaceIdAtom)!
+    await act(async () => {
+      await getController(a.store).newWorkspace()
+    })
     await emptyWorkspace(a.store)
+    const doomed = a.store.get(currentWorkspaceIdAtom)!
 
-    const recents = await screen.findByRole('region', { name: 'Recent workspaces' })
-    await user.click(
-      within(recents).getByRole('button', { name: /^Delete workspace Fresh/ }),
-    )
-    await user.click(within(recents).getByRole('button', { name: 'Delete' }))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await user.keyboard('{Control>}o{/Control}')
+    await user.click(screen.getByRole('option', { name: 'Workspace: Delete Current' }))
+    expect(confirm).toHaveBeenCalled()
+    expect(a.store.get(workspacesAtom).some((w) => w.id === doomed)).toBe(true)
+
+    confirm.mockReturnValue(true)
+    await user.keyboard('{Control>}o{/Control}')
+    await user.click(screen.getByRole('option', { name: 'Workspace: Delete Current' }))
     await waitFor(() =>
-      expect(within(recents).queryByRole('button', { name: /^Fresh/ })).toBeNull(),
+      expect(a.store.get(workspacesAtom).some((w) => w.id === doomed)).toBe(false),
     )
-    expect(a.store.get(workspacesAtom).some((w) => w.name === 'Fresh')).toBe(false)
+    await waitFor(() => expect(a.store.get(currentWorkspaceIdAtom)).toBe(original))
   })
 })
 
@@ -549,6 +647,28 @@ describe('blank workspaces', () => {
     expect(treePaths(a.store)).toEqual([])
   })
 
+  it('opens :Explore from the blank page instead of starting an untitled file', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    expect(await opener()).toBeInTheDocument()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+
+    await user.keyboard(':')
+    const prompt = document.querySelector<HTMLInputElement>('.cm-vim-panel input')
+    expect(prompt).not.toBeNull()
+    expect(prompt).toHaveFocus()
+    await user.type(prompt!, 'Explore')
+    expect(prompt).toHaveValue('Explore')
+    await user.keyboard('{Enter}')
+
+    expect(a.store.get(sidebarOpenAtom)).toBe(true)
+    await waitFor(() =>
+      expect(screen.getByLabelText('File tree')).toHaveAttribute('aria-hidden', 'false'),
+    )
+    expect(treePaths(a.store)).toEqual([])
+    expect(a.store.get(activePathAtom)).toBeNull()
+  })
+
   it('removes an untouched placeholder scratch.ts when the workspace opens', async () => {
     await legacyWorkspace('')
     const a = mount()
@@ -608,6 +728,42 @@ describe('tree context menu', () => {
     await waitFor(() =>
       expect(a.store.get(treeAtom)).toContainEqual(
         expect.objectContaining({ path: 'lib', kind: 'dir' }),
+      ),
+    )
+  })
+
+  it('renames and deletes a folder from its row menu after confirmation', async () => {
+    const user = userEvent.setup()
+    const a = mount()
+    await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
+    await act(async () => {
+      await getController(a.store).importZipFile(
+        new File([zipSync({ 'docs/a.md': strToU8('a') })], 'proj.zip'),
+      )
+    })
+    const tree = await screen.findByRole('complementary', { name: 'File tree' })
+
+    fireEvent.contextMenu(within(tree).getByRole('button', { name: 'docs' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Rename' }))
+    const rename = within(tree).getByRole('textbox', { name: 'Rename docs' })
+    await user.clear(rename)
+    await user.type(rename, 'guide{Enter}')
+    await waitFor(() =>
+      expect(a.store.get(treeAtom).map((entry) => entry.path)).toContain('guide/a.md'),
+    )
+
+    fireEvent.contextMenu(within(tree).getByRole('button', { name: 'guide' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    expect(within(tree).getByText('Delete guide?')).toBeInTheDocument()
+    await user.click(within(tree).getByRole('button', { name: 'Cancel' }))
+    expect(a.store.get(treeAtom).map((entry) => entry.path)).toContain('guide/a.md')
+
+    fireEvent.contextMenu(within(tree).getByRole('button', { name: 'guide' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    await user.click(within(tree).getByRole('button', { name: 'Delete' }))
+    await waitFor(() =>
+      expect(a.store.get(treeAtom).map((entry) => entry.path)).not.toContain(
+        'guide/a.md',
       ),
     )
   })

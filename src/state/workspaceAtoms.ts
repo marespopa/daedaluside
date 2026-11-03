@@ -13,7 +13,7 @@ export interface OpenBuffer {
 
 export type WorkspaceStatus =
   | { state: 'loading' }
-  | { state: 'ready'; backend: 'opfs' | 'idb' }
+  | { state: 'ready'; backend: 'idb' }
   | { state: 'error'; message: string }
 
 /**
@@ -47,6 +47,8 @@ export const workspacesAtom = atom<WorkspaceMeta[]>([])
 export const currentWorkspaceIdAtom = atom<string | null>(null)
 /** Every entry of the current workspace, flat; the tree UI derives hierarchy from paths. */
 export const treeAtom = atom<Entry[]>([])
+/** Paths currently being deleted from the workspace. Tree actions stay disabled while non-empty. */
+export const deletingPathsAtom = atom<ReadonlySet<string>>(new Set<string>())
 /** Paths of the current workspace that are still being copied in. They are listed but not readable yet. */
 export const pendingPathsAtom = atom<ReadonlySet<string>>(new Set<string>())
 /** Background copy of the current workspace; null when nothing is copying. */
@@ -62,8 +64,15 @@ export const activePathAtom = atom<string | null>(null)
  * grants write access (after a reload, or the user revoked it); the tree offers Reconnect.
  */
 export const linkedFolderAtom = atom<{ name: string; paused: boolean } | null>(null)
+/**
+ * Whether the reconnect dialog is showing. Set when the linked folder is paused (on open,
+ * or after a failed write). "Later" clears it until the next open or failed write.
+ */
+export const reconnectPromptAtom = atom(false)
 
 export const sidebarOpenAtom = atom(false)
+/** Incremented to put keyboard focus on the tree's selected row after it opens. */
+export const fileTreeFocusAtom = atom(0)
 export const settingsOpenAtom = atom(false)
 /** Transient message (errors, import results). */
 export const noticeAtom = atom<{ kind: 'info' | 'error'; text: string } | null>(null)

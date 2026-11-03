@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createStore, Provider } from 'jotai'
+import { vi } from 'vitest'
 import {
   activePathAtom,
   sidebarOpenAtom,
@@ -8,6 +9,7 @@ import {
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
 import FileTree from './FileTree'
+import { getController } from './controller'
 import { ROW_HEIGHT } from './treeRows'
 import type { Entry } from './types'
 
@@ -115,15 +117,98 @@ describe('file tree folders and menu', () => {
     { name: 'main.ts', path: 'main.ts', kind: 'file', size: 1 },
   ]
 
-  it('expands and collapses every folder from the toolbar', () => {
+  it('expands and collapses folders with l and h, without toolbar chrome', () => {
     mountTree(nested)
     expect(screen.queryByRole('button', { name: 'a.md' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Expand all folders' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Show file tree' })).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand all folders' }))
+    const docs = screen.getByRole('button', { name: 'docs' })
+    docs.focus()
+    fireEvent.keyDown(docs, { key: 'l' })
     expect(screen.getByRole('button', { name: 'a.md' })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse all folders' }))
+    fireEvent.keyDown(docs, { key: 'h' })
     expect(screen.queryByRole('button', { name: 'a.md' })).toBeNull()
+  })
+
+  it('moves with j, k, gg and G, and jumps to the parent with -', async () => {
+    const user = userEvent.setup()
+    mountTree(nested)
+    const docs = screen.getByRole('button', { name: 'docs' })
+    docs.focus()
+    await user.keyboard('l')
+
+    const file = screen.getByRole('button', { name: 'a.md' })
+    file.focus()
+    await user.keyboard('-')
+    expect(document.activeElement).toBe(docs)
+
+    await user.keyboard('j')
+    expect(document.activeElement).toBe(file)
+    await user.keyboard('k')
+    expect(document.activeElement).toBe(docs)
+
+    await user.keyboard('G')
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'main.ts' }))
+    await user.keyboard('gg')
+    expect(document.activeElement).toBe(docs)
+  })
+
+  it('opens a file with Enter or l', async () => {
+    const user = userEvent.setup()
+    const store = mountTree(nested)
+    const open = vi.spyOn(getController(store), 'openFile').mockResolvedValue()
+    const main = screen.getByRole('button', { name: 'main.ts' })
+    main.focus()
+    await user.keyboard('{Enter}l')
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(open).toHaveBeenCalledWith('main.ts')
+  })
+
+  it('uses a, A, r and d for inline file operations', async () => {
+    const user = userEvent.setup()
+    mountTree(nested)
+
+    const docs = () => screen.getByRole('button', { name: 'docs' })
+    docs().focus()
+    await user.keyboard('a')
+    expect(screen.getByRole('textbox', { name: 'New file name' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+
+    docs().focus()
+    await user.keyboard('A')
+    expect(screen.getByRole('textbox', { name: 'New folder name' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+
+    docs().focus()
+    await user.keyboard('r')
+    expect(screen.getByRole('textbox', { name: 'Rename docs' })).toHaveValue('docs')
+    await user.keyboard('{Escape}')
+
+    docs().focus()
+    await user.keyboard('d')
+    expect(screen.getByText('Delete docs?')).toBeInTheDocument()
+  })
+
+  it('copies paths with y and Y, refreshes with Ctrl-R, and closes with q', async () => {
+    const user = userEvent.setup()
+    const store = mountTree(nested)
+    const controller = getController(store)
+    const relative = vi.spyOn(controller, 'copyPath').mockResolvedValue()
+    const absolute = vi.spyOn(controller, 'copyAbsolutePath').mockResolvedValue()
+    const refresh = vi.spyOn(controller, 'refreshWorkspace').mockResolvedValue()
+    const main = screen.getByRole('button', { name: 'main.ts' })
+    main.focus()
+
+    await user.keyboard('yY')
+    await user.keyboard('{Control>}r{/Control}')
+    expect(relative).toHaveBeenCalledWith('main.ts')
+    expect(absolute).toHaveBeenCalledWith('main.ts')
+    expect(refresh).toHaveBeenCalledOnce()
+
+    await user.keyboard('q')
+    expect(store.get(sidebarOpenAtom)).toBe(false)
   })
 
   it('opens the menu from a row, and from empty space as the root', async () => {
@@ -134,11 +219,36 @@ describe('file tree folders and menu', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: 'main.ts' }))
     const menu = screen.getByRole('menu', { name: 'Tree actions' })
     expect(within(menu).getByRole('menuitem', { name: 'New file' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument()
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('menu')).toBeNull()
 
     fireEvent.contextMenu(tree)
-    expect(screen.getByRole('menu', { name: 'Tree actions' })).toBeInTheDocument()
+    const rootMenu = screen.getByRole('menu', { name: 'Tree actions' })
+    expect(rootMenu).toBeInTheDocument()
+    expect(within(rootMenu).queryByRole('menuitem', { name: 'Rename' })).toBeNull()
+    expect(within(rootMenu).queryByRole('menuitem', { name: 'Delete' })).toBeNull()
+  })
+
+  it('uses the existing rename input and delete confirmation from the row menu', async () => {
+    const user = userEvent.setup()
+    mountTree(nested)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'docs' }))
+    let menu = screen.getByRole('menu', { name: 'Tree actions' })
+    expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument()
+    await user.click(within(menu).getByRole('menuitem', { name: 'Rename' }))
+    expect(screen.getByRole('textbox', { name: 'Rename docs' })).toHaveValue('docs')
+    await user.keyboard('{Escape}')
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'main.ts' }))
+    menu = screen.getByRole('menu', { name: 'Tree actions' })
+    await user.click(within(menu).getByRole('menuitem', { name: 'Delete' }))
+    expect(screen.getByText('Delete main.ts?')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('button', { name: 'main.ts' })).toBeInTheDocument()
   })
 
   it('opens the menu from the keyboard with Shift+F10 on a focused row', () => {

@@ -1,4 +1,13 @@
-import { done, wrap } from './db'
+import {
+  BY_PARENT,
+  done,
+  FS_BLOB,
+  FS_META,
+  linkKey,
+  SETTINGS,
+  wrap,
+  WORKSPACES,
+} from './db'
 import {
   basename,
   compareEntries,
@@ -11,43 +20,102 @@ import {
   normalizePath,
   splitPath,
 } from './path'
-import { FSError, type Entry, type FSBackend, type WorkspaceFS } from './types'
+import {
+  FSError,
+  type Entry,
+  type FSBackend,
+  type OpenOptions,
+  type WorkspaceFS,
+} from './types'
 
-const STORE = 'fs-fallback'
+/** Parent id of top-level entries. The workspace root has no record. */
+const ROOT = ''
 
-interface Rec {
+/**
+ * One file or folder. Records refer to their parent by id, so renaming or moving a
+ * folder changes one record, not every path below it.
+ */
+interface FsNode {
+  id: string
+  ws: string
+  parent: string
+  name: string
   kind: 'file' | 'dir'
-  data?: Uint8Array
+  size?: number
   mtime: number
 }
 
-const keyOf = (ws: string, path: string) => `${ws}:${path}`
-/** All keys strictly below `path` (not `path` itself). */
-const below = (ws: string, path: string) => {
-  const prefix = path === '' ? `${ws}:` : `${ws}:${path}/`
-  return IDBKeyRange.bound(prefix, prefix + '\uffff')
+type Stores = { meta: IDBObjectStore; blob: IDBObjectStore; workspaces: IDBObjectStore }
+
+const nodeKey = (ws: string, id: string) => `${ws}:${id}`
+/** Every node of a workspace. Keys are `ws:id`; the `:` keeps `app` and `app2` apart. */
+const wsRange = (ws: string) => IDBKeyRange.bound(`${ws}:`, `${ws}:\uffff`)
+/** Index range of the children of one folder. */
+const childRange = (ws: string, parent: string) =>
+  IDBKeyRange.bound([ws, parent], [ws, parent, []])
+
+const rootNode = (ws: string): FsNode => ({
+  id: ROOT,
+  ws,
+  parent: ROOT,
+  name: '',
+  kind: 'dir',
+  mtime: 0,
+})
+
+const entryOf = (parentPath: string, n: FsNode): Entry =>
+  n.kind === 'dir'
+    ? { name: n.name, path: joinPath(parentPath, n.name), kind: 'dir' }
+    : { name: n.name, path: joinPath(parentPath, n.name), kind: 'file', size: n.size ?? 0 }
+
+/** Reads every value a cursor visits. */
+function cursorValues<V>(
+  source: IDBObjectStore | IDBIndex,
+  range: IDBKeyRange,
+): Promise<V[]> {
+  return new Promise<V[]>((resolve, reject) => {
+    const out: V[] = []
+    const req = source.openCursor(range)
+    req.onerror = () => reject(req.error)
+    req.onsuccess = () => {
+      const c = req.result
+      if (!c) return resolve(out)
+      out.push(c.value as V)
+      c.continue()
+    }
+  })
 }
 
-/** One workspace stored as `workspaceId:path` records in IndexedDB. Used when OPFS is unavailable. */
+/**
+ * One workspace in IndexedDB. Each file or folder is a node record (metadata, no bytes)
+ * plus, for files, a byte record. A write touches both in one transaction, and checks
+ * that the workspace still exists, so readers in other tabs see old or new, never a mix.
+ */
 export class IdbFS implements WorkspaceFS {
   private readonly db: IDBDatabase
   private readonly ws: string
+  private readonly requireWorkspace: boolean
 
-  constructor(db: IDBDatabase, ws: string) {
+  constructor(db: IDBDatabase, ws: string, requireWorkspace = false) {
     this.db = db
     this.ws = ws
+    this.requireWorkspace = requireWorkspace
   }
 
   private async withTx<T>(
     mode: IDBTransactionMode,
-    fn: (s: IDBObjectStore) => Promise<T>,
+    fn: (s: Stores) => Promise<T>,
   ): Promise<T> {
-    const tx = this.db.transaction(STORE, mode)
+    const tx = this.db.transaction([FS_META, FS_BLOB, WORKSPACES], mode)
     const committed = done(tx)
     committed.catch(() => undefined)
     let result: T
     try {
-      result = await fn(tx.objectStore(STORE))
+      result = await fn({
+        meta: tx.objectStore(FS_META),
+        blob: tx.objectStore(FS_BLOB),
+        workspaces: tx.objectStore(WORKSPACES),
+      })
     } catch (e) {
       try {
         tx.abort()
@@ -60,98 +128,104 @@ export class IdbFS implements WorkspaceFS {
     return result
   }
 
-  private async get(s: IDBObjectStore, path: string): Promise<Rec | undefined> {
-    return (await wrap(s.get(keyOf(this.ws, path)))) as Rec | undefined
+  /** Throws if the workspace record is gone. Runs inside the write's transaction. */
+  private async requireLive(s: Stores): Promise<void> {
+    if (!this.requireWorkspace) return
+    if (!(await wrap(s.workspaces.get(this.ws))))
+      throw new FSError('ENOENT', 'This workspace was deleted')
   }
 
-  /** Requires `path` to be an existing directory (the root always is). */
-  private async requireDir(s: IDBObjectStore, path: string): Promise<void> {
-    if (path === '') return
-    const r = await this.get(s, path)
-    if (!r) throw new FSError('ENOENT', `No such directory: ${path}`)
-    if (r.kind !== 'dir') throw new FSError('ENOTDIR', `Not a directory: ${path}`)
+  private child(s: Stores, parent: string, name: string): Promise<FsNode | undefined> {
+    return wrap(s.meta.index(BY_PARENT).get([this.ws, parent, name])) as Promise<
+      FsNode | undefined
+    >
   }
 
-  /** mkdir -p. */
-  private async ensureDirs(s: IDBObjectStore, path: string): Promise<void> {
-    let cur = ''
+  private children(s: Stores, parent: string): Promise<FsNode[]> {
+    return cursorValues<FsNode>(s.meta.index(BY_PARENT), childRange(this.ws, parent))
+  }
+
+  /** The node at `path`, or undefined if any segment is missing or not a folder. */
+  private async resolve(s: Stores, path: string): Promise<FsNode | undefined> {
+    let cur = rootNode(this.ws)
     for (const seg of splitPath(path)) {
-      cur = joinPath(cur, seg)
-      const r = await this.get(s, cur)
-      if (!r)
-        await wrap(
-          s.put({ kind: 'dir', mtime: Date.now() } satisfies Rec, keyOf(this.ws, cur)),
-        )
-      else if (r.kind !== 'dir') throw new FSError('ENOTDIR', `Not a directory: ${cur}`)
+      if (cur.kind !== 'dir') return undefined
+      const next = await this.child(s, cur.id, seg)
+      if (!next) return undefined
+      cur = next
     }
+    return cur
   }
 
-  private async cursorAll(
-    s: IDBObjectStore,
-    range: IDBKeyRange,
-  ): Promise<{ key: string; rec: Rec }[]> {
-    const out: { key: string; rec: Rec }[] = []
-    await new Promise<void>((resolve, reject) => {
-      const req = s.openCursor(range)
-      req.onerror = () => reject(req.error)
-      req.onsuccess = () => {
-        const c = req.result
-        if (!c) return resolve()
-        out.push({ key: c.key as string, rec: c.value as Rec })
-        c.continue()
+  /** mkdir -p. Returns the id of the folder at `path`. */
+  private async ensureDirs(s: Stores, path: string): Promise<string> {
+    let cur = ROOT
+    let soFar = ''
+    for (const seg of splitPath(path)) {
+      soFar = joinPath(soFar, seg)
+      const n = await this.child(s, cur, seg)
+      if (!n) {
+        const id = crypto.randomUUID()
+        const node: FsNode = {
+          id,
+          ws: this.ws,
+          parent: cur,
+          name: seg,
+          kind: 'dir',
+          mtime: Date.now(),
+        }
+        await wrap(s.meta.put(node, nodeKey(this.ws, id)))
+        cur = id
+      } else if (n.kind !== 'dir') {
+        throw new FSError('ENOTDIR', `Not a directory: ${soFar}`)
+      } else {
+        cur = n.id
       }
-    })
-    return out
+    }
+    return cur
   }
 
   async list(dir: string): Promise<Entry[]> {
     const path = normalizePath(dir)
     return await this.withTx('readonly', async (s) => {
-      await this.requireDir(s, path)
-      const prefixLen = keyOf(this.ws, path === '' ? '' : path + '/').length
-      const out: Entry[] = []
-      for (const { key, rec } of await this.cursorAll(s, below(this.ws, path))) {
-        const rest = key.slice(prefixLen)
-        if (rest.includes('/')) continue
-        const p = joinPath(path, rest)
-        out.push(
-          rec.kind === 'dir'
-            ? { name: rest, path: p, kind: 'dir' }
-            : { name: rest, path: p, kind: 'file', size: rec.data?.byteLength ?? 0 },
-        )
-      }
-      return out.sort(compareEntries)
+      const r = await this.resolve(s, path)
+      if (!r) throw new FSError('ENOENT', `No such directory: ${path}`)
+      if (r.kind !== 'dir') throw new FSError('ENOTDIR', `Not a directory: ${path}`)
+      const kids = await this.children(s, r.id)
+      return kids.map((n) => entryOf(path, n)).sort(compareEntries)
     })
   }
 
   async listAll(): Promise<Entry[]> {
-    const prefixLen = keyOf(this.ws, '').length
     return await this.withTx('readonly', async (s) => {
-      const out: Entry[] = []
-      // One range scan over the workspace instead of one scan per directory.
-      for (const { key, rec } of await this.cursorAll(s, below(this.ws, ''))) {
-        const p = key.slice(prefixLen)
-        const name = basename(p)
-        out.push(
-          rec.kind === 'dir'
-            ? { name, path: p, kind: 'dir' }
-            : { name, path: p, kind: 'file', size: rec.data?.byteLength ?? 0 },
-        )
+      // Metadata only: no file bytes are read to list a tree.
+      const nodes = await cursorValues<FsNode>(s.meta, wsRange(this.ws))
+      const byId = new Map(nodes.map((n) => [n.id, n]))
+      const pathOf = (n: FsNode): string => {
+        const parts: string[] = []
+        for (let cur: FsNode | undefined = n; cur; cur = byId.get(cur.parent))
+          parts.unshift(cur.name)
+        return parts.join('/')
       }
-      return depthFirst(out)
+      const entries = nodes.map((n): Entry => {
+        const path = pathOf(n)
+        return n.kind === 'dir'
+          ? { name: n.name, path, kind: 'dir' }
+          : { name: n.name, path, kind: 'file', size: n.size ?? 0 }
+      })
+      return depthFirst(entries)
     })
   }
 
   async stat(path: string): Promise<Entry | null> {
     const p = normalizePath(path)
-    if (p === '') return { name: '', path: '', kind: 'dir' }
     return await this.withTx('readonly', async (s) => {
-      const r = await this.get(s, p)
+      const r = await this.resolve(s, p)
       if (!r) return null
-      const name = basename(p)
+      if (p === '') return { name: '', path: '', kind: 'dir' }
       return r.kind === 'dir'
-        ? { name, path: p, kind: 'dir' }
-        : { name, path: p, kind: 'file', size: r.data?.byteLength ?? 0 }
+        ? { name: r.name, path: p, kind: 'dir' }
+        : { name: r.name, path: p, kind: 'file', size: r.size ?? 0 }
     })
   }
 
@@ -159,10 +233,13 @@ export class IdbFS implements WorkspaceFS {
     const p = normalizePath(path)
     if (p === '') throw new FSError('EISDIR', 'Is a directory: /')
     return await this.withTx('readonly', async (s) => {
-      const r = await this.get(s, p)
+      const r = await this.resolve(s, p)
       if (!r) throw new FSError('ENOENT', `No such file: ${p}`)
       if (r.kind === 'dir') throw new FSError('EISDIR', `Is a directory: ${p}`)
-      return r.data ?? new Uint8Array(0)
+      const data = (await wrap(s.blob.get(nodeKey(this.ws, r.id)))) as
+        | Uint8Array
+        | undefined
+      return data ?? new Uint8Array(0)
     })
   }
 
@@ -170,20 +247,29 @@ export class IdbFS implements WorkspaceFS {
     return decodeText(await this.readBytes(path))
   }
 
-  /** A single IDB put is already atomic, so no temp file is needed here. */
+  /** One transaction covers the node and its bytes, so no temp file is needed. */
   async writeBytes(path: string, data: Uint8Array): Promise<void> {
     const p = normalizePath(path)
     if (p === '') throw new FSError('EISDIR', 'Is a directory: /')
     return await this.withTx('readwrite', async (s) => {
-      const existing = await this.get(s, p)
+      await this.requireLive(s)
+      const parent = await this.ensureDirs(s, dirname(p))
+      const name = basename(p)
+      const existing = await this.child(s, parent, name)
       if (existing?.kind === 'dir') throw new FSError('EISDIR', `Is a directory: ${p}`)
-      await this.ensureDirs(s, dirname(p))
-      await wrap(
-        s.put(
-          { kind: 'file', data: data.slice(), mtime: Date.now() } satisfies Rec,
-          keyOf(this.ws, p),
-        ),
-      )
+      const node: FsNode = existing
+        ? { ...existing, size: data.byteLength, mtime: Date.now() }
+        : {
+            id: crypto.randomUUID(),
+            ws: this.ws,
+            parent,
+            name,
+            kind: 'file',
+            size: data.byteLength,
+            mtime: Date.now(),
+          }
+      await wrap(s.meta.put(node, nodeKey(this.ws, node.id)))
+      await wrap(s.blob.put(data.slice(), nodeKey(this.ws, node.id)))
     })
   }
 
@@ -193,40 +279,48 @@ export class IdbFS implements WorkspaceFS {
 
   async mkdir(path: string): Promise<void> {
     const p = normalizePath(path)
-    return await this.withTx('readwrite', (s) => this.ensureDirs(s, p))
+    return await this.withTx('readwrite', async (s) => {
+      await this.requireLive(s)
+      await this.ensureDirs(s, p)
+    })
   }
 
   async remove(path: string): Promise<void> {
     const p = normalizePath(path)
     if (p === '') throw new FSError('EINVAL', 'Cannot remove the workspace root')
     return await this.withTx('readwrite', async (s) => {
-      if (!(await this.get(s, p))) throw new FSError('ENOENT', `No such path: ${p}`)
-      await wrap(s.delete(below(this.ws, p)))
-      await wrap(s.delete(keyOf(this.ws, p)))
+      const top = await this.resolve(s, p)
+      if (!top) throw new FSError('ENOENT', `No such path: ${p}`)
+      // Collect the subtree first, then delete every node and its bytes.
+      const doomed: FsNode[] = []
+      const queue: FsNode[] = [top]
+      while (queue.length) {
+        const n = queue.pop()!
+        doomed.push(n)
+        if (n.kind === 'dir') queue.push(...(await this.children(s, n.id)))
+      }
+      for (const n of doomed) {
+        await wrap(s.meta.delete(nodeKey(this.ws, n.id)))
+        await wrap(s.blob.delete(nodeKey(this.ws, n.id)))
+      }
     })
   }
 
+  /** One record changes: the node keeps its id, so a folder's children move with it. */
   async rename(from: string, to: string): Promise<void> {
     const src = normalizePath(from)
     const dst = normalizePath(to)
     if (src === '' || dst === '') throw new FSError('EINVAL', 'Cannot rename the root')
     return await this.withTx('readwrite', async (s) => {
-      const rec = await this.get(s, src)
-      if (!rec) throw new FSError('ENOENT', `No such path: ${src}`)
+      await this.requireLive(s)
+      const node = await this.resolve(s, src)
+      if (!node) throw new FSError('ENOENT', `No such path: ${src}`)
       if (src === dst) return
       if (isWithin(dst, src)) throw new FSError('EINVAL', 'Cannot move into itself')
-      if (await this.get(s, dst)) throw new FSError('EEXIST', `Already exists: ${dst}`)
-      await this.ensureDirs(s, dirname(dst))
-      const moved = [
-        { key: keyOf(this.ws, src), rec },
-        ...(rec.kind === 'dir' ? await this.cursorAll(s, below(this.ws, src)) : []),
-      ]
-      const oldPrefix = keyOf(this.ws, src)
-      for (const m of moved) {
-        await wrap(s.put(m.rec, keyOf(this.ws, dst) + m.key.slice(oldPrefix.length)))
-      }
-      await wrap(s.delete(below(this.ws, src)))
-      await wrap(s.delete(keyOf(this.ws, src)))
+      if (await this.resolve(s, dst)) throw new FSError('EEXIST', `Already exists: ${dst}`)
+      const parent = await this.ensureDirs(s, dirname(dst))
+      const moved: FsNode = { ...node, parent, name: basename(dst) }
+      await wrap(s.meta.put(moved, nodeKey(this.ws, node.id)))
     })
   }
 }
@@ -239,16 +333,28 @@ export class IdbBackend implements FSBackend {
     this.db = db
   }
 
-  open(workspaceId: string): WorkspaceFS {
+  open(workspaceId: string, opts: OpenOptions = {}): WorkspaceFS {
     if (workspaceId === '' || workspaceId.includes(':') || workspaceId.includes('/'))
       throw new FSError('EINVAL', 'Invalid workspace id')
-    return new IdbFS(this.db, workspaceId)
+    return new IdbFS(this.db, workspaceId, opts.requireWorkspace ?? false)
   }
 
+  /**
+   * Deletes the workspace's files, its record and its linked-folder record in one
+   * transaction. A write that starts before it sees the record; one that starts after
+   * sees the record gone and fails.
+   */
   async destroy(workspaceId: string): Promise<void> {
-    const tx = this.db.transaction(STORE, 'readwrite')
+    const tx = this.db.transaction(
+      [FS_META, FS_BLOB, WORKSPACES, SETTINGS],
+      'readwrite',
+    )
     const prefix = `${workspaceId}:`
-    tx.objectStore(STORE).delete(IDBKeyRange.bound(prefix, prefix + '\uffff'))
+    const range = IDBKeyRange.bound(prefix, prefix + '\uffff')
+    tx.objectStore(FS_META).delete(range)
+    tx.objectStore(FS_BLOB).delete(range)
+    tx.objectStore(WORKSPACES).delete(workspaceId)
+    tx.objectStore(SETTINGS).delete(linkKey(workspaceId))
     await done(tx)
   }
 

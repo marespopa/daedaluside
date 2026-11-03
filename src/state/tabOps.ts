@@ -50,6 +50,18 @@ export function removeTabs(
   return { tabs, active: (right ?? left)?.path ?? null }
 }
 
+/**
+ * The tab `delta` places away from the active one, wrapping at both ends. With no
+ * active tab, forward goes to the first and back goes to the last. Null when empty.
+ */
+export function nextTab(state: TabState, delta: 1 | -1): string | null {
+  const n = state.tabs.length
+  if (n === 0) return null
+  const i = state.tabs.findIndex((t) => t.path === state.active)
+  const from = i < 0 ? (delta > 0 ? -1 : 0) : i
+  return state.tabs[(from + delta + n) % n]!.path
+}
+
 /** Unpinned tabs other than `path`. Pinned tabs survive "Close Others". */
 export function othersToClose(tabs: readonly TabRef[], path: string): string[] {
   return tabs.filter((t) => t.path !== path && !t.pinned).map((t) => t.path)

@@ -8,10 +8,13 @@ export type IconName =
   | 'upload'
   | 'file-plus'
   | 'folder-plus'
+  | 'save'
   | 'pencil'
   | 'trash'
   | 'x'
   | 'menu'
+  | 'home'
+  | 'sidebar'
   | 'pin'
   | 'chevron-left'
   | 'chevron-right'
@@ -21,6 +24,13 @@ export type IconName =
   | 'collapse-all'
 
 const paths: Record<IconName, ReactNode> = {
+  save: (
+    <>
+      <path d="M4 3h13l4 4v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
+      <path d="M7 3v6h10V3M7 21v-8h10v8" />
+      <path d="M14 5v2" />
+    </>
+  ),
   'file-plus': (
     <>
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
@@ -44,6 +54,13 @@ const paths: Record<IconName, ReactNode> = {
   ),
   x: <path d="M6 6l12 12M18 6 6 18" />,
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+  home: <path d="M4 11l8-6.5 8 6.5V19a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1z" />,
+  sidebar: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M9 5v14" />
+    </>
+  ),
   'chevron-left': <path d="M15 6l-6 6 6 6" />,
   'chevron-right': <path d="M9 6l6 6-6 6" />,
   pin: (

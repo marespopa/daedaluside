@@ -53,6 +53,42 @@ export const editorWidthAtom = atom(
   },
 )
 
+export const VIM_MODE_KEY = 'daedalus.vimMode'
+
+/** On unless the user has turned it off. */
+export function loadVimEnabled(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(VIM_MODE_KEY) !== 'off'
+  } catch {
+    return true
+  }
+}
+
+const vimBase = atom<boolean>(loadVimEnabled())
+/** On by default. Saved so a reload keeps the choice. */
+export const vimEnabledAtom = atom(
+  (get) => get(vimBase),
+  (_get, set, next: boolean) => {
+    set(vimBase, next)
+    try {
+      globalThis.localStorage?.setItem(VIM_MODE_KEY, next ? 'on' : 'off')
+    } catch {
+      /* storage unavailable: the choice still applies for this session */
+    }
+  },
+)
+
+export type VimModeLabel =
+  'NORMAL' | 'INSERT' | 'REPLACE' | 'VISUAL' | 'V-LINE' | 'V-BLOCK'
+
+/** The footnote under the editor. `prompt` is true while the `:` or `/` line is open. */
+export interface VimStatus {
+  label: VimModeLabel
+  prompt: boolean
+}
+
+export const vimStatusAtom = atom<VimStatus | null>(null)
+
 export const activeBufferAtom = atom<BufferMeta>(initialBuffer)
 export const editorHandleAtom = atom<EditorHandle | null>(null)
 export const paletteOpenAtom = atom(false)
