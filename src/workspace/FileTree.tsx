@@ -4,7 +4,7 @@ import { matchFiles } from '../editor/paletteSearch'
 import {
   activePathAtom,
   copyStatusAtom,
-  newEntryRequestAtom,
+  linkedFolderAtom,
   pendingPathsAtom,
   sidebarOpenAtom,
   treeAtom,
@@ -56,9 +56,9 @@ function Sidebar() {
   const store = useStore()
   const controller = useController()
   const [, setOpen] = useAtom(sidebarOpenAtom)
-  const [request, setRequest] = useAtom(newEntryRequestAtom)
   const status = useAtomValue(workspaceStatusAtom)
   const snapshot = useAtomValue(snapshotAtom)
+  const link = useAtomValue(linkedFolderAtom)
   const tree = useAtomValue(treeAtom)
   const activePath = useAtomValue(activePathAtom)
   const pending = useAtomValue(pendingPathsAtom)
@@ -212,17 +212,6 @@ function Sidebar() {
     const parent = entry ? (entry.kind === 'dir' ? entry.path : dirname(entry.path)) : ''
     setMenu({ parent, x, y })
   }
-
-  // New file / New folder from the header: start the inline name field here. The
-  // request is a one-shot event from outside the tree, so syncing it into state is
-  // the intended use of this effect.
-  useEffect(() => {
-    if (!request) return
-    setRequest(null)
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    startNew(request.kind)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request])
 
   const close = () => {
     setOpen(false)
@@ -515,6 +504,26 @@ function Sidebar() {
           />
         </div>
       </div>
+
+      {link && (
+        <div className="flex h-7 shrink-0 items-center justify-between gap-2 px-3 pb-1 text-xs text-muted">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <Icon name="folder" className="size-3.5 shrink-0" />
+            <span className="truncate" title={link.name}>
+              {link.paused ? 'Not connected' : 'Writes to'} {link.name}
+            </span>
+          </span>
+          {link.paused && (
+            <Button
+              size="xs"
+              variant="quiet"
+              onClick={() => void controller.reconnectFolder()}
+            >
+              Reconnect
+            </Button>
+          )}
+        </div>
+      )}
 
       {copy && (
         <div role="status" className="shrink-0 px-3 pb-2">

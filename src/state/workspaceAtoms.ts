@@ -57,12 +57,13 @@ export const copyStatusAtom = atom<{
 } | null>(null)
 export const openBuffersAtom = atom<OpenBuffer[]>([])
 export const activePathAtom = atom<string | null>(null)
-export const sidebarOpenAtom = atom(false)
 /**
- * Asks the file tree to start a new file or folder in the selected folder. Set by the
- * header buttons, which also open the tree; the tree clears it once it has started.
+ * The folder the current workspace writes through to. `paused` means the browser no longer
+ * grants write access (after a reload, or the user revoked it); the tree offers Reconnect.
  */
-export const newEntryRequestAtom = atom<{ kind: 'new-file' | 'new-folder' } | null>(null)
+export const linkedFolderAtom = atom<{ name: string; paused: boolean } | null>(null)
+
+export const sidebarOpenAtom = atom(false)
 export const settingsOpenAtom = atom(false)
 /** Transient message (errors, import results). */
 export const noticeAtom = atom<{ kind: 'info' | 'error'; text: string } | null>(null)

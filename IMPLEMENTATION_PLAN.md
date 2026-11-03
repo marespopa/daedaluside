@@ -176,7 +176,8 @@ Can run alongside M3–M5.
 ### Phase 2: Worktree sidebar (needs M2)
 - [x] M2 workspace code is committed in `79ad171` (see M2 status).
 - [x] Sidebar is the worktree only. The workspace switcher, workspace options, and archive (zip) options were removed on 2026-11-03 at the user's request. Workspace switching is done from the workspace opener, and zip import is a drop onto the opener.
-- [x] Header: New file and New folder (`IconButton`s) sit to the left of Open folder. They open the tree and start the inline name field in the selected folder.
+- [x] New files and folders are created from the tree's right-click menu (or the command palette: `File: New File` / `File: New Folder`, then pick a folder and name it). The header has no New file / New folder buttons.
+- [x] Write-back: a folder picked with the File System Access API is linked (readwrite). Saves, creates, renames and deletes are mirrored to it; the app copy is authoritative. If access lapses, the sidebar shows Reconnect, which rewrites the workspace to the folder (nothing is deleted on disk). External edits to the folder are not pulled in. Zip and webkitdirectory imports are not linked.
 - [x] Tree toolbar: Expand all and Collapse all folders. Row actions (rename, delete) and the sidebar toggle are `IconButton`s.
 - [x] Right-click menu (`ui/ContextMenu.tsx`, also Shift+F10 on a focused row): on a folder, New file / New folder inside it; on a file, the same in its folder; on empty space, at the root.
 - [x] Shared `Button` and `IconButton` (`src/ui/Button.tsx`), used for all action buttons, including quiet and compact variants. Covered by `src/ui/Button.test.tsx`.

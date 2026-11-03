@@ -17,7 +17,8 @@ import {
   sidebarOpenAtom,
   treeAtom,
 } from '../state/workspaceAtoms'
-import { GlassPopover } from '../ui'
+import { GlassPopover, Input } from '../ui'
+import { joinPath } from '../workspace/path'
 import { useController } from '../workspace/useWorkspace'
 import type { Entry } from '../workspace/types'
 import { languageList } from './languages'
@@ -25,6 +26,7 @@ import {
   COMMAND_PREFIX,
   matchCommands,
   matchFiles,
+  type NewEntryRequest,
   paletteMode,
   paletteNeedle,
   type PaletteItem,
@@ -48,6 +50,14 @@ export default function CommandPalette() {
   const setWidth = useSetAtom(editorWidthAtom)
   const tree = useAtomValue(treeAtom)
   const activePath = useAtomValue(activePathAtom)
+  const folders = useMemo(() => tree.filter((e) => e.kind === 'dir'), [tree])
+  const createEntry = useCallback(
+    (kind: NewEntryRequest['kind'], path: string) =>
+      void (kind === 'file'
+        ? controller.createFile(path)
+        : controller.createFolder(path)),
+    [controller],
+  )
 
   useEffect(() => {
     const show = (q: string) => {
@@ -151,6 +161,8 @@ export default function CommandPalette() {
         run: () => activePath && void controller.copyPath(activePath),
       },
       { id: 'settings', label: 'Settings: Storage', run: () => setSettings(true) },
+      { id: 'new-file', label: 'File: New File', enter: { kind: 'file' } },
+      { id: 'new-folder', label: 'File: New Folder', enter: { kind: 'folder' } },
       // Label carries the kind, so typing "dark" or "light" finds the matching group.
       ...THEMES.map((t) => theme(t.id, `${t.name} (${t.kind})`)),
       theme('system', 'System'),
@@ -188,6 +200,8 @@ export default function CommandPalette() {
     <PaletteDialog
       commands={commands}
       files={files}
+      folders={folders}
+      onCreate={createEntry}
       query={query}
       onQuery={setQuery}
       onOpenFile={openFile}
@@ -200,38 +214,80 @@ export default function CommandPalette() {
 function PaletteDialog({
   commands,
   files,
+  folders,
   query,
   onQuery,
   onOpenFile,
+  onCreate,
   onClose,
   onRestoreFocus,
 }: {
   commands: PaletteItem[]
   files: readonly Entry[]
+  folders: readonly Entry[]
   query: string
   onQuery: (q: string) => void
   onOpenFile: (path: string) => void
+  onCreate: (kind: NewEntryRequest['kind'], path: string) => void
   onClose: () => void
   onRestoreFocus: () => void
 }) {
   const [index, setIndex] = useState(0)
+  /**
+   * A create flow in progress. Without a `parent` the palette lists folders to choose from;
+   * with one, the query is the new name.
+   */
+  const [creating, setCreating] = useState<NewEntryRequest | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLUListElement>(null)
 
-  const commandMode = paletteMode(query) === 'commands'
+  const locating = creating !== null && creating.parent === undefined
+  const naming = creating !== null && creating.parent !== undefined
+  const commandMode = !creating && paletteMode(query) === 'commands'
   const needle = paletteNeedle(query)
+  const kindLabel = creating?.kind === 'folder' ? 'folder' : 'file'
 
-  const results = useMemo<PaletteItem[]>(
-    () =>
-      commandMode
-        ? matchCommands(commands, needle)
-        : matchFiles(files, needle).map((e) => ({
-            id: `file:${e.path}`,
-            label: e.path,
-            run: () => onOpenFile(e.path),
-          })),
-    [commandMode, commands, files, needle, onOpenFile],
+  const pickLocation = useCallback(
+    (parent: string) => {
+      setCreating((c) => (c ? { kind: c.kind, parent } : c))
+      onQuery('')
+      setIndex(0)
+    },
+    [onQuery],
   )
+
+  const results = useMemo<PaletteItem[]>(() => {
+    if (naming) return []
+    if (locating) {
+      const root: PaletteItem[] =
+        needle === ''
+          ? [{ id: 'at:', label: '/ (workspace root)', run: () => pickLocation('') }]
+          : []
+      const dirs = matchFiles(folders, needle).map((f) => ({
+        id: `at:${f.path}`,
+        label: `${f.path}/`,
+        run: () => pickLocation(f.path),
+      }))
+      return [...root, ...dirs]
+    }
+    return commandMode
+      ? matchCommands(commands, needle)
+      : matchFiles(files, needle).map((e) => ({
+          id: `file:${e.path}`,
+          label: e.path,
+          run: () => onOpenFile(e.path),
+        }))
+  }, [
+    naming,
+    locating,
+    commandMode,
+    commands,
+    files,
+    folders,
+    needle,
+    onOpenFile,
+    pickLocation,
+  ])
   const sel = results.length === 0 ? -1 : Math.min(index, results.length - 1)
 
   useEffect(() => {
@@ -248,14 +304,41 @@ function PaletteDialog({
 
   const run = (item: PaletteItem | undefined) => {
     if (!item) return
+    if (item.enter) {
+      setCreating(item.enter)
+      onQuery('')
+      setIndex(0)
+      return
+    }
+    // Choosing a folder keeps the palette open for the name; other items finish it.
+    if (locating) {
+      item.run?.()
+      return
+    }
     onClose()
-    item.run()
+    item.run?.()
+  }
+
+  /** The name step: the query is the new file or folder name, relative to its folder. */
+  const submitName = () => {
+    const name = query.trim()
+    if (!naming || !creating || creating.parent === undefined || name === '') return
+    onClose()
+    onCreate(creating.kind, joinPath(creating.parent, name))
+  }
+
+  const backOut = () => {
+    if (creating) {
+      setCreating(null)
+      onQuery(COMMAND_PREFIX)
+      setIndex(0)
+    } else onClose()
   }
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault()
-      onClose()
+      backOut()
     } else if (e.key === 'ArrowDown') {
       e.preventDefault()
       setIndex(Math.min(sel + 1, results.length - 1))
@@ -264,15 +347,36 @@ function PaletteDialog({
       setIndex(Math.max(sel - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      run(results[sel])
+      if (naming) submitName()
+      else run(results[sel])
     }
   }
 
-  const emptyText = commandMode
-    ? 'No matching commands'
-    : files.length === 0
-      ? 'No files in this workspace'
-      : 'No matching files'
+  const parentLabel = creating?.parent ? `${creating.parent}/` : 'the workspace root'
+  const placeholder = locating
+    ? `Choose a folder for the new ${kindLabel}`
+    : naming
+      ? `Name the new ${kindLabel}, created in ${parentLabel}`
+      : commandMode
+        ? 'Search commands'
+        : 'Search files. Type > for commands'
+
+  const emptyText = naming
+    ? null
+    : locating
+      ? 'No matching folders'
+      : commandMode
+        ? 'No matching commands'
+        : files.length === 0
+          ? 'No files in this workspace'
+          : 'No matching files'
+
+  const nameHint =
+    naming && creating?.parent !== undefined
+      ? query.trim()
+        ? `Create ${kindLabel} ${joinPath(creating.parent, query.trim())}  (Enter)`
+        : 'Type a name. Esc goes back.'
+      : null
 
   return (
     <div
@@ -286,9 +390,13 @@ function PaletteDialog({
         className="w-full max-w-lg"
         onKeyDown={onKeyDown}
       >
-        <input
+        <Input
           ref={input}
+          variant="bare"
+          size="lg"
+          className="w-full"
           role="combobox"
+          aria-label="Command palette search"
           aria-expanded="true"
           aria-controls="palette-list"
           aria-activedescendant={sel >= 0 ? `palette-option-${sel}` : undefined}
@@ -297,18 +405,18 @@ function PaletteDialog({
             onQuery(e.target.value)
             setIndex(0)
           }}
-          placeholder={
-            commandMode ? 'Search commands' : 'Search files. Type > for commands'
-          }
-          className="w-full bg-transparent px-4 py-3 text-sm outline-none placeholder:text-muted"
+          placeholder={placeholder}
         />
         <ul
           ref={list}
           id="palette-list"
           role="listbox"
+          // Clicking an option keeps focus in the input, so typing and Escape still reach the palette.
+          onMouseDown={(e) => e.preventDefault()}
           className="max-h-72 overflow-auto border-t border-line"
         >
-          {results.length === 0 && (
+          {nameHint && <li className="px-4 py-2 text-sm text-muted">{nameHint}</li>}
+          {emptyText && results.length === 0 && (
             <li className="px-4 py-2 text-sm text-muted">{emptyText}</li>
           )}
           {results.map((c, i) => (

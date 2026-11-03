@@ -13,6 +13,7 @@ import {
   copyStatusAtom,
   currentWorkspaceIdAtom,
   importStatusAtom,
+  linkedFolderAtom,
   noticeAtom,
   openBuffersAtom,
   pendingPathsAtom,
@@ -46,6 +47,7 @@ import {
   type ImportEntry,
 } from './archive'
 import { openDB } from './db'
+import { DiskMirror, isAccessDenied, type LinkedFolder } from './diskMirror'
 import { ImportQueue, type CopyProgress } from './importQueue'
 import { createBackend } from './fs'
 import { sourceKey, WorkspaceManager, type WorkspaceMeta } from './manager'
@@ -55,6 +57,15 @@ import { requestPersistence } from './storage'
 import type { WorkspaceFS } from './types'
 
 type Store = ReturnType<typeof createStore>
+
+/**
+ * True while the user types in a field outside the editor (a new name, the finder). A file
+ * that finishes loading then must not take focus, or the field would blur and cancel.
+ */
+function typingElsewhere(): boolean {
+  const a = document.activeElement
+  return a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement
+}
 type ReportImport = (done: number, total: number | null) => void
 
 /** Lets a just-shown overlay paint before synchronous work (zip unpacking) starts. */
@@ -64,6 +75,7 @@ export const AUTOSAVE_MS = 800
 const SESSION_SAVE_MS = 500
 const MAX_OPEN_BYTES = 5 * 1024 * 1024
 const DEFAULT_WORKSPACE = 'Workspace'
+const ENCODER = new TextEncoder()
 
 interface Buffer {
   state: EditorState
@@ -98,6 +110,12 @@ export class WorkspaceController {
   /** Background copies still running, by workspace id. */
   private imports = new Map<string, ImportQueue>()
   private lastCopyPublish = 0
+  /** Write-through target of the current workspace, when the user linked a folder. */
+  private mirror: DiskMirror | null = null
+  /** The browser does not grant write access to `mirror` right now (see `linkedFolderAtom`). */
+  private linkPaused = false
+  /** Disk writes run one at a time, in order, so a rename cannot race a save. */
+  private diskChain: Promise<unknown> = Promise.resolve()
 
   constructor(store: Store) {
     this.store = store
@@ -280,7 +298,7 @@ export class WorkspaceController {
     })
     // Loads finish asynchronously. Taking focus while the palette or settings is open
     // would send the user's typing into the document.
-    if (!this.overlayOpen()) h.view.focus()
+    if (!this.overlayOpen() && !typingElsewhere()) h.view.focus()
   }
 
   private overlayOpen(): boolean {
@@ -451,9 +469,14 @@ export class WorkspaceController {
       if (this.buffers.get(path) !== b) return // closed or deleted meanwhile
       const snapshot = this.liveDoc(b, path)
       if (snapshot.eq(b.saved) && !b.saveError) return
+      const text = snapshot.toString()
       try {
-        await fs.write(path, snapshot.toString())
+        await fs.write(path, text)
         b.saved = snapshot
+        const diskError = await this.toDisk((m) =>
+          m.writeFile(path, ENCODER.encode(text)),
+        )
+        if (diskError) throw diskError
         b.saveError = false
       } catch (e) {
         b.saveError = true
@@ -488,6 +511,7 @@ export class WorkspaceController {
       const fs = this.requireFS()
       if (await fs.stat(path)) throw new Error(`Already exists: ${path}`)
       await fs.write(path, '')
+      await this.mirrored((m) => m.writeFile(path, new Uint8Array()))
       await this.refreshTree()
       await this.openFile(path)
     } catch (e) {
@@ -503,6 +527,7 @@ export class WorkspaceController {
       const fs = this.requireFS()
       if (await fs.stat(path)) throw new Error(`Already exists: ${path}`)
       await fs.mkdir(path)
+      await this.mirrored((m) => m.mkdir(path))
       await this.refreshTree()
     } catch (e) {
       this.fail(e)
@@ -538,6 +563,11 @@ export class WorkspaceController {
       }
       this.publishBuffers()
       this.scheduleSession()
+      // Copy first, then remove: a failed copy leaves the old name on disk, not nothing.
+      await this.mirrored(async (m) => {
+        await this.copyTo(m, to)
+        await m.remove(from)
+      })
       await this.refreshTree()
     } catch (e) {
       this.fail(e)
@@ -550,6 +580,7 @@ export class WorkspaceController {
       this.assertCopied('Deleting')
       const fs = this.requireFS()
       await fs.remove(path)
+      await this.mirrored((m) => m.remove(path))
       const gone = [...this.buffers.keys()].filter((p) => isWithin(p, path))
       this.commit(removeTabs(this.tabState(), gone), { removed: gone })
       await this.refreshTree()
@@ -578,8 +609,11 @@ export class WorkspaceController {
     this.active = null
     this.wsId = id
     this.fs = manager.fs(id)
+    this.mirror = null
     this.store.set(currentWorkspaceIdAtom, id)
     await manager.setLastId(id)
+    this.mirror = await this.loadMirror(id)
+    this.publishLink()
     await this.dropPlaceholderScratch(manager, id)
     await this.refreshTree()
     const meta = await manager.get(id)
@@ -649,6 +683,7 @@ export class WorkspaceController {
       this.cancelCopy(id)
       if (id === this.wsId) {
         for (const b of this.buffers.values()) clearTimeout(b.timer)
+        this.mirror = null // nothing to write back: the workspace is going away
         this.buffers = new Map() // nothing to save: the workspace is going away
         this.tabs = []
         this.active = null
@@ -700,7 +735,12 @@ export class WorkspaceController {
    * The tree shows every entry at once; a file is readable once it has been copied, and
    * opening one copies it first. Only the first file is waited for.
    */
-  private async importInto(name: string, entries: ImportEntry[], report: ReportImport) {
+  private async importInto(
+    name: string,
+    entries: ImportEntry[],
+    report: ReportImport,
+    link?: LinkedFolder,
+  ) {
     const manager = this.requireManager()
     const label = name || 'Imported'
     const source = await sourceKey(
@@ -710,6 +750,7 @@ export class WorkspaceController {
     // The same folder again: reuse its workspace instead of adding a duplicate entry.
     const existing = await manager.findBySource(source)
     if (existing) {
+      if (link) await manager.setLink(existing.id, link)
       await this.refreshWorkspaces()
       await this.switchTo(existing.id)
       this.notify(
@@ -720,6 +761,7 @@ export class WorkspaceController {
     }
     const meta = await manager.create(label, source, true)
     try {
+      if (link) await manager.setLink(meta.id, link)
       report(0, entries.length)
       this.startCopy(meta, entries)
       await this.refreshWorkspaces()
@@ -735,7 +777,7 @@ export class WorkspaceController {
       this.store.set(sidebarOpenAtom, true)
       this.notify(
         'info',
-        `Opened "${meta.name}". Copying the rest in the background; files open as they are ready.`,
+        `Opened "${meta.name}". Copying the rest in the background; files open as they are ready.${link ? ' Changes are written back to the folder.' : ''}`,
       )
     } catch (e) {
       this.cancelCopy(meta.id)
@@ -811,12 +853,13 @@ export class WorkspaceController {
     }
   }
 
-  async importFolderHandle(handle: FileSystemDirectoryHandle) {
+  /** A picked folder is linked: changes made in the app are written back to it. */
+  async importFolderHandle(handle: LinkedFolder) {
     await this.runImport(handle.name, async (report) => {
       const entries = await entriesFromDirectoryHandle(handle, (found) =>
         report(found, null),
       )
-      await this.importInto(handle.name, entries, report)
+      await this.importInto(handle.name, entries, report, handle)
     })
   }
 
@@ -827,6 +870,111 @@ export class WorkspaceController {
       const fs = this.requireFS()
       const meta = this.store.get(workspacesAtom).find((w) => w.id === this.wsId)
       downloadBytes(await exportZip(fs), `${meta?.name ?? 'workspace'}.zip`)
+    } catch (e) {
+      this.fail(e)
+    }
+  }
+
+  // ---- linked folder ---------------------------------------------------
+
+  private publishLink() {
+    const m = this.mirror
+    this.store.set(
+      linkedFolderAtom,
+      m ? { name: m.root.name, paused: this.linkPaused } : null,
+    )
+  }
+
+  /** Reads the folder linked to a workspace. Write access is checked without prompting. */
+  private async loadMirror(id: string): Promise<DiskMirror | null> {
+    const handle = await this.requireManager().getLink(id)
+    if (!handle) {
+      this.linkPaused = false
+      return null
+    }
+    const m = new DiskMirror(handle)
+    let granted = false
+    try {
+      granted = (await m.permission()) === 'granted'
+    } catch {
+      /* a handle the browser no longer recognizes: treat as not connected */
+    }
+    this.linkPaused = !granted
+    return m
+  }
+
+  /**
+   * Mirrors one change to the linked folder, after the app copy is written. Returns the
+   * failure, or null. The change stays saved in the app either way.
+   */
+  private toDisk(write: (m: DiskMirror) => Promise<void>): Promise<Error | null> {
+    const m = this.mirror
+    if (!m) return Promise.resolve(null)
+    if (this.linkPaused)
+      return Promise.resolve(
+        new Error(
+          `Saved in the app, not on disk: "${m.root.name}" is not connected. Reconnect it in the sidebar.`,
+        ),
+      )
+    const run = this.diskChain.then(async (): Promise<Error | null> => {
+      try {
+        await write(m)
+        return null
+      } catch (e) {
+        if (isAccessDenied(e)) this.setLinkPaused(true)
+        return new Error(
+          `Saved in the app, not on disk: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      }
+    })
+    this.diskChain = run
+    return run
+  }
+
+  /** For tree changes: the change is already in the app, so a disk failure is only reported. */
+  private async mirrored(write: (m: DiskMirror) => Promise<void>) {
+    const err = await this.toDisk(write)
+    if (err) this.fail(err)
+  }
+
+  private setLinkPaused(paused: boolean) {
+    this.linkPaused = paused
+    this.publishLink()
+  }
+
+  /** Writes the files and folders under `under` to the linked folder. Nothing is deleted there. */
+  private async copyTo(m: DiskMirror, under = '') {
+    const fs = this.requireFS()
+    const entries = (await fs.listAll()).filter((e) => isWithin(e.path, under))
+    for (const e of entries) if (e.kind === 'dir') await m.mkdir(e.path)
+    for (const e of entries)
+      if (e.kind === 'file') await m.writeFile(e.path, await fs.readBytes(e.path))
+  }
+
+  /**
+   * Asks the browser for write access again, then writes the whole workspace to the folder.
+   * Call it from a click: the permission prompt needs one. Nothing on disk is deleted.
+   */
+  async reconnectFolder() {
+    const m = this.mirror
+    if (!m) return
+    try {
+      // First call in this function, so the click that started it still counts.
+      const state = await m.requestAccess()
+      if (this.mirror !== m) return
+      if (state !== 'granted') {
+        this.notify(
+          'error',
+          `Write access to "${m.root.name}" was not granted. Changes are only saved in the app.`,
+        )
+        return
+      }
+      this.assertCopied('Reconnecting')
+      this.setLinkPaused(false)
+      await this.flushAll()
+      const err = await this.toDisk((d) => this.copyTo(d))
+      if (err) throw err
+      this.notify('info', `Connected "${m.root.name}" and wrote the workspace to it.`)
     } catch (e) {
       this.fail(e)
     }

@@ -1,9 +1,21 @@
 import type { Entry } from '../workspace/types'
 
+/**
+ * A new file or folder to create. With no `parent` the palette first asks for the
+ * location; with one it asks for the name.
+ */
+export interface NewEntryRequest {
+  kind: 'file' | 'folder'
+  parent?: string
+}
+
 export interface PaletteItem {
   id: string
   label: string
-  run: () => void
+  /** Runs the command and closes the palette. */
+  run?: () => void
+  /** Starts a create flow in the open palette instead of running at once. */
+  enter?: NewEntryRequest
 }
 
 /** A leading `>` switches the palette to commands, as in VS Code. */

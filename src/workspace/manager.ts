@@ -1,4 +1,5 @@
 import { idbAll, idbDelete, idbGet, idbPut } from './db'
+import type { LinkedFolder } from './diskMirror'
 import type { FSBackend, WorkspaceFS } from './types'
 
 /** Stored in the `workspaces` IndexedDB store. File contents live in the FS backend. */
@@ -39,6 +40,10 @@ export async function sourceKey(name: string, filePaths: string[]): Promise<stri
   const text = [name, ...[...filePaths].sort()].join('\n')
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+function linkKey(id: string): string {
+  return `link:${id}`
 }
 
 export class WorkspaceManager {
@@ -121,10 +126,20 @@ export class WorkspaceManager {
     return this.update(id, { openFiles, activeFile, pinnedFiles })
   }
 
+  /** The folder this workspace writes through to, if the user linked one. */
+  getLink(id: string): Promise<LinkedFolder | undefined> {
+    return idbGet<LinkedFolder>(this.db, 'settings', linkKey(id))
+  }
+
+  setLink(id: string, folder: LinkedFolder): Promise<void> {
+    return idbPut(this.db, 'settings', linkKey(id), folder)
+  }
+
   /** Deletes files first, so a crash leaves a visible (empty) workspace, not leaked data. */
   async remove(id: string): Promise<void> {
     await this.backend.destroy(id)
     await idbDelete(this.db, 'workspaces', id)
+    await idbDelete(this.db, 'settings', linkKey(id))
   }
 
   async getLastId(): Promise<string | null> {

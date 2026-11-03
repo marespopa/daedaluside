@@ -131,7 +131,9 @@ describe('workspace in the app', () => {
     await user.keyboard('{Control>}b{/Control}')
     const tree = await screen.findByRole('complementary', { name: 'File tree' })
 
-    await user.click(screen.getByRole('button', { name: 'New file' }))
+    // New entries come from the tree's right-click menu, on the empty space at the root.
+    fireEvent.contextMenu(tree)
+    await user.click(await screen.findByRole('menuitem', { name: 'New file' }))
     await user.type(
       within(tree).getByLabelText('New file name'),
       'src/deep/main.ts{Enter}',

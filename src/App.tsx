@@ -1,12 +1,8 @@
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue } from 'jotai'
 import CommandPalette from './editor/CommandPalette'
 import Editor from './editor/Editor'
 import { activeBufferAtom, editorWidthAtom } from './state/editorAtoms'
-import {
-  importStatusAtom,
-  newEntryRequestAtom,
-  sidebarOpenAtom,
-} from './state/workspaceAtoms'
+import { importStatusAtom, sidebarOpenAtom } from './state/workspaceAtoms'
 import { IconButton } from './ui'
 import FileTree from './workspace/FileTree'
 import Notice from './workspace/Notice'
@@ -21,11 +17,6 @@ export default function App() {
   const buffer = useAtomValue(activeBufferAtom)
   const importing = useAtomValue(importStatusAtom)
   const [width, setWidth] = useAtom(editorWidthAtom)
-  const requestNew = useSetAtom(newEntryRequestAtom)
-  const newEntry = (kind: 'new-file' | 'new-folder') => {
-    setSidebar(true) // the inline name field lives in the tree
-    requestNew({ kind })
-  }
   return (
     <div className="flex h-full bg-canvas text-text">
       <FileTree />
@@ -45,18 +36,6 @@ export default function App() {
               : ''}
           </span>
           <div className="ml-auto flex shrink-0 items-center gap-0.5">
-            <IconButton
-              label="New file"
-              icon="file-plus"
-              disabled={importing !== null}
-              onClick={() => newEntry('new-file')}
-            />
-            <IconButton
-              label="New folder"
-              icon="folder-plus"
-              disabled={importing !== null}
-              onClick={() => newEntry('new-folder')}
-            />
             <IconButton
               label="Full width"
               icon="width"
