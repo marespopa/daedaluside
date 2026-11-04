@@ -27,6 +27,18 @@ import { loadLanguage } from './languages'
 import { editorTheme } from './theme'
 import { vimCompartment, vimExtension } from './vimMode'
 
+/** Documents longer than this (UTF-16 units, about 1 MB of text) open in large-file mode. */
+export const LARGE_FILE_CHARS = 1_000_000
+
+/**
+ * Large-file mode turns off line wrapping (which forces measuring every wrapped line),
+ * the diff gutter and selection-match highlighting. Each document keeps the setting it was
+ * created with, in compartments, so stashed buffer states stay consistent.
+ */
+export function isLargeDoc(doc: string | { length: number }): boolean {
+  return doc.length > LARGE_FILE_CHARS
+}
+
 export interface EditorOptions {
   parent: HTMLElement
   doc?: string
@@ -57,6 +69,8 @@ export function createEditor({
   extensions = [],
 }: EditorOptions): EditorHandle {
   const language = new Compartment()
+  const wrapping = new Compartment()
+  const heavy = new Compartment()
   let langRequest = 0
   let vimOn = false
 
@@ -68,21 +82,20 @@ export function createEditor({
     return state.update({ effects: vimCompartment.reconfigure(vimFor(vimOn)) }).state
   }
 
-  const baseExtensions: Extension[] = [
+  const baseExtensions = (large: boolean): Extension[] => [
     vimCompartment.of([]),
     history(),
     drawSelection(),
     lineNumbers(),
-    diffGutter,
+    heavy.of(large ? [] : [diffGutter, highlightSelectionMatches()]),
     highlightActiveLine(),
     highlightActiveLineGutter(),
     indentOnInput(),
     bracketMatching(),
     closeBrackets(),
     autocompletion(),
-    highlightSelectionMatches(),
     EditorState.allowMultipleSelections.of(true),
-    EditorView.lineWrapping,
+    wrapping.of(large ? [] : EditorView.lineWrapping),
     keymap.of([
       ...closeBracketsKeymap,
       ...defaultKeymap,
@@ -99,7 +112,7 @@ export function createEditor({
     ...extensions,
   ]
   const createState = (d: string) =>
-    withVim(EditorState.create({ doc: d, extensions: baseExtensions }))
+    withVim(EditorState.create({ doc: d, extensions: baseExtensions(isLargeDoc(d)) }))
 
   const view = new EditorView({ parent, state: createState(doc) })
 
