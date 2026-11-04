@@ -2,11 +2,9 @@ import { useAtom, useAtomValue, useStore } from 'jotai'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   activePathAtom,
-  copyStatusAtom,
   deletingPathsAtom,
   fileTreeFocusAtom,
   linkedFolderAtom,
-  pendingPathsAtom,
   sidebarOpenAtom,
   treeAtom,
   snapshotAtom,
@@ -83,8 +81,6 @@ function Sidebar({ open }: { open: boolean }) {
   const deleting = useAtomValue(deletingPathsAtom)
   const treeBusy = deleting.size > 0
   const activePath = useAtomValue(activePathAtom)
-  const pending = useAtomValue(pendingPathsAtom)
-  const copy = useAtomValue(copyStatusAtom)
 
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [selected, setSelected] = useState('')
@@ -465,7 +461,6 @@ function Sidebar({ open }: { open: boolean }) {
                 type="button"
                 data-tree-row
                 data-row-key={entry.path}
-                aria-description={pending.has(entry.path) ? 'Copying' : undefined}
                 tabIndex={entry.path === tabStop ? 0 : -1}
                 onClick={() => activate(entry)}
                 onKeyDown={(e) => onRowKey(e, index)}
@@ -480,13 +475,6 @@ function Sidebar({ open }: { open: boolean }) {
                   )}
                 </span>
                 <span className="truncate">{entry.name}</span>
-                {pending.has(entry.path) && (
-                  <span
-                    aria-hidden
-                    title="Still copying. Opening it copies it first."
-                    className="ml-auto size-1.5 shrink-0 rounded-full bg-muted motion-safe:animate-pulse"
-                  />
-                )}
               </button>
               <span className="flex shrink-0 opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100">
                 <IconButton
@@ -571,25 +559,6 @@ function Sidebar({ open }: { open: boolean }) {
               Reconnect
             </Button>
           )}
-        </div>
-      )}
-
-      {copy && (
-        <div role="status" className="shrink-0 px-3 pb-2">
-          <div className="flex items-baseline justify-between text-xs text-muted">
-            <span>
-              Copying {copy.done.toLocaleString()} of {copy.total.toLocaleString()}
-            </span>
-            {copy.failed > 0 && (
-              <span className="text-diff-remove-fg">{copy.failed} failed</span>
-            )}
-          </div>
-          <div className="mt-1 h-px overflow-hidden bg-line">
-            <div
-              className="h-full bg-accent transition-[width] duration-300 ease-out"
-              style={{ width: `${(copy.done / Math.max(copy.total, 1)) * 100}%` }}
-            />
-          </div>
         </div>
       )}
 

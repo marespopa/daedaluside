@@ -13,7 +13,7 @@ All compute, file storage, key handling, and LLM calls run in the client. Hostin
 ## Core Principles
 
 - **Client Execution:** Zero backend databases or persistent servers. Direct browser-to-provider calls form the primary network path.
-- **Local Ownership:** Workspace files persist in the Origin Private File System (OPFS). API keys reside encrypted at rest and decrypt only into memory closures.
+- **Local Ownership:** Each workspace is backed by a folder the user picks through the File System Access API. API keys reside encrypted at rest and decrypt only into memory closures.
 - **Human-in-the-Loop:** Generative output acts as transient proposals. Workspace mutations require explicit user confirmation via diff review.
 - **Tiered Model Routing:** Tasks dispatch to models optimized for specific phases (e.g., reasoning models for planning, fast/cheap models for execution).
 - **Distraction-Free UX:** Single-pane editor with collapsible panels and command-palette controls.
@@ -28,7 +28,7 @@ All compute, file storage, key handling, and LLM calls run in the client. Hostin
 | **Styling** | Tailwind CSS | CSS-variable design tokens and theme engine |
 | **Editor** | CodeMirror 6 | Modular document engine and diff views |
 | **State** | Jotai | Atomic state management to isolate streaming renders |
-| **Storage** | OPFS (workspace files), IndexedDB (settings/sessions/vault) | High-capacity local workspace filesystem |
+| **Storage** | File System Access API folder (workspace files), IndexedDB (settings/sessions/vault) | High-capacity local workspace filesystem |
 | **Crypto** | Web Crypto API | PBKDF2 key derivation and AES-GCM vault encryption |
 | **Hosting** | Netlify Static Edge | Global CDN distribution and security header enforcement |
 
@@ -43,7 +43,7 @@ graph TD
         State["App State<br/>Jotai"]
         
         subgraph Storage ["Local Storage"]
-            FS["Workspace FS<br/>OPFS"]
+            FS["Workspace FS<br/>User Folder"]
             DB["Settings & State<br/>IndexedDB"]
         end
         
@@ -101,7 +101,7 @@ stateDiagram-v2
 
  * Plan: Collects context (open files, workspace summary, rules) and outputs a structured step-by-step plan.
  * Review: User edits, reorders, or approves plan steps.
- * Execute & Apply: Steps execute sequentially to produce diff patches (FilePatch[]). Approved patches apply atomically to OPFS with snapshot history for undo.
+ * Execute & Apply: Steps execute sequentially to produce diff patches (FilePatch[]). Approved patches apply atomically to the workspace folder with snapshot history for undo.
 
 ### Vim Mode
 
@@ -163,9 +163,9 @@ The sidebar is an extension of the paper, not a developer dashboard. It is quiet
 
 **Finder.** A compact, softly surfaced input with a small top inset, in the Apple style: no heavy border until focused, then a faint accent ring. It filters the tree in place.
 
-**Linked folder.** Surfaced only when it needs attention. The normal connected state is implicit in the workspace header, so there is no "Writes to …" line; when permission lapses, a quiet "Not connected" row with Reconnect appears. Write-back itself is unchanged.
+**Linked folder.** The picked folder is the source of truth for the workspace. It is surfaced only when it needs attention: when readwrite permission lapses, a quiet "Not connected" row with Reconnect appears. There is no app-side mirror.
 
-**Footer.** One 10 px mono line: the storage backend (OPFS), the file count, and the aggregate file size. A footnote, not a status bar.
+**Footer.** One 10 px mono line: the linked folder name (or "No folder"), the file count, and the aggregate file size. A footnote, not a status bar.
 
 **Conflicts resolved against the original spec.** `Enter` renames in the spec; here `Enter` opens a file or toggles a folder, as in every file tree, and `F2` renames, so both actions stay reachable. The spec's per-row action buttons and bulk expand/collapse toolbar are omitted in favor of netrw-style tree keys.
 

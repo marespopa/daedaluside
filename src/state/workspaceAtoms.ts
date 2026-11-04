@@ -12,9 +12,7 @@ export interface OpenBuffer {
 }
 
 export type WorkspaceStatus =
-  | { state: 'loading' }
-  | { state: 'ready'; backend: 'opfs' }
-  | { state: 'error'; message: string }
+  { state: 'loading' } | { state: 'ready' } | { state: 'error'; message: string }
 
 /**
  * What the last session looked like, saved in localStorage so the first paint can
@@ -28,19 +26,7 @@ export interface SessionSnapshot {
   activeFile: string | null
 }
 
-/**
- * A folder or zip being read and copied in. `total` is null while still scanning
- * or unpacking, when the item count is not known yet.
- */
-export interface ImportStatus {
-  name: string
-  done: number
-  total: number | null
-}
-
 export const workspaceStatusAtom = atom<WorkspaceStatus>({ state: 'loading' })
-/** Set for the whole import, from picking the folder until its first file is open. */
-export const importStatusAtom = atom<ImportStatus | null>(null)
 /** Null when there is no saved session. Only read while the status is `loading`. */
 export const snapshotAtom = atom<SessionSnapshot | null>(null)
 export const workspacesAtom = atom<WorkspaceMeta[]>([])
@@ -49,19 +35,12 @@ export const currentWorkspaceIdAtom = atom<string | null>(null)
 export const treeAtom = atom<Entry[]>([])
 /** Paths currently being deleted from the workspace. Tree actions stay disabled while non-empty. */
 export const deletingPathsAtom = atom<ReadonlySet<string>>(new Set<string>())
-/** Paths of the current workspace that are still being copied in. They are listed but not readable yet. */
-export const pendingPathsAtom = atom<ReadonlySet<string>>(new Set<string>())
-/** Background copy of the current workspace; null when nothing is copying. */
-export const copyStatusAtom = atom<{
-  done: number
-  failed: number
-  total: number
-} | null>(null)
 export const openBuffersAtom = atom<OpenBuffer[]>([])
 export const activePathAtom = atom<string | null>(null)
 /**
- * The folder the current workspace writes through to. `paused` means the browser no longer
- * grants write access (after a reload, or the user revoked it); the tree offers Reconnect.
+ * The folder the current workspace reads and writes through. `paused` means the browser
+ * no longer grants readwrite access (after a reload, or the user revoked it); the tree
+ * offers Reconnect.
  */
 export const linkedFolderAtom = atom<{ name: string; paused: boolean } | null>(null)
 /**

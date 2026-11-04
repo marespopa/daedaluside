@@ -10,20 +10,17 @@ import {
   walkTree,
   type ImportEntry,
 } from './archive'
+import { FolderFS } from './folderFs'
 import { openDB } from './db'
 import { WorkspaceManager } from './manager'
-import { OpfsBackend } from './opfs'
-import { getMemoryOpfs } from './testing/opfsSetup'
-import type { FSBackend } from './types'
+import { MemDisk } from './testing/memoryDisk'
+import type { WorkspaceFS } from './types'
 
-const backends: [string, () => Promise<FSBackend>][] = [
-  ['OPFS', async () => new OpfsBackend(getMemoryOpfs().rootHandle(), await openDB('a', new IDBFactory()))],
-]
+const makeFolderFS = (disk = new MemDisk()) => new FolderFS(disk.handle() as never)
 
-describe.each(backends)('zip import/export (%s)', (_name, make) => {
+describe('zip import/export (folder)', () => {
   it('import after export reproduces the same file tree', async () => {
-    const backend = await make()
-    const a = backend.open('a')
+    const a = makeFolderFS()
     await a.write('README.md', '# hi')
     await a.write('src/deep/er/main.ts', 'export {}')
     await a.write('src/util.ts', 'x')
@@ -31,10 +28,10 @@ describe.each(backends)('zip import/export (%s)', (_name, make) => {
     await a.mkdir('empty/nested')
 
     const zip = await exportZip(a)
-    const b = backend.open('b')
+    const b = makeFolderFS()
     await importEntries(b, readZip(zip))
 
-    const tree = async (fs: typeof a) =>
+    const tree = async (fs: WorkspaceFS) =>
       Promise.all(
         (await walkTree(fs)).map(async (e) => ({
           path: e.path,
@@ -91,13 +88,14 @@ describe('entriesFromFileList', () => {
 })
 
 describe('WorkspaceManager', () => {
-  it('creates, renames, saves sessions and deletes with files', async () => {
+  it('creates, renames, saves sessions and deletes records without touching disk', async () => {
     const db = await openDB('m', new IDBFactory())
-    const backend = new OpfsBackend(getMemoryOpfs().rootHandle(), db)
-    const m = new WorkspaceManager(db, backend)
+    const disk = new MemDisk()
+    disk.setFile('x/y.txt', new TextEncoder().encode('data'))
+    const m = new WorkspaceManager(db)
     const ws = await m.create('  Alpha ')
     expect(ws.name).toBe('Alpha')
-    await m.fs(ws.id).write('x/y.txt', 'data')
+    await m.setLink(ws.id, disk.handle() as never)
     await m.rename(ws.id, 'Beta')
     await m.saveSession(ws.id, ['x/y.txt'], 'x/y.txt')
     expect(await m.get(ws.id)).toMatchObject({
@@ -110,14 +108,14 @@ describe('WorkspaceManager', () => {
     await expect(m.create('   ')).rejects.toThrow()
     await m.remove(ws.id)
     expect(await m.list()).toEqual([])
-    expect(await m.fs(ws.id).list('')).toEqual([])
+    // The linked folder is untouched.
+    expect(disk.files.has('x/y.txt')).toBe(true)
   })
 })
 
 describe('import progress', () => {
   it('reports every 25 entries and always the final count', async () => {
-    const db = await openDB('p', new IDBFactory())
-    const fs = new OpfsBackend(getMemoryOpfs().rootHandle(), db).open('p')
+    const fs = makeFolderFS()
     const entries = Array.from({ length: 60 }, (_, i) => ({
       kind: 'file' as const,
       path: `f${i}.txt`,

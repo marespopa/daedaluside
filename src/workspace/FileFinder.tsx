@@ -102,7 +102,12 @@ export default function FileFinder({
       </div>
 
       {matches ? (
-        <ul id={listId} role="listbox" aria-label="Matching files" className={listClassName}>
+        <ul
+          id={listId}
+          role="listbox"
+          aria-label="Matching files"
+          className={listClassName}
+        >
           {matches.length === 0 && (
             <li className="px-2 py-1.5 text-xs text-muted">No matching files</li>
           )}

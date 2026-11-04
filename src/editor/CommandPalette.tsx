@@ -130,7 +130,11 @@ export default function CommandPalette() {
         label: 'File: Close Buffer',
         run: () => activePath && void controller.closeBuffer(activePath),
       },
-      { id: 'tree', label: 'View: Open File Tree (:Explore)', run: () => setSidebar(true) },
+      {
+        id: 'tree',
+        label: 'View: Open File Tree (:Explore)',
+        run: () => setSidebar(true),
+      },
       {
         id: 'width',
         label: 'View: Toggle Full Width',
@@ -184,26 +188,32 @@ export default function CommandPalette() {
         label: 'File: New Scratch Buffer',
         run: () => void controller.startUntitled(''),
       },
-      { id: 'ws-new', label: 'Workspace: New', run: () => void controller.newWorkspace() },
+      {
+        id: 'ws-new',
+        label: 'Workspace: New',
+        run: () => void controller.newWorkspace(),
+      },
       {
         id: 'ws-delete',
         label: 'Workspace: Delete Current',
         run: () => {
           const current = workspaces.find((w) => w.id === currentId)
           if (!current) return
-          if (window.confirm(`Delete "${current.name}" and all its files? This cannot be undone.`))
+          if (
+            window.confirm(
+              `Delete "${current.name}" and all its files? This cannot be undone.`,
+            )
+          )
             void controller.deleteWorkspace(current.id)
         },
       },
       ...workspaces
         .filter((w) => w.id !== currentId)
-        .map(
-          (w): PaletteItem => ({
-            id: `ws-open-${w.id}`,
-            label: `Workspace: Switch to ${w.name}`,
-            run: () => void controller.switchTo(w.id),
-          }),
-        ),
+        .map((w): PaletteItem => ({
+          id: `ws-open-${w.id}`,
+          label: `Workspace: Switch to ${w.name}`,
+          run: () => void controller.switchTo(w.id),
+        })),
       // Label carries the kind, so typing "dark" or "light" finds the matching group.
       ...THEMES.map((t) => theme(t.id, `${t.name} (${t.kind})`)),
       theme('system', 'System'),

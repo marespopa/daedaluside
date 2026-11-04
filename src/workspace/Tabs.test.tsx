@@ -4,20 +4,14 @@ import { IDBFactory } from 'fake-indexeddb'
 import { createStore, Provider } from 'jotai'
 import App from '../App'
 import { editorHandleAtom } from '../state/editorAtoms'
-import {
-  activePathAtom,
-  currentWorkspaceIdAtom,
-  treeAtom,
-  workspaceStatusAtom,
-} from '../state/workspaceAtoms'
+import { activePathAtom, treeAtom, workspaceStatusAtom } from '../state/workspaceAtoms'
 import { getController } from './controller'
-import { openDB } from './db'
-import { OpfsBackend } from './opfs'
-import { getMemoryOpfs } from './testing/opfsSetup'
+import { MemDisk } from './testing/memoryDisk'
 import type { WorkspaceFS } from './types'
 
 /** The store of the most recent `mount()`, for helpers that take no arguments. */
 let lastStore: ReturnType<typeof createStore> | null = null
+let lastDisk: MemDisk | null = null
 
 function mount() {
   const store = createStore()
@@ -48,10 +42,23 @@ const middleClick = (el: HTMLElement) =>
 
 const menu = () => screen.findByRole('menu', { name: 'Tab actions' })
 
-/** Blank workspaces open with no files; this creates `scratch.ts` when it is missing. */
+async function openFolder(store: Store, disk: MemDisk, firstFile?: string) {
+  lastDisk = disk
+  await waitFor(() => expect(store.get(workspaceStatusAtom).state).toBe('ready'))
+  const handle = disk.handle()
+  await act(async () => {
+    await getController(store).importFolderHandle(handle as never)
+  })
+  if (firstFile) {
+    await waitFor(() => expect(store.get(activePathAtom)).toBe(firstFile))
+  }
+}
+
+/** Opens a folder and creates `scratch.ts` when it is missing. */
 async function scratchTab() {
   const store = lastStore!
-  await waitFor(() => expect(store.get(workspaceStatusAtom).state).toBe('ready'))
+  const disk = lastDisk ?? new MemDisk()
+  if (!lastDisk) await openFolder(store, disk)
   if (!store.get(treeAtom).some((e) => e.path === 'scratch.ts')) {
     await act(() => ctl(store).createFile('scratch.ts'))
   }
@@ -68,18 +75,16 @@ function type(store: Store, text: string) {
   act(() => v.dispatch({ changes: { from: v.state.doc.length, insert: text } }))
 }
 
-/** Reads straight from storage, bypassing the app. */
+/** Reads straight from the linked folder, bypassing the app. */
 async function onDisk(store: Store, path: string) {
-  const db = await openDB()
-  const fs = new OpfsBackend(getMemoryOpfs().rootHandle(), db).open(
-    store.get(currentWorkspaceIdAtom)!,
-  )
+  const fs = (ctl(store) as unknown as { fs: WorkspaceFS }).fs
   return fs.read(path)
 }
 
 describe('tab strip', () => {
   beforeEach(() => {
     globalThis.indexedDB = new IDBFactory()
+    lastDisk = null
   })
 
   afterEach(() => {
@@ -87,7 +92,9 @@ describe('tab strip', () => {
   })
 
   it('middle-click closes a tab', async () => {
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts')
     const tab = await screen.findByRole('tab', { name: /^a\.ts/ })
@@ -97,7 +104,9 @@ describe('tab strip', () => {
   })
 
   it('closes a tab from its hover close icon', async () => {
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts')
 
@@ -108,7 +117,9 @@ describe('tab strip', () => {
 
   it('the context menu pins a tab, and Close Others keeps pinned tabs', async () => {
     const user = userEvent.setup()
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts', 'b.ts')
 
@@ -140,7 +151,9 @@ describe('tab strip', () => {
 
   it('arrow keys move focus between tabs, and Mod-Alt-W closes the active one', async () => {
     const user = userEvent.setup()
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts')
 
@@ -155,7 +168,9 @@ describe('tab strip', () => {
 
   it('keeps the dirty dot visible until Ctrl+S saves the active file', async () => {
     const user = userEvent.setup()
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts')
     type(a.store, 'draft')
@@ -173,7 +188,9 @@ describe('tab strip', () => {
 
   it('saves the active dirty file from the header button', async () => {
     const user = userEvent.setup()
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts')
 
@@ -207,7 +224,9 @@ describe('tab strip', () => {
 
   it('shows a failed-save state on the header button and allows retry', async () => {
     const user = userEvent.setup()
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts')
     type(a.store, 'draft')
@@ -235,7 +254,9 @@ describe('tab strip', () => {
   })
 
   it('dragging a tab onto the right half of another moves it there', async () => {
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts', 'b.ts')
 
@@ -267,7 +288,9 @@ describe('tab strip', () => {
   })
 
   it('closing a dirty tab saves it first', async () => {
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts')
     type(a.store, 'draft')
@@ -277,7 +300,9 @@ describe('tab strip', () => {
   })
 
   it('a tab whose save fails stays open with its edits', async () => {
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts')
     type(a.store, 'draft')
@@ -292,21 +317,27 @@ describe('tab strip', () => {
   })
 
   it('pinned tabs survive a reload', async () => {
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts')
     act(() => ctl(a.store).togglePin('a.ts'))
     // The session is saved 500 ms after a change.
+    ctl(a.store).flushOnHide()
     await new Promise((r) => setTimeout(r, 700))
     a.unmount()
 
-    mount()
+    const b = mount()
+    await openFolder(b.store, disk)
     await screen.findByRole('tab', { name: 'a.ts' })
     expect(tabPaths()).toEqual(['a.ts', 'scratch.ts'])
   })
 
   it('shows quiet pill tabs in a scrollable strip, with the close icon on hover', async () => {
+    const disk = new MemDisk()
     const a = mount()
+    await openFolder(a.store, disk)
     await scratchTab()
     await openTabs(a.store, 'a.ts', 'b.ts')
 

@@ -1,7 +1,6 @@
 /**
- * In-memory stand-in for a FileSystemDirectoryHandle, enough for DiskMirror, the folder
- * picker's import walk, and permission checks. Tests can flip `access` to simulate a
- * lost grant.
+ * In-memory stand-in for a FileSystemDirectoryHandle. Tests can flip `access` to
+ * simulate a lost grant.
  */
 
 export type Access = 'granted' | 'prompt' | 'denied'
@@ -27,7 +26,11 @@ class MemFile {
   /** Shaped like a File for what the folder walk reads (jsdom's Blob has no arrayBuffer). */
   async getFile() {
     const bytes = this.data.get(this.path) ?? new Uint8Array()
-    return { name: this.name, arrayBuffer: async () => bytes.slice().buffer }
+    return {
+      name: this.name,
+      size: bytes.byteLength,
+      arrayBuffer: async () => bytes.slice().buffer,
+    }
   }
 
   async createWritable() {
@@ -44,6 +47,10 @@ class MemFile {
         )
       },
       close: async () => {
+        if (this.disk.brokenFiles.has(path)) {
+          this.disk.brokenFiles.delete(path)
+          throw new DOMException('Close failed', 'NotAllowedError')
+        }
         const size = chunks.reduce((n, c) => n + c.byteLength, 0)
         const out = new Uint8Array(size)
         let at = 0
@@ -62,6 +69,7 @@ export class MemDisk {
   /** Files by path, and folders by path ('' is the root). */
   readonly files = new Map<string, Uint8Array>()
   readonly dirs = new Set<string>([''])
+  readonly brokenFiles = new Set<string>()
   access: Access = 'granted'
 
   assertAccess() {
@@ -71,6 +79,19 @@ export class MemDisk {
 
   handle(name = 'proj'): MemDirectory {
     return new MemDirectory(this, '', name)
+  }
+
+  breakFile(path: string): void {
+    this.brokenFiles.add(path)
+  }
+
+  /** Stores a file and ensures every parent directory is tracked. */
+  setFile(path: string, data: Uint8Array): void {
+    this.files.set(path, data)
+    let dir = path
+    while ((dir = dir.slice(0, dir.lastIndexOf('/'))) !== '') {
+      this.dirs.add(dir)
+    }
   }
 }
 
@@ -101,6 +122,9 @@ export class MemDirectory {
 
   async getDirectoryHandle(name: string, opts: { create?: boolean } = {}) {
     const p = this.child(name)
+    if (this.disk.files.has(p)) {
+      throw new DOMException('Not a directory', 'TypeMismatchError')
+    }
     if (!this.disk.dirs.has(p)) {
       if (!opts.create) throw notFound(name)
       this.disk.assertAccess()
@@ -111,6 +135,9 @@ export class MemDirectory {
 
   async getFileHandle(name: string, opts: { create?: boolean } = {}) {
     const p = this.child(name)
+    if (this.disk.dirs.has(p)) {
+      throw new DOMException('Not a file', 'TypeMismatchError')
+    }
     if (!this.disk.files.has(p)) {
       if (!opts.create) throw notFound(name)
       this.disk.assertAccess()

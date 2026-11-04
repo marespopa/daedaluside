@@ -70,7 +70,7 @@ describe('session snapshot', () => {
     store.set(currentWorkspaceIdAtom, 'w1')
     store.set(workspacesAtom, [{ id: 'w1', name: 'Proj' } as never])
     expect(buildSnapshot(store)).toBeNull()
-    store.set(workspaceStatusAtom, { state: 'ready', backend: 'opfs' })
+    store.set(workspaceStatusAtom, { state: 'ready' })
     expect(buildSnapshot(store)).toMatchObject({ workspaceId: 'w1', name: 'Proj' })
   })
 
@@ -86,7 +86,7 @@ describe('session snapshot', () => {
     ])
     store.set(activePathAtom, 'a.ts')
     expect(localStorage.getItem(SNAPSHOT_KEY)).toBeNull() // still loading
-    store.set(workspaceStatusAtom, { state: 'ready', backend: 'opfs' })
+    store.set(workspaceStatusAtom, { state: 'ready' })
     expect(readSnapshot()).toMatchObject({ workspaceId: 'w1', openFiles: ['a.ts'] })
     localStorage.clear()
   })

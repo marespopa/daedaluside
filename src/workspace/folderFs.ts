@@ -1,4 +1,3 @@
-import { idbDelete, idbGet, linkKey, SETTINGS, WORKSPACES } from './db'
 import {
   basename,
   compareEntries,
@@ -11,13 +10,7 @@ import {
   normalizePath,
   splitPath,
 } from './path'
-import {
-  FSError,
-  type Entry,
-  type FSBackend,
-  type OpenOptions,
-  type WorkspaceFS,
-} from './types'
+import { FSError, type Entry, type WorkspaceFS } from './types'
 
 function mapDomException(e: unknown, expected: 'file' | 'dir'): never {
   if (e instanceof FSError) throw e
@@ -38,30 +31,17 @@ function mapDomException(e: unknown, expected: 'file' | 'dir'): never {
   throw e
 }
 
-class OpfsFS implements WorkspaceFS {
+/**
+ * A workspace file system backed directly by a folder the user picked through the
+ * File System Access API. The root directory of the workspace is the picked folder
+ * itself; paths are workspace-relative and the empty string denotes the root.
+ */
+export class FolderFS implements WorkspaceFS {
   private readonly root: FileSystemDirectoryHandle
-  private readonly ws: string
-  private readonly db: IDBDatabase
-  private readonly requireWorkspaceFlag: boolean
   private queue: Promise<unknown> = Promise.resolve()
 
-  constructor(
-    root: FileSystemDirectoryHandle,
-    ws: string,
-    db: IDBDatabase,
-    requireWorkspace: boolean,
-  ) {
+  constructor(root: FileSystemDirectoryHandle) {
     this.root = root
-    this.ws = ws
-    this.db = db
-    this.requireWorkspaceFlag = requireWorkspace
-  }
-
-  private async workspaceDir(): Promise<FileSystemDirectoryHandle> {
-    const workspaces = await this.root.getDirectoryHandle('workspaces', {
-      create: true,
-    })
-    return await workspaces.getDirectoryHandle(this.ws, { create: true })
   }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
@@ -70,15 +50,8 @@ class OpfsFS implements WorkspaceFS {
     return p
   }
 
-  private async requireLive(): Promise<void> {
-    if (!this.requireWorkspaceFlag) return
-    if (!(await idbGet(this.db, WORKSPACES, this.ws))) {
-      throw new FSError('ENOENT', 'This workspace was deleted')
-    }
-  }
-
   private async ensureDirs(path: string): Promise<FileSystemDirectoryHandle> {
-    let cur = await this.workspaceDir()
+    let cur = this.root
     for (const seg of splitPath(path)) {
       try {
         cur = await cur.getDirectoryHandle(seg, { create: true })
@@ -90,8 +63,8 @@ class OpfsFS implements WorkspaceFS {
   }
 
   private async resolveDir(path: string): Promise<FileSystemDirectoryHandle> {
-    if (path === '') return this.workspaceDir()
-    let cur = await this.workspaceDir()
+    if (path === '') return this.root
+    let cur = this.root
     for (const seg of splitPath(path)) {
       try {
         cur = await cur.getDirectoryHandle(seg)
@@ -133,7 +106,7 @@ class OpfsFS implements WorkspaceFS {
   async listAll(): Promise<Entry[]> {
     return this.enqueue(async () => {
       const entries: Entry[] = []
-      await this.walk(await this.workspaceDir(), '', entries)
+      await this.walk(this.root, '', entries)
       return depthFirst(entries)
     })
   }
@@ -225,7 +198,6 @@ class OpfsFS implements WorkspaceFS {
     const p = normalizePath(path)
     if (p === '') throw new FSError('EISDIR', 'Is a directory: /')
     await this.enqueue(async () => {
-      await this.requireLive()
       const parent = await this.ensureDirs(dirname(p))
       const name = basename(p)
       let handle: FileSystemFileHandle
@@ -256,7 +228,6 @@ class OpfsFS implements WorkspaceFS {
   async mkdir(path: string): Promise<void> {
     const p = normalizePath(path)
     await this.enqueue(async () => {
-      await this.requireLive()
       await this.ensureDirs(p)
     })
   }
@@ -265,7 +236,6 @@ class OpfsFS implements WorkspaceFS {
     const p = normalizePath(path)
     if (p === '') throw new FSError('EINVAL', 'Cannot remove the workspace root')
     await this.enqueue(async () => {
-      await this.requireLive()
       const parent = await this.resolveDir(dirname(p))
       const name = basename(p)
       try {
@@ -287,7 +257,6 @@ class OpfsFS implements WorkspaceFS {
       throw new FSError('EINVAL', 'Cannot move into itself')
     }
     await this.enqueue(async () => {
-      await this.requireLive()
       const srcParent = await this.resolveDir(dirname(src))
       const srcName = basename(src)
       const dstParent = await this.ensureDirs(dirname(dst))
@@ -374,41 +343,4 @@ class OpfsFS implements WorkspaceFS {
       }
     }
   }
-}
-
-export class OpfsBackend implements FSBackend {
-  readonly kind = 'opfs' as const
-  private readonly root: FileSystemDirectoryHandle
-  private readonly db: IDBDatabase
-
-  constructor(root: FileSystemDirectoryHandle, db: IDBDatabase) {
-    this.root = root
-    this.db = db
-  }
-
-  open(workspaceId: string, opts: OpenOptions = {}): WorkspaceFS {
-    if (workspaceId === '' || workspaceId.includes(':') || workspaceId.includes('/')) {
-      throw new FSError('EINVAL', 'Invalid workspace id')
-    }
-    return new OpfsFS(this.root, workspaceId, this.db, opts.requireWorkspace ?? false)
-  }
-
-  async destroy(workspaceId: string): Promise<void> {
-    if (workspaceId === '' || workspaceId.includes(':') || workspaceId.includes('/')) {
-      throw new FSError('EINVAL', 'Invalid workspace id')
-    }
-    // Delete IndexedDB metadata first so other tabs see the workspace as gone
-    // before the OPFS directory disappears.
-    await idbDelete(this.db, WORKSPACES, workspaceId)
-    await idbDelete(this.db, SETTINGS, linkKey(workspaceId))
-    try {
-      const workspacesDir = await this.root.getDirectoryHandle('workspaces')
-      await workspacesDir.removeEntry(workspaceId, { recursive: true })
-    } catch (e) {
-      if (e instanceof DOMException && e.name === 'NotFoundError') return
-      throw e
-    }
-  }
-
-  close(): void {}
 }

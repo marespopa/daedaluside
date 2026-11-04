@@ -42,9 +42,8 @@ export default function ReconnectDialog() {
           Reconnect {link.name}?
         </h2>
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Your changes are saved in the app but not written to this folder. Reconnect to
-          allow writing, and the workspace is written to the folder. Nothing on disk is
-          deleted.
+          This workspace cannot read or write the folder without permission. Reconnect to
+          allow access and continue editing.
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={later}>

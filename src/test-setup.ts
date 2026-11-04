@@ -1,10 +1,21 @@
 import '@testing-library/jest-dom/vitest'
 import { configure } from '@testing-library/react'
 import 'fake-indexeddb/auto'
-import { installMemoryOpfs } from './workspace/testing/opfsSetup'
+import { IDBFactory } from 'fake-indexeddb'
+import { vi } from 'vitest'
+import { WorkspaceManager } from './workspace/manager'
+
+let links: Map<string, unknown>
 
 beforeEach(() => {
-  installMemoryOpfs()
+  globalThis.indexedDB = new IDBFactory()
+  links = new Map()
+  vi.spyOn(WorkspaceManager.prototype, 'getLink').mockImplementation(
+    async (id) => links.get(id) as never,
+  )
+  vi.spyOn(WorkspaceManager.prototype, 'setLink').mockImplementation(async (id, h) => {
+    links.set(id, h)
+  })
 })
 
 // jsdom's KeyboardEvent does not give Enter a keyCode, but some editor deps check it.

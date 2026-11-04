@@ -10,6 +10,18 @@ export class FSError extends Error {
   }
 }
 
+/**
+ * A folder handle from the File System Access API with permission methods. Chromium
+ * exposes these on directory handles obtained through `showDirectoryPicker()`.
+ */
+export interface PermissionedHandle {
+  queryPermission(d: { mode: 'readwrite' }): Promise<PermissionState>
+  requestPermission(d: { mode: 'readwrite' }): Promise<PermissionState>
+}
+
+/** The folder the user picked for a workspace. */
+export type LinkedFolder = FileSystemDirectoryHandle & PermissionedHandle
+
 export interface Entry {
   /** Base name. */
   name: string
@@ -44,23 +56,4 @@ export interface WorkspaceFS {
   remove(path: string): Promise<void>
   /** Moves a file or directory. Throws EEXIST if `to` exists. Creates parents of `to`. */
   rename(from: string, to: string): Promise<void>
-}
-
-export interface OpenOptions {
-  /**
-   * Writes fail once the workspace record is gone (deleted, possibly in another tab),
-   * so a stale tab cannot recreate files for a deleted workspace.
-   */
-  requireWorkspace?: boolean
-}
-
-export interface FSBackend {
-  readonly kind: 'opfs'
-  open(workspaceId: string, opts?: OpenOptions): WorkspaceFS
-  /**
-   * Deletes a workspace: its files, its metadata and its linked-folder record, in one
-   * transaction so no write can land in between.
-   */
-  destroy(workspaceId: string): Promise<void>
-  close(): void
 }

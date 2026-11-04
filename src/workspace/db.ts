@@ -2,13 +2,7 @@ export const WORKSPACES = 'workspaces'
 export const SETTINGS = 'settings'
 
 /** Store names from ARCHITECTURE.md §6. All are created up front so later milestones need no upgrade. */
-export const STORES = [
-  SETTINGS,
-  'vault',
-  WORKSPACES,
-  'runs',
-  'snapshots',
-] as const
+export const STORES = [SETTINGS, 'vault', WORKSPACES, 'runs', 'snapshots'] as const
 export type StoreName = (typeof STORES)[number]
 
 /** Where a workspace's linked folder handle is kept in SETTINGS. */

@@ -1,7 +1,7 @@
-import { useAtom, useAtomValue, useStore } from 'jotai'
+import { useAtom, useStore } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { vimEnabledAtom } from '../state/editorAtoms'
-import { settingsOpenAtom, workspaceStatusAtom } from '../state/workspaceAtoms'
+import { settingsOpenAtom } from '../state/workspaceAtoms'
 import { Button } from '../ui'
 import {
   formatBytes,
@@ -18,7 +18,6 @@ export default function SettingsDialog() {
 
 function Dialog({ onClose }: { onClose: () => void }) {
   const store = useStore()
-  const status = useAtomValue(workspaceStatusAtom)
   const [vim, setVim] = useAtom(vimEnabledAtom)
   const [info, setInfo] = useState<StorageInfo | null>(null)
   const closeBtn = useRef<HTMLButtonElement>(null)
@@ -71,11 +70,6 @@ function Dialog({ onClose }: { onClose: () => void }) {
           <h3 id="storage-h" className="text-xs tracking-wide text-muted uppercase">
             Storage
           </h3>
-          <p>
-            Files are stored on this device using{' '}
-            {status.state === 'ready' ? 'OPFS' : '…'}
-            .
-          </p>
           {info?.usage != null && info.quota != null ? (
             <div>
               <div

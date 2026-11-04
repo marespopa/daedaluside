@@ -4,7 +4,7 @@ import CommandPalette from './editor/CommandPalette'
 import Editor from './editor/Editor'
 import VimStatus from './editor/VimStatus'
 import { activeBufferAtom, editorWidthAtom } from './state/editorAtoms'
-import { importStatusAtom, sidebarOpenAtom } from './state/workspaceAtoms'
+import { sidebarOpenAtom } from './state/workspaceAtoms'
 import { IconButton } from './ui'
 import FileTree from './workspace/FileTree'
 import HomeButton from './workspace/HomeButton'
@@ -19,7 +19,6 @@ import { useWorkspaceLifecycle } from './workspace/useWorkspace'
 export default function App() {
   useWorkspaceLifecycle()
   const buffer = useAtomValue(activeBufferAtom)
-  const importing = useAtomValue(importStatusAtom)
   const [width, setWidth] = useAtom(editorWidthAtom)
   const setSidebarOpen = useSetAtom(sidebarOpenAtom)
   useEffect(() => {
@@ -36,8 +35,7 @@ export default function App() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-header min-w-0 shrink-0 items-center gap-1 px-3 font-sans text-sm text-muted">
           <HomeButton />
-          {/* Hidden while a folder opens: the old scratch tab must not outlive the blank page. */}
-          {importing === null && <Tabs />}
+          <Tabs />
           <span className="sr-only">
             {buffer.name
               ? `Editing ${buffer.name}${buffer.dirty ? ', unsaved' : ''}`

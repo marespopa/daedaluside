@@ -1,8 +1,7 @@
-import { idbAll, idbGet, idbPut, linkKey } from './db'
-import type { LinkedFolder } from './diskMirror'
-import type { FSBackend, WorkspaceFS } from './types'
+import { idbAll, idbDelete, idbGet, idbPut, linkKey, SETTINGS, WORKSPACES } from './db'
+import type { LinkedFolder } from './types'
 
-/** Stored in the `workspaces` IndexedDB store. File contents live in the FS backend. */
+/** Stored in the `workspaces` IndexedDB store. The folder handle lives in settings. */
 export interface WorkspaceMeta {
   id: string
   name: string
@@ -13,12 +12,10 @@ export interface WorkspaceMeta {
   activeFile: string | null
   /** Last session: pinned subset of `openFiles`. */
   pinnedFiles?: string[]
-  /** Identity of the imported source (see `sourceKey`). Absent for blank workspaces. */
+  /** Identity of the folder source (see `sourceKey`). */
   source?: string | undefined
-  /** Set once the placeholder scratch.ts check has run for this blank workspace. */
+  /** Set once the placeholder scratch.ts check has run for legacy blank workspaces. */
   scratchChecked?: boolean
-  /** Still copying in. An import left like this (page closed) is removed on the next start. */
-  importing?: boolean
 }
 
 const MAX_NAME = 100
@@ -54,54 +51,6 @@ function announce(change: RemoteChange) {
   bus()?.postMessage(change)
 }
 
-/** Runs writes through the backend, then tells the other tabs which workspace changed. */
-class AnnouncingFS implements WorkspaceFS {
-  private readonly inner: WorkspaceFS
-  private readonly ws: string
-
-  constructor(inner: WorkspaceFS, ws: string) {
-    this.inner = inner
-    this.ws = ws
-  }
-
-  private async changed<T>(op: Promise<T>): Promise<T> {
-    const result = await op
-    announce({ ws: this.ws })
-    return result
-  }
-
-  list(dir: string) {
-    return this.inner.list(dir)
-  }
-  listAll() {
-    return this.inner.listAll()
-  }
-  stat(path: string) {
-    return this.inner.stat(path)
-  }
-  read(path: string) {
-    return this.inner.read(path)
-  }
-  readBytes(path: string) {
-    return this.inner.readBytes(path)
-  }
-  write(path: string, content: string) {
-    return this.changed(this.inner.write(path, content))
-  }
-  writeBytes(path: string, data: Uint8Array) {
-    return this.changed(this.inner.writeBytes(path, data))
-  }
-  mkdir(path: string) {
-    return this.changed(this.inner.mkdir(path))
-  }
-  remove(path: string) {
-    return this.changed(this.inner.remove(path))
-  }
-  rename(from: string, to: string) {
-    return this.changed(this.inner.rename(from, to))
-  }
-}
-
 export function cleanWorkspaceName(name: string): string {
   const n = name.trim()
   if (!n) throw new Error('Workspace name cannot be empty')
@@ -111,9 +60,8 @@ export function cleanWorkspaceName(name: string): string {
 }
 
 /**
- * Identity of an imported folder or zip: a hash of its name and file layout. The
- * same folder opened again gets the same key, so it reuses the existing workspace
- * instead of adding a duplicate entry.
+ * Identity of a folder: a hash of its name and file layout. The same folder opened again
+ * gets the same key, so it reuses the existing workspace instead of adding a duplicate.
  */
 export async function sourceKey(name: string, filePaths: string[]): Promise<string> {
   const text = [name, ...[...filePaths].sort()].join('\n')
@@ -122,20 +70,13 @@ export async function sourceKey(name: string, filePaths: string[]): Promise<stri
 }
 
 export class WorkspaceManager {
-  readonly backend: FSBackend
   private readonly db: IDBDatabase
 
-  constructor(db: IDBDatabase, backend: FSBackend) {
+  constructor(db: IDBDatabase) {
     this.db = db
-    this.backend = backend
   }
 
-  fs(id: string): WorkspaceFS {
-    // Writes are refused once the workspace record is gone (deleted here or in another tab).
-    return new AnnouncingFS(this.backend.open(id, { requireWorkspace: true }), id)
-  }
-
-  /** Calls `fn` when another tab changes a workspace's files or the workspace list. */
+  /** Calls `fn` when another tab changes the workspace list. */
   onRemoteChange(fn: Listener): () => void {
     bus()
     listeners.add(fn)
@@ -157,11 +98,7 @@ export class WorkspaceManager {
     return (await this.list()).find((w) => w.source === source)
   }
 
-  async create(
-    name: string,
-    source?: string | undefined,
-    importing = false,
-  ): Promise<WorkspaceMeta> {
+  async create(name: string, source?: string): Promise<WorkspaceMeta> {
     const now = Date.now()
     const meta: WorkspaceMeta = {
       id: crypto.randomUUID(),
@@ -171,9 +108,7 @@ export class WorkspaceManager {
       openFiles: [],
       activeFile: null,
       ...(source ? { source } : {}),
-      ...(importing ? { importing: true } : {}),
     }
-    // The record comes first: writes to a workspace are refused without one.
     await idbPut(this.db, 'workspaces', meta.id, meta)
     announce({ ws: null })
     return meta
@@ -188,11 +123,6 @@ export class WorkspaceManager {
     const next = { ...cur, ...patch, id, updated: Date.now() }
     await idbPut(this.db, 'workspaces', id, next)
     return next
-  }
-
-  /** The background copy finished: the workspace is complete. */
-  finishImport(id: string): Promise<WorkspaceMeta> {
-    return this.update(id, { importing: false })
   }
 
   markScratchChecked(id: string): Promise<WorkspaceMeta> {
@@ -214,7 +144,7 @@ export class WorkspaceManager {
     return this.update(id, { openFiles, activeFile, pinnedFiles })
   }
 
-  /** The folder this workspace writes through to, if the user linked one. */
+  /** The folder this workspace reads and writes through, if the user linked one. */
   getLink(id: string): Promise<LinkedFolder | undefined> {
     return idbGet<LinkedFolder>(this.db, 'settings', linkKey(id))
   }
@@ -223,9 +153,13 @@ export class WorkspaceManager {
     return idbPut(this.db, 'settings', linkKey(id), folder)
   }
 
-  /** Files, record and link are removed atomically by the OPFS backend. */
+  /**
+   * Deletes the workspace record and its linked-folder record from IndexedDB. Files on
+   * disk are left untouched: the picked folder is the source of truth.
+   */
   async remove(id: string): Promise<void> {
-    await this.backend.destroy(id)
+    await idbDelete(this.db, WORKSPACES, id)
+    await idbDelete(this.db, SETTINGS, linkKey(id))
     announce({ ws: null })
   }
 

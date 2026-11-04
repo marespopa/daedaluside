@@ -5,6 +5,7 @@ import { createStore, Provider } from 'jotai'
 import App from '../App'
 import { editorHandleAtom } from '../state/editorAtoms'
 import { getController } from '../workspace/controller'
+import { MemDisk } from '../workspace/testing/memoryDisk'
 import { activePathAtom, treeAtom, workspaceStatusAtom } from '../state/workspaceAtoms'
 
 function mount() {
@@ -15,6 +16,15 @@ function mount() {
     </Provider>,
   )
   return store
+}
+
+async function openFolder(store: ReturnType<typeof createStore>) {
+  await waitFor(() => expect(store.get(workspaceStatusAtom).state).toBe('ready'))
+  const disk = new MemDisk()
+  const handle = disk.handle()
+  await act(async () => {
+    await getController(store).importFolderHandle(handle as never)
+  })
 }
 
 /** Opens the palette in command mode, as Mod-Shift-P does. */
@@ -29,7 +39,7 @@ describe('command palette: new file or folder', () => {
   })
 
   async function readyWithFolders(store: ReturnType<typeof createStore>) {
-    await waitFor(() => expect(store.get(workspaceStatusAtom).state).toBe('ready'))
+    await openFolder(store)
     await waitFor(() => expect(store.get(editorHandleAtom)).toBeTruthy())
     const c = getController(store)
     await act(async () => {

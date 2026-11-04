@@ -27,18 +27,12 @@ export default function SaveButton() {
     <IconButton
       label={saving ? 'Saving' : saveError ? 'Save failed' : 'Save'}
       title={
-        saving
-          ? 'Saving…'
-          : saveError
-            ? 'Save failed — retry (Ctrl+S)'
-            : 'Save (Ctrl+S)'
+        saving ? 'Saving…' : saveError ? 'Save failed — retry (Ctrl+S)' : 'Save (Ctrl+S)'
       }
       icon={saving ? undefined : 'save'}
       disabled={!activePath || !buffer.dirty || saving}
       className={
-        saveError && !saving
-          ? 'text-diff-remove-fg hover:bg-diff-remove'
-          : undefined
+        saveError && !saving ? 'text-diff-remove-fg hover:bg-diff-remove' : undefined
       }
       onClick={() => void handleSave()}
     >

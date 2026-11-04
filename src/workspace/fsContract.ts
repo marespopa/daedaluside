@@ -1,17 +1,15 @@
-import { FSError, type FSBackend, type WorkspaceFS } from './types'
+import { FSError, type WorkspaceFS } from './types'
 
-/** Shared contract: every backend must pass these. */
+/** Shared contract: every WorkspaceFS implementation must pass these. */
 export function runFSContract(
   name: string,
-  makeBackend: () => Promise<FSBackend> | FSBackend,
+  makeFS: () => Promise<WorkspaceFS> | WorkspaceFS,
 ) {
   describe(`WorkspaceFS contract: ${name}`, () => {
-    let backend: FSBackend
     let fs: WorkspaceFS
 
     beforeEach(async () => {
-      backend = await makeBackend()
-      fs = backend.open('ws1')
+      fs = await makeFS()
     })
 
     const code = async (p: Promise<unknown>) => {
@@ -151,15 +149,6 @@ export function runFSContract(
       expect(await code(fs.rename('nope', 'x'))).toBe('ENOENT')
       expect(await code(fs.rename('d', 'd/inner'))).toBe('EINVAL')
       expect(await fs.read('b')).toBe('2')
-    })
-
-    it('isolates workspaces and destroys one without touching others', async () => {
-      const other = backend.open('ws2')
-      await fs.write('f.txt', 'one')
-      await other.write('f.txt', 'two')
-      await backend.destroy('ws1')
-      expect(await backend.open('ws1').list('')).toEqual([])
-      expect(await other.read('f.txt')).toBe('two')
     })
 
     it('serializes concurrent writes to one file', async () => {

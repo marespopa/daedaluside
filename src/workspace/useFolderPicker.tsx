@@ -1,5 +1,4 @@
-import { useRef } from 'react'
-import type { LinkedFolder } from './diskMirror'
+import type { LinkedFolder } from './types'
 import { useController } from './useWorkspace'
 
 type DirectoryPickerWindow = Window & {
@@ -9,48 +8,24 @@ type DirectoryPickerWindow = Window & {
 }
 
 /**
- * Opens a local folder and imports it as a new workspace, linked for write-back. Uses the
- * File System Access API when available, otherwise `<input webkitdirectory>` (no link).
+ * Opens a local folder as the current workspace. Uses the File System Access API
+ * (`showDirectoryPicker`); the picked folder is the source of truth for the workspace.
  *
- * Render `input` once wherever the picker is used; `pick` must run from a user gesture.
+ * `pick` must run from a user gesture.
  */
 export function useFolderPicker() {
   const controller = useController()
-  const fallbackInput = useRef<HTMLInputElement>(null)
 
   const pick = async () => {
     const pickerWindow = window as DirectoryPickerWindow
     if (!pickerWindow.showDirectoryPicker) {
-      fallbackInput.current?.click()
-      return
+      throw new Error('Your browser does not support opening folders')
     }
-    try {
-      // readwrite: the picked folder is linked, so app changes are written back to it.
-      const folder = (await pickerWindow.showDirectoryPicker({
-        mode: 'readwrite',
-      })) as LinkedFolder
-      await controller.importFolderHandle(folder)
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return
-      fallbackInput.current?.click()
-    }
+    const folder = (await pickerWindow.showDirectoryPicker({
+      mode: 'readwrite',
+    })) as LinkedFolder
+    await controller.importFolderHandle(folder)
   }
 
-  const input = (
-    <input
-      ref={fallbackInput}
-      type="file"
-      multiple
-      hidden
-      aria-label="Folder to open"
-      {...({ webkitdirectory: '' } as object)}
-      onChange={(event) => {
-        const files = [...(event.target.files ?? [])]
-        event.target.value = ''
-        if (files.length) void controller.importFolderFiles(files)
-      }}
-    />
-  )
-
-  return { pick, input }
+  return { pick }
 }
