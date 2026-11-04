@@ -1,6 +1,6 @@
 import { useAtomValue, useStore } from 'jotai'
 import { lazy, Suspense, useEffect, useRef } from 'react'
-import { branchReviewAtom } from '../review/branch/branchReviewAtoms'
+import { branchReviewAtom } from '../state/branchReviewAtoms'
 import { activeImageAtom, editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
 import { reviewOpenAtom } from '../state/gitAtoms'
 import {
