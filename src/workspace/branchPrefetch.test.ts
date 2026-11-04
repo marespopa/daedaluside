@@ -1,7 +1,7 @@
 import git from 'isomorphic-git'
 import { createGitFs } from './gitFs'
 import { GitService } from './gitService'
-import { prefetchBranch, type BranchPrefetch } from './branchPrefetch'
+import { prefetchBranch, ReviewError, type BranchPrefetch } from './branchPrefetch'
 import { MemDisk } from './testing/memoryDisk'
 
 const enc = (s: string) => new TextEncoder().encode(s)
@@ -45,10 +45,17 @@ describe('prefetchBranch', () => {
     expect(last.stats['a.txt']).toEqual({ add: 2, del: 1 })
   })
 
-  it('emits nothing without a main or master branch', async () => {
+  it('reviews a trunk branch against itself', async () => {
     const svc = await repo('trunk', false)
     const emit = vi.fn()
     await prefetchBranch(svc, emit)
-    expect(emit).not.toHaveBeenCalled()
+    expect(emit).toHaveBeenCalled()
+    expect(emit.mock.calls[0]![0].base).toBe('trunk')
+    expect(emit.mock.calls[0]![0].files).toEqual([])
+  })
+
+  it('rejects when no base branch can be found', async () => {
+    const svc = await repo('foo', false)
+    await expect(prefetchBranch(svc, vi.fn())).rejects.toBeInstanceOf(ReviewError)
   })
 })

@@ -86,6 +86,32 @@ describe('flattenTree', () => {
     expect(rows).toHaveLength(20_000)
     expect(rows[19_999]!.key).toBe('f19999.ts')
   })
+
+  it('marks an open folder with no listed children as loading until it is loaded', () => {
+    const tree = groups([dir('docs'), file('README.md')])
+    const loading = flattenTree(tree, new Set(['docs']), null, new Set(['']))
+    expect(loading.map((r) => r.key)).toEqual(['docs', 'note:docs', 'README.md'])
+    expect(loading[1]).toMatchObject({ type: 'note', kind: 'loading', depth: 1 })
+  })
+
+  it('marks a loaded folder with no children as empty', () => {
+    const tree = groups([dir('docs'), file('README.md')])
+    const rows = flattenTree(tree, new Set(['docs']), null, new Set(['', 'docs']))
+    expect(rows[1]).toMatchObject({ type: 'note', kind: 'empty', depth: 1 })
+  })
+
+  it('shows no note for collapsed folders, folders with children, or the folder being named', () => {
+    const tree = groups(TREE)
+    const loaded = new Set(['', 'src', 'src/lib'])
+    expect(
+      flattenTree(tree, new Set(['src', 'src/lib']), null, loaded).some((r) => r.type === 'note'),
+    ).toBe(false)
+    const empty = groups([dir('docs')])
+    expect(flattenTree(empty, new Set(), null, new Set([''])).some((r) => r.type === 'note')).toBe(false)
+    expect(
+      flattenTree(empty, new Set(['docs']), 'docs', new Set(['', 'docs'])).some((r) => r.type === 'note'),
+    ).toBe(false)
+  })
 })
 
 describe('visibleRange', () => {

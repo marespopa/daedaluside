@@ -15,6 +15,7 @@ import {
   noticeAtom,
   settingsOpenAtom,
   treeAtom,
+  treeCompleteAtom,
   treeProgressAtom,
   treeStatusAtom,
   workspacesAtom,
@@ -42,6 +43,7 @@ export default function WorkspaceOpener() {
   const treeStatus = useAtomValue(treeStatusAtom)
   const progress = useAtomValue(treeProgressAtom)
   const fileCount = useAtomValue(treeAtom).filter((e) => e.kind === 'file').length
+  const treeComplete = useAtomValue(treeCompleteAtom)
   const { eta, elapsed } = useLoadEta(progress)
 
   const ready = status.state === 'ready'
@@ -153,7 +155,7 @@ export default function WorkspaceOpener() {
               {loadingTree
                 ? `Loading workspace…${progress ? ` ${progress.done}${progress.total ? ` / ${progress.total}` : ''} files` : ''}${eta ? ` · ${eta}` : elapsed ? ` · ${elapsed}` : ''}`
                 : folderReady
-                  ? `Workspace ready · ${fileCount} ${fileCount === 1 ? 'file' : 'files'}`
+                  ? `Workspace ready${treeComplete ? ` · ${fileCount} ${fileCount === 1 ? 'file' : 'files'}` : ''}`
                   : 'Open a folder to start editing.'}
             </p>
           )}

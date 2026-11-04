@@ -43,8 +43,11 @@ export interface Entry {
  * normalized (see `path.ts`); the root directory is the empty string.
  */
 export interface WorkspaceFS {
-  /** Direct children of `dir`, directories first, then by name. */
-  list(dir: string): Promise<Entry[]>
+  /**
+   * Direct children of `dir`, directories first, then by name. `sizes: false` skips the
+   * per-file size read, which is the slow part on a browser folder.
+   */
+  list(dir: string, opts?: { sizes?: boolean }): Promise<Entry[]>
   /**
    * Every entry of the workspace in depth-first order (see `depthFirst` in `path.ts`).
    * One call for the whole tree, so backends can avoid a round trip per directory.

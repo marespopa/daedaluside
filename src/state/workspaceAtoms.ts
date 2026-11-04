@@ -33,6 +33,13 @@ export const workspacesAtom = atom<WorkspaceMeta[]>([])
 export const currentWorkspaceIdAtom = atom<string | null>(null)
 /** Every entry of the current workspace, flat; the tree UI derives hierarchy from paths. */
 export const treeAtom = atom<Entry[]>([])
+/**
+ * Folders whose children are in `treeAtom`. A folder opens with only its root listed;
+ * the rest is read when a folder is expanded (or all at once, see `treeCompleteAtom`).
+ */
+export const loadedDirsAtom = atom<ReadonlySet<string>>(new Set<string>())
+/** True once every folder has been read, so `treeAtom` is the whole workspace. */
+export const treeCompleteAtom = atom(false)
 
 /**
  * State of the current workspace's tree, separate from storage startup (that is

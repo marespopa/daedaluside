@@ -68,6 +68,28 @@ export function depthFirst(entries: readonly Entry[]): Entry[] {
 }
 
 /**
+ * Replaces the direct children of `dir` with `children` (a fresh listing) in a flat
+ * depth-first list. Subtrees already loaded below children that still exist are kept.
+ * Returns the list unchanged when `dir` is not in it.
+ */
+export function setChildren(
+  entries: readonly Entry[],
+  dir: string,
+  children: readonly Entry[],
+): Entry[] {
+  if (dir !== '' && !entries.some((e) => e.kind === 'dir' && e.path === dir)) {
+    return entries as Entry[]
+  }
+  const keptSize = new Map(entries.map((e) => [e.path, e.size]))
+  const fresh = children.map((c) =>
+    c.kind === 'file' && c.size === undefined && keptSize.get(c.path) !== undefined
+      ? { ...c, size: keptSize.get(c.path)! }
+      : c,
+  )
+  return depthFirst([...entries.filter((e) => dirname(e.path) !== dir || e.path === ''), ...fresh])
+}
+
+/**
  * Inserts a depth-first block (an entry followed by its descendants, in order) below
  * `parent`, at its sorted position among the parent's children. Directory entries the
  * block hangs from that are still missing are added first (a rename or a write may have

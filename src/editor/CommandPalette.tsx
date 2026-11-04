@@ -62,6 +62,10 @@ export default function CommandPalette() {
   const activePath = useAtomValue(activePathAtom)
   const workspaces = useAtomValue(workspacesAtom)
   const currentId = useAtomValue(currentWorkspaceIdAtom)
+  // The palette lists every file and folder: read the whole tree the first time it opens.
+  useEffect(() => {
+    if (open) void controller.ensureFullTree()
+  }, [open, controller])
   const folders = useMemo(() => tree.filter((e) => e.kind === 'dir'), [tree])
   const createEntry = useCallback(
     (kind: NewEntryRequest['kind'], path: string) =>

@@ -22,6 +22,16 @@ export type TreeRow =
       open: boolean
     }
   | {
+      /**
+       * Inside an open folder with no children listed: `loading` until its listing arrives,
+       * then `empty`, so a folder still being read is not mistaken for an empty one.
+       */
+      type: 'note'
+      key: string
+      kind: 'loading' | 'empty'
+      depth: number
+    }
+  | {
       type: 'new'
       /** Parent directory the new name will be created in. */
       key: string
@@ -39,12 +49,22 @@ export function flattenTree(
   byParent: ReadonlyMap<string, readonly Entry[]>,
   expanded: ReadonlySet<string>,
   newParent: string | null,
+  /** Folders whose children are known. Omit to show no loading or empty notes. */
+  loaded?: ReadonlySet<string>,
 ): TreeRow[] {
   const rows: TreeRow[] = []
   const visit = (dir: string, depth: number) => {
     if (dir === newParent)
       rows.push({ type: 'new', key: `new:${dir}`, parent: dir, depth })
     const kids = byParent.get(dir) ?? []
+    if (loaded && dir !== '' && kids.length === 0 && dir !== newParent) {
+      rows.push({
+        type: 'note',
+        key: `note:${dir}`,
+        kind: loaded.has(dir) ? 'empty' : 'loading',
+        depth,
+      })
+    }
     kids.forEach((entry, i) => {
       const open = entry.kind === 'dir' && expanded.has(entry.path)
       rows.push({

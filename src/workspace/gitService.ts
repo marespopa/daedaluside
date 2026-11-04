@@ -8,6 +8,8 @@ const g = globalThis as { Buffer?: typeof Buffer }
 g.Buffer ??= Buffer
 
 const DIR = '/'
+/** Conventional names of a repository's main line, tried after the remote's own default. */
+export const DEFAULT_BASES = ['main', 'master', 'trunk', 'develop', 'dev']
 const MAX_TEXT_BYTES = 1024 * 1024
 
 export interface BranchFile {
@@ -192,9 +194,38 @@ export class GitService {
     return oid
   }
 
-  /** The default base: main, then master, then their origin counterparts. */
+  /**
+   * The default base. The remote's own default (`origin/HEAD`) and `init.defaultBranch`
+   * come first, so a repository whose trunk is called `trunk` (or anything else) works
+   * without configuration; then the usual names, local before `origin/`.
+   */
   async defaultBase(): Promise<string | null> {
-    for (const name of ['main', 'master', 'origin/main', 'origin/master']) {
+    const named: string[] = []
+    try {
+      const target = await git.resolveRef({
+        fs: this.fs,
+        dir: DIR,
+        ref: 'refs/remotes/origin/HEAD',
+        depth: 1,
+      })
+      // A symbolic ref reads back as "ref: refs/remotes/origin/<branch>".
+      const m = /^(?:ref:\s*)?refs\/remotes\/origin\/(.+?)\s*$/.exec(target)
+      if (m) named.push(m[1]!)
+    } catch {
+      /* no origin/HEAD: a repository that was not cloned, or a bare remote */
+    }
+    try {
+      const configured = await git.getConfig({ fs: this.fs, dir: DIR, path: 'init.defaultBranch' })
+      if (typeof configured === 'string' && configured) named.push(configured)
+    } catch {
+      /* no config */
+    }
+    const candidates = [
+      ...named.flatMap((n) => [n, `origin/${n}`]),
+      ...DEFAULT_BASES,
+      ...DEFAULT_BASES.map((n) => `origin/${n}`),
+    ]
+    for (const name of candidates) {
       if ((await this.resolveBase(name)) !== null) return name
     }
     return null
@@ -320,6 +351,7 @@ export class GitService {
       let headOid: string | null = null
       if (bytes) {
         headOid = (await git.hashBlob({ object: bytes })).oid
+        this.overlayOids.add(headOid)
         if (!this.blobsByOid.has(headOid)) this.blobsByOid.set(headOid, classifyBlob(bytes))
       }
       if (mbOid === headOid) {
@@ -329,6 +361,26 @@ export class GitService {
       byPath.set(path, { path, status: !mbOid ? 'A' : !headOid ? 'D' : 'M', mbOid, headOid })
     })
     return [...byPath.values()]
+  }
+
+  /** Working-tree blobs have no object in the repository, so they are cached under their oid. */
+  private readonly overlayOids = new Set<string>()
+
+  /** The working-tree content behind `files`' HEAD side, to hand to another thread's service. */
+  overlayBlobs(files: readonly BranchFile[]): [string, BlobContent][] {
+    const out: [string, BlobContent][] = []
+    for (const f of files) {
+      const oid = f.headOid
+      const hit = oid && this.overlayOids.has(oid) ? this.blobsByOid.get(oid) : undefined
+      if (oid && hit) out.push([oid, hit])
+    }
+    return out
+  }
+
+  /** Adopts blobs another thread read from the working tree. */
+  primeBlobs(blobs: readonly [string, BlobContent][]) {
+    // An oid names its content, so a shipped copy replaces a cached read failure.
+    for (const [oid, c] of blobs) this.blobsByOid.set(oid, c)
   }
 
   /** The content behind a blob oid, classed so callers can show a placeholder. */

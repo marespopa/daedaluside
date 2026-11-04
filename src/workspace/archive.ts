@@ -1,9 +1,9 @@
 import { unzipSync, zipSync, type Zippable } from 'fflate'
+import { IGNORED } from './folderWalk'
 import { joinPath, normalizePath } from './path'
 import { FSError, type Entry, type WorkspaceFS } from './types'
 
-/** Folders that are never imported: huge, regenerable, and not useful as AI context. */
-export const IGNORED = new Set(['.git', 'node_modules', '__MACOSX'])
+export { IGNORED }
 export const MAX_IMPORT_BYTES = 256 * 1024 * 1024
 export const MAX_IMPORT_FILES = 20_000
 

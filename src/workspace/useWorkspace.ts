@@ -48,14 +48,17 @@ export function useWorkspaceLifecycle() {
       discard: () => closeActive(true),
       open: (name) => {
         if (name === '') return notify('Name a file to open, for example :e notes.md')
-        const files = store.get(treeAtom).filter((e) => e.kind === 'file')
-        const exact = files.find((f) => f.path === name)
-        const found = exact ? [exact] : matchFiles(files, name)
-        if (found.length === 1) return void controller.openFile(found[0]!.path)
-        if (found.length === 0) return notify(`No file matches ${name}`)
-        notify(
-          `${found.length} files match ${name}: ${found.map((f) => f.path).join(', ')}`,
-        )
+        // Matching needs every file name: read the whole tree first.
+        void controller.ensureFullTree().then(() => {
+          const files = store.get(treeAtom).filter((e) => e.kind === 'file')
+          const exact = files.find((f) => f.path === name)
+          const found = exact ? [exact] : matchFiles(files, name)
+          if (found.length === 1) return void controller.openFile(found[0]!.path)
+          if (found.length === 0) return notify(`No file matches ${name}`)
+          notify(
+            `${found.length} files match ${name}: ${found.map((f) => f.path).join(', ')}`,
+          )
+        })
       },
       cycle: (delta) => controller.cycleTab(delta),
       explore: () => focusFileTree(store),

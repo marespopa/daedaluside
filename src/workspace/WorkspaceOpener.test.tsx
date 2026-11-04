@@ -77,7 +77,7 @@ describe('workspace opener', () => {
     expect(store.get(activePathAtom)).toBeNull()
 
     const o = await opener()
-    expect(within(o).getByText(/Workspace ready · 2 files/)).toBeInTheDocument()
+    expect(within(o).getByText(/^Workspace ready$/)).toBeInTheDocument()
     expect(within(o).queryByRole('button', { name: 'Open folder' })).toBeNull()
     expect(within(o).queryByRole('button', { name: 'Open file' })).toBeNull()
     expect(within(o).getByRole('button', { name: /Find in Files/ })).toBeInTheDocument()
@@ -88,7 +88,8 @@ describe('workspace opener', () => {
     const input = (await screen.findByRole('combobox')) as HTMLInputElement
     expect(input).toHaveValue('')
     await user.type(input, 'app')
-    expect(screen.getByRole('option', { name: 'src/app.ts' })).toBeInTheDocument()
+    // Searching reads the whole tree first.
+    expect(await screen.findByRole('option', { name: 'src/app.ts' })).toBeInTheDocument()
     await user.keyboard('{Enter}')
 
     await waitFor(() => expect(store.get(activePathAtom)).toBe('src/app.ts'))

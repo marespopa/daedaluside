@@ -10,6 +10,7 @@ import {
   openBuffersAtom,
   sidebarOpenAtom,
   treeAtom,
+  loadedDirsAtom,
   treeProgressAtom,
   treeStatusAtom,
   snapshotAtom,
@@ -189,11 +190,21 @@ function Sidebar({ open }: { open: boolean }) {
   const kindOf = useMemo(() => new Map(tree.map((e) => [e.path, e.kind])), [tree])
 
   const newParent = editing && editing.kind !== 'rename' ? editing.parent : null
+  const loaded = useAtomValue(loadedDirsAtom)
   const rows = useMemo(
-    () => flattenTree(byParent, expanded, newParent),
-    [byParent, expanded, newParent],
+    () => flattenTree(byParent, expanded, newParent, loaded),
+    [byParent, expanded, newParent, loaded],
   )
   const searching = query.trim() !== ''
+  // A folder lists only its root on open: read a folder's children when it is shown, and
+  // the whole tree when the file filter needs every name.
+  useEffect(() => {
+    for (const d of expanded) if (!loaded.has(d)) void controller.loadDir(d)
+    // Also when the tree turns ready: folders expanded while it loaded were skipped.
+  }, [expanded, loaded, treeStatus.state, controller])
+  useEffect(() => {
+    if (searching) void controller.ensureFullTree()
+  }, [searching, controller])
   const { start, end } = visibleRange(
     scrollTop,
     viewport || FALLBACK_VIEWPORT,
@@ -468,6 +479,29 @@ function Sidebar({ open }: { open: boolean }) {
                   : controller.createFolder(path))
               }}
             />
+          </div>
+        </li>
+      )
+    }
+
+    if (row.type === 'note') {
+      return (
+        <li key={row.key} role="none" style={box} className="absolute inset-x-0">
+          <div
+            style={{ paddingLeft: (row.depth + 1) * INDENT + 8 }}
+            className="flex h-full items-center gap-2 pr-2 text-xs text-muted"
+          >
+            {row.kind === 'loading' ? (
+              <>
+                <span
+                  aria-hidden
+                  className="size-2.5 animate-spin rounded-full border border-muted border-t-transparent motion-reduce:animate-none"
+                />
+                <span role="status">Loading…</span>
+              </>
+            ) : (
+              <span>Empty</span>
+            )}
           </div>
         </li>
       )

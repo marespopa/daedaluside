@@ -10,15 +10,8 @@ import {
   normalizePath,
   splitPath,
 } from './path'
-import { IGNORED } from './archive'
+import { walkInWorker } from './walkService'
 import { FSError, type Entry, type WorkspaceFS } from './types'
-
-function isPermissionError(e: unknown): boolean {
-  return (
-    e instanceof DOMException &&
-    (e.name === 'NotAllowedError' || e.name === 'SecurityError')
-  )
-}
 
 function mapDomException(e: unknown, expected: 'file' | 'dir'): never {
   if (e instanceof FSError) throw e
@@ -94,69 +87,28 @@ export class FolderFS implements WorkspaceFS {
     }
   }
 
-  async list(dir: string): Promise<Entry[]> {
+  async list(dir: string, opts: { sizes?: boolean } = {}): Promise<Entry[]> {
     const p = normalizePath(dir)
-    return this.enqueue(async () => {
-      const d = await this.resolveDir(p)
-      const out: Entry[] = []
-      for await (const [name, h] of d.entries()) {
-        if (h.kind === 'file') {
-          const f = await (h as FileSystemFileHandle).getFile()
-          out.push({ name, path: joinPath(p, name), kind: 'file', size: f.size })
-        } else {
-          out.push({ name, path: joinPath(p, name), kind: 'dir' })
-        }
+    // Read-only, so it does not wait behind writes or the index's file reads.
+    const d = await this.resolveDir(p)
+    const out: Entry[] = []
+    const stats: Promise<void>[] = []
+    for await (const [name, h] of d.entries()) {
+      const entry: Entry = { name, path: joinPath(p, name), kind: h.kind === 'file' ? 'file' : 'dir' }
+      out.push(entry)
+      if (h.kind === 'file' && opts.sizes !== false) {
+        stats.push((async () => (entry.size = (await (h as FileSystemFileHandle).getFile()).size))().then(() => {}))
       }
-      return out.sort(compareEntries)
-    })
+    }
+    await Promise.all(stats)
+    return out.sort(compareEntries)
   }
 
   async listAll(onProgress?: (count: number) => void): Promise<Entry[]> {
-    return this.enqueue(async () => {
-      const entries: Entry[] = []
-      await this.walk(this.root, '', entries, onProgress)
-      return depthFirst(entries)
-    })
-  }
-
-  private async walk(
-    dir: FileSystemDirectoryHandle,
-    path: string,
-    out: Entry[],
-    onProgress?: (count: number) => void,
-  ): Promise<void> {
-    const items: { name: string; handle: FileSystemHandle; size?: number }[] = []
-    try {
-      for await (const [name, h] of dir.entries()) {
-        if (h.kind === 'file') {
-          let size = 0
-          try {
-            size = (await (h as FileSystemFileHandle).getFile()).size
-          } catch (e) {
-            // A lost grant must surface as a permission problem; anything else
-            // (a file that vanished mid-scan) still lists the file.
-            if (isPermissionError(e)) throw e
-          }
-          items.push({ name, handle: h, size })
-        } else if (!IGNORED.has(name)) {
-          items.push({ name, handle: h })
-        }
-        if (items.length % 50 === 0) onProgress?.(out.length + items.length)
-      }
-    } catch (e) {
-      // One unreadable directory must not empty the whole tree; the root still fails.
-      if (path === '' || isPermissionError(e)) throw e
-    }
-    for (const { name, handle, size } of items) {
-      const cp = joinPath(path, name)
-      if (handle.kind === 'file') {
-        out.push({ name, path: cp, kind: 'file', size: size ?? 0 })
-      } else {
-        out.push({ name, path: cp, kind: 'dir' })
-        await this.walk(handle as FileSystemDirectoryHandle, cp, out, onProgress)
-      }
-    }
-    onProgress?.(out.length)
+    // Read-only and parallel, so it runs outside the write queue: opening a file or
+    // reading for the index never waits behind a long walk.
+    const entries = await walkInWorker(this.root, { onProgress })
+    return depthFirst(entries)
   }
 
   async stat(path: string): Promise<Entry | null> {

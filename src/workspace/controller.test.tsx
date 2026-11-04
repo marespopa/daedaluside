@@ -669,14 +669,15 @@ describe('quick finder in the tree', () => {
     disk.setFile('docs/a.md', new TextEncoder().encode('a'))
     disk.setFile('main.ts', new TextEncoder().encode('m'))
     const a = mount()
-    await openFolder(a.store, disk, 'docs/a.md')
+    // A new folder opens its shallowest first file, not the alphabetically first path.
+    await openFolder(a.store, disk, 'main.ts')
     const tree = await screen.findByRole('complementary', { name: 'File tree' })
 
     await user.type(
       within(tree).getByRole('textbox', { name: 'Find a file' }),
-      'main{Enter}',
+      'a.md{Enter}',
     )
-    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('main.ts'))
+    await waitFor(() => expect(a.store.get(activePathAtom)).toBe('docs/a.md'))
   })
 })
 
@@ -755,6 +756,9 @@ describe('incremental tree updates', () => {
     disk.setFile('docs/a.md', new TextEncoder().encode('a'))
     const a = mount()
     await openFolder(a.store, disk)
+    await act(async () => {
+      await getController(a.store).ensureFullTree()
+    })
     const listAll = vi.spyOn(fsOf(a.store)!, 'listAll')
     // A tree snapshot missing the renamed entry (say, left stale by a crash): the
     // patch bails out and a full refresh restores the truth from the folder.
@@ -784,6 +788,9 @@ describe('incremental tree updates', () => {
     // Clicking a folder row keeps focus in the tree (a file row would, too, but it
     // moves focus to the editor once the file loads).
     await user.click(within(tree).getByRole('button', { name: 'docs' }))
+    await act(async () => {
+      await getController(a.store).ensureFullTree()
+    })
     const listAll = vi.spyOn(fsOf(a.store)!, 'listAll')
     disk.setFile('other/z.md', new TextEncoder().encode('z')) // changed on disk, not by us
 
@@ -896,10 +903,10 @@ describe('link revalidation on focus', () => {
       return real(onProgress)
     })
     await act(async () => {
-      await getController(a.store).refreshTree()
+      await getController(a.store).ensureFullTree()
     })
-    // The previous read of this workspace supplies the expected total.
-    expect(seen).toEqual([{ done: 1, total: 2, startedAt: expect.any(Number) }])
+    // No full read has happened yet, so the total is unknown.
+    expect(seen).toEqual([{ done: 1, total: null }])
     expect(a.store.get(treeProgressAtom)).toBeNull()
     expect(a.store.get(treeStatusAtom)).toEqual({ state: 'ready' })
   })
@@ -912,7 +919,7 @@ describe('link revalidation on focus', () => {
     const fs = fsOf(a.store)
     vi.spyOn(fs, 'listAll').mockRejectedValue(new Error('boom'))
     await act(async () => {
-      await getController(a.store).refreshTree()
+      await getController(a.store).ensureFullTree()
     })
     expect(a.store.get(treeProgressAtom)).toBeNull()
     expect(a.store.get(treeStatusAtom).state).toBe('error')

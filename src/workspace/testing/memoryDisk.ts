@@ -238,6 +238,7 @@ export class MemDirectory {
 
   /** Entries of this folder, as the picker's async iterator yields them. */
   async *entries(): AsyncGenerator<[string, MemFile | MemDirectory]> {
+    this.disk.assertRead()
     const prefix = this.path === '' ? '' : `${this.path}/`
     const names = new Map<string, MemFile | MemDirectory>()
     for (const f of this.disk.files.keys()) {

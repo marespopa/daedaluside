@@ -52,6 +52,8 @@ import {
   settingsOpenAtom,
   sidebarOpenAtom,
   treeAtom,
+  treeCompleteAtom,
+  loadedDirsAtom,
   treeProgressAtom,
   treeStatusAtom,
   workspaceStatusAtom,
@@ -72,11 +74,12 @@ import {
   type TabState,
 } from '../state/tabOps'
 import { imageKind, imageMime, sniffImage } from './image'
-import { downloadBytes, exportZip, walkTree } from './archive'
+import { downloadBytes, exportZip, IGNORED, walkTree } from './archive'
 import { openDB } from './db'
 import { startSnapshotSync } from './snapshot'
 import { FolderFS } from './folderFs'
 import { loadKnownCount, saveKnownCount } from './loadEstimate'
+import type { BranchRequest } from './branchPrefetch'
 import { BranchPrefetchService } from './branchPrefetchService'
 import { GitService, mapLimit, type BranchFile } from './gitService'
 import { GrepService } from './grepService'
@@ -85,6 +88,8 @@ import { SingleFileFS } from './singleFileFs'
 import { sourceKey, WorkspaceManager, type RemoteChange } from './manager'
 import {
   addEntry,
+  depthFirst,
+  setChildren,
   basename,
   isWithin,
   joinPath,
@@ -118,6 +123,8 @@ function typingElsewhere(): boolean {
 
 export const AUTOSAVE_MS = 800
 const SESSION_SAVE_MS = 500
+const isPermissionDomError = (e: unknown) =>
+  e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError')
 const MAX_OPEN_BYTES = 5 * 1024 * 1024
 
 interface Buffer {
@@ -175,6 +182,8 @@ export class WorkspaceController {
   private gitFor: WorkspaceFS | null = null
   private diffSvc: DiffService | null = null
   private prefetchSvc: BranchPrefetchService | null = null
+  /** The worker computing the open branch review, if any. */
+  private reviewWorker: BranchPrefetchService | null = null
   private gitTimer: ReturnType<typeof setTimeout> | undefined
   /** Orders diff requests: only the newest may touch the editor. */
   private diffSeq = 0
@@ -280,65 +289,233 @@ export class WorkspaceController {
    * else the `error` state, so no caller is left with an unhandled promise.
    */
   private lastTreeRefresh = 0
+  /** Identifies the newest tree walk; an older one that finishes late must not publish. */
+  private treeGen = 0
+  /** Counts local tree edits, so a walk can tell it may have missed one. */
+  private treeMutations = 0
+
+  /** Whether every folder has been read (mirrors `treeCompleteAtom`). */
+  private complete = false
+  /** Folders whose children are in the tree (mirrors `loadedDirsAtom`). */
+  private loaded = new Set<string>()
+  private dirLoads = new Map<string, Promise<void>>()
+  private fullWalk: Promise<void> | null = null
+
+  private setLoaded(dirs: Set<string>) {
+    this.loaded = dirs
+    this.store.set(loadedDirsAtom, dirs)
+  }
+
+  private setComplete(v: boolean) {
+    this.complete = v
+    this.store.set(treeCompleteAtom, v)
+  }
+
+  /** Drops loaded markers of folders a rename or delete removed from the tree. */
+  private pruneLoaded() {
+    if (this.loaded.size <= 1) return
+    const dirs = new Set(this.store.get(treeAtom).filter((e) => e.kind === 'dir').map((e) => e.path))
+    const next = new Set([...this.loaded].filter((d) => d === '' || dirs.has(d)))
+    if (next.size !== this.loaded.size) this.setLoaded(next)
+  }
+
+  /** Forgets what was read of the previous folder. */
+  private resetTreeState() {
+    this.fullWalk = null
+    this.dirLoads.clear()
+    this.setLoaded(new Set())
+    this.setComplete(false)
+  }
 
   /**
-   * `silent` walks in the background without the loading state, for a tree that is already
+   * Re-reads the tree. A folder opens with only its root listed (one cheap directory read,
+   * no per-file stats); folders read since then are listed again, so what is on screen
+   * stays current. Once the whole tree has been read (see `ensureFullTree`) a refresh
+   * walks it all again. `silent` skips the loading state, for a tree that is already
    * shown (a focus revalidation must not look like a reload).
    */
   async refreshTree(opts: { silent?: boolean } = {}) {
     this.lastTreeRefresh = Date.now()
+    const gen = ++this.treeGen
+    const mutated = this.treeMutations
     const silent = opts.silent === true && this.store.get(treeStatusAtom).state === 'ready'
     const fs = this.fs
     if (!fs) {
+      this.resetTreeState()
       this.store.set(treeAtom, [])
       this.syncGrep([])
       this.syncGit()
       return
     }
     if (!silent) this.store.set(treeStatusAtom, { state: 'loading' })
-    // Git does not need the tree: scan status while the tree is still being walked.
+    // Git does not need the tree: scan status while the tree is being read.
     this.gitSvc?.invalidateStatus()
     this.syncGit()
-    // The last full read of this workspace is the best guess at the total.
-    const total =
-      this.knownCounts.get(this.wsId ?? '') ?? (this.wsId ? loadKnownCount(this.wsId) : null)
-    const startedAt = Date.now()
-    if (!silent) this.store.set(treeProgressAtom, { done: 0, total, startedAt })
+    const current = () => this.fs === fs && this.treeGen === gen
+    const wasComplete = this.complete
     try {
-      const entries = await walkTree(fs, (done) => {
-        if (this.fs === fs && !silent) this.store.set(treeProgressAtom, { done, total, startedAt })
-      })
-      if (this.fs !== fs) return // another workspace (or a reconnect took over)
-      if (this.wsId) {
-        this.knownCounts.set(this.wsId, entries.length)
-        saveKnownCount(this.wsId, entries.length)
+      let entries: Entry[]
+      let loaded: Set<string>
+      if (wasComplete) {
+        entries = await walkTree(fs)
+        loaded = new Set(['', ...entries.filter((e) => e.kind === 'dir').map((e) => e.path)])
+      } else {
+        const dirs = ['', ...this.loaded].filter((d, i, all) => all.indexOf(d) === i)
+        const listed = await Promise.all(
+          dirs.map(async (d) => {
+            try {
+              return [d, await fs.list(d, { sizes: false })] as const
+            } catch (e) {
+              // A folder that vanished or cannot be read is dropped; the root still fails.
+              if (d === '' || isPermissionDomError(e)) throw e
+              return null
+            }
+          }),
+        )
+        const found = listed.filter((x): x is readonly [string, Entry[]] => x !== null)
+        loaded = new Set(found.map(([d]) => d))
+        entries = depthFirst(found.flatMap(([, es]) => es))
       }
-      this.store.set(treeAtom, entries)
+      // Another workspace, a reconnect, a newer read, or a whole-tree read took over.
+      if (!current()) return
+      if (this.complete !== wasComplete) {
+        // A whole-tree read landed first and is fresher; only the status is left to settle.
+        this.store.set(treeProgressAtom, null)
+        this.store.set(treeStatusAtom, { state: 'ready' })
+        return
+      }
+      // An edit made while reading wins; the reconcile below picks up the rest.
+      const edited = this.treeMutations !== mutated
+      if (!edited) {
+        this.store.set(treeAtom, entries)
+        this.setLoaded(loaded)
+        if (this.complete) this.syncGrep(entries)
+      }
       this.store.set(treeProgressAtom, null)
       this.store.set(treeStatusAtom, { state: 'ready' })
-      this.syncGrep(entries)
       if (!this.gitSvc) this.syncGit()
+      if (edited) void this.refreshTree({ silent: true })
     } catch (e) {
-      if (this.fs !== fs) return
-      this.store.set(treeProgressAtom, null)
-      this.store.set(treeAtom, [])
-      this.syncGrep([])
-      this.syncGit()
-      if (
-        e instanceof DOMException &&
-        (e.name === 'NotAllowedError' || e.name === 'SecurityError')
-      ) {
-        // The folder itself may be fine; reading just needs a click to re-grant.
-        this.linkPaused = true
-        this.publishLink()
-        this.store.set(treeStatusAtom, { state: 'permission' })
-      } else {
-        this.store.set(treeStatusAtom, {
-          state: 'error',
-          message: e instanceof Error ? e.message : String(e),
-        })
-      }
+      if (!current()) return
+      this.failTree(e)
     }
+  }
+
+  private failTree(e: unknown) {
+    this.treeGen++ // a read still in flight must not publish over this state
+    this.store.set(treeProgressAtom, null)
+    this.store.set(treeAtom, [])
+    this.fullWalk = null
+    this.dirLoads.clear()
+    // Only when something changes: a new set re-runs the tree's folder-loading effect.
+    if (this.loaded.size > 0) this.setLoaded(new Set())
+    if (this.complete) this.setComplete(false)
+    this.syncGrep([])
+    this.syncGit()
+    if (isPermissionDomError(e)) {
+      // The folder itself may be fine; reading just needs a click to re-grant.
+      this.linkPaused = true
+      this.publishLink()
+      this.store.set(treeStatusAtom, { state: 'permission' })
+    } else {
+      this.store.set(treeStatusAtom, {
+        state: 'error',
+        message: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
+  /** Reads the children of a folder the first time it is shown. */
+  loadDir(dir: string): Promise<void> {
+    const fs = this.fs
+    // Nothing to read once the whole tree is known, or while access is lost.
+    if (!fs || this.complete || this.loaded.has(dir)) return Promise.resolve()
+    if (this.linkPaused || this.store.get(treeStatusAtom).state !== 'ready') return Promise.resolve()
+    const pending = this.dirLoads.get(dir)
+    if (pending) return pending
+    const gen = this.treeGen
+    const mutated = this.treeMutations
+    const self: { p?: Promise<void> } = {}
+    self.p = (async () => {
+      try {
+        const children = await fs.list(dir, { sizes: false })
+        // A refresh or another folder in between makes this listing stale.
+        if (this.fs !== fs || this.treeGen !== gen || this.complete) return
+        // The folder itself may not be shown yet (a deeper folder was asked for first):
+        // leave it unloaded; it is read again once its parent is there.
+        const known =
+          dir === '' || this.store.get(treeAtom).some((e) => e.kind === 'dir' && e.path === dir)
+        if (!known) return
+        // A create, rename or delete since the read began may not be in it: read again.
+        if (this.treeMutations !== mutated) {
+          this.dirLoads.delete(dir)
+          void this.loadDir(dir)
+          return
+        }
+        this.store.set(treeAtom, (entries) => setChildren(entries, dir, children))
+        this.setLoaded(new Set(this.loaded).add(dir))
+      } catch (e) {
+        if (this.fs === fs && isPermissionDomError(e)) this.failTree(e)
+        else if (
+          this.fs === fs &&
+          this.treeGen === gen &&
+          (dir === '' || this.store.get(treeAtom).some((e) => e.kind === 'dir' && e.path === dir))
+        ) {
+          // The folder was removed or cannot be listed: settle it as empty rather than
+          // leave a spinner; the next refresh drops it from the tree.
+          this.setLoaded(new Set(this.loaded).add(dir))
+        }
+      } finally {
+        if (this.dirLoads.get(dir) === self.p) this.dirLoads.delete(dir)
+      }
+    })()
+    this.dirLoads.set(dir, self.p)
+    return self.p
+  }
+
+  /**
+   * Reads every folder, in a worker. The palette, the file filter, text search and `:e`
+   * need the whole file list; a plain open does not, so this runs the first time one of
+   * them is used. Resolves once `treeAtom` holds the whole workspace.
+   */
+  ensureFullTree(): Promise<void> {
+    const fs = this.fs
+    if (!fs || this.complete) return Promise.resolve()
+    if (this.fullWalk) return this.fullWalk
+    const self: { p?: Promise<void> } = {}
+    self.p = (async () => {
+      const total = this.wsId ? (this.knownCounts.get(this.wsId) ?? loadKnownCount(this.wsId)) : null
+      try {
+        let entries: Entry[]
+        // An edit during the read could be missing from it: read again (a few times at most).
+        for (let tries = 0; ; tries++) {
+          const seen = this.treeMutations
+          entries = await walkTree(fs, (done) => {
+            if (this.fs === fs) this.store.set(treeProgressAtom, { done, total })
+          })
+          if (seen === this.treeMutations || tries >= 2) break
+        }
+        if (this.fs !== fs) return
+        if (this.wsId) {
+          this.knownCounts.set(this.wsId, entries.length)
+          saveKnownCount(this.wsId, entries.length)
+        }
+        this.store.set(treeProgressAtom, null)
+        this.store.set(treeAtom, entries)
+        this.setLoaded(new Set(['', ...entries.filter((e) => e.kind === 'dir').map((e) => e.path)]))
+        this.setComplete(true)
+        if (this.store.get(treeStatusAtom).state === 'loading') {
+          this.store.set(treeStatusAtom, { state: 'ready' })
+        }
+        this.syncGrep(entries)
+      } catch (e) {
+        if (this.fs === fs) this.failTree(e)
+      } finally {
+        if (this.fullWalk === self.p) this.fullWalk = null
+      }
+    })()
+    this.fullWalk = self.p
+    return self.p
   }
 
   /** Refreshes the tree on demand (Ctrl-R and the tree's Retry). */
@@ -352,10 +529,12 @@ export class WorkspaceController {
    * A patch that cannot be applied locally falls back to a full refresh.
    */
   private async patchTree(patch: (entries: readonly Entry[]) => Entry[] | null) {
+    this.treeMutations++
     const next = patch(this.store.get(treeAtom))
     if (next) {
       this.store.set(treeAtom, next)
-      this.syncGrep(next)
+      this.pruneLoaded()
+      if (this.complete) this.syncGrep(next)
     } else await this.refreshTree()
   }
 
@@ -372,6 +551,8 @@ export class WorkspaceController {
       this.diffSvc = null
       this.prefetchSvc?.dispose()
       this.prefetchSvc = null
+      this.reviewWorker?.dispose()
+      this.reviewWorker = null
       clearTimeout(this.gitTimer)
       this.diffSeq++
       this.store.set(gitHeadAtom, (g) => ({ version: g.version + 1, status: new Map() }))
@@ -545,6 +726,7 @@ export class WorkspaceController {
         if (!this.branchCache.get(key)?.statsDone) this.branchCache.set(key, entry)
         // The review was opened while the worker was still reading: fill it in now.
         const cur = this.store.get(branchReviewAtom)
+        if (r.blobs) this.gitSvc?.primeBlobs(r.blobs)
         if (cur && cur.status === 'loading' && cur.mode === 'base' && cur.base === '…' && cur.files.length === 0) {
           this.branchPatch({ ...entry, status: 'ready' })
         }
@@ -597,12 +779,23 @@ export class WorkspaceController {
     if (!svc || !(await svc.hasHead())) {
       return fail('This folder is not a git repository with a commit.')
     }
+    // The comparison (git walk, status scan, line totals) runs in a worker so the editor
+    // stays responsive; without one, or if it dies, the same work runs below.
+    const linked = this.linkHandle
+    if (linked && linked.kind === 'directory') {
+      const finished = await this.reviewInWorker(
+        linked as FileSystemDirectoryHandle,
+        { mode, base: baseArg },
+        { signal, svc, cacheKey, fail },
+      )
+      if (finished || signal.cancelled) return
+    }
     let base = 'HEAD'
     let baseOid: string | null = null
     if (mode === 'base') {
       const named = baseArg?.trim() || (await svc.defaultBase())
       if (!named) {
-        return fail('No main or master branch found; name a base, for example :BranchReview origin/dev')
+        return fail('No main, master or trunk branch found; name a base, for example :BranchReview origin/dev')
       }
       base = named
       baseOid = await svc.resolveBase(base)
@@ -650,22 +843,104 @@ export class WorkspaceController {
     const key = this.branchMarksKey()
     const marks = pruneMarks(key ? loadMarks(key) : {}, res.files)
     this.setBranchMarks(marks)
-    const remember = () => {
-      const cur = this.store.get(branchReviewAtom)
-      if (cur && cur.status === 'ready' && !signal.cancelled) {
-        this.branchCache.set(cacheKey, {
-          base: cur.base,
-          branch: cur.branch,
-          mergeBase: cur.mergeBase,
-          head: cur.head,
-          files: cur.files,
-          stats: cur.stats,
-          statsDone: cur.statsDone,
-        })
-      }
-    }
+    const remember = () => this.rememberBranch(signal, cacheKey)
     remember()
     void this.computeBranchStats(svc, res.files, keptStats, signal).then(remember)
+  }
+
+  private rememberBranch(signal: { cancelled: boolean }, cacheKey: string) {
+    const cur = this.store.get(branchReviewAtom)
+    if (cur && cur.status === 'ready' && !signal.cancelled) {
+      this.branchCache.set(cacheKey, {
+        base: cur.base,
+        branch: cur.branch,
+        mergeBase: cur.mergeBase,
+        head: cur.head,
+        files: cur.files,
+        stats: cur.stats,
+        statsDone: cur.statsDone,
+      })
+    }
+  }
+
+  /**
+   * Runs the review in a worker, patching the open review as results stream in. Resolves
+   * true once the review has finished (or failed with a message for the user), false when
+   * the caller should compute it on this thread instead.
+   */
+  private reviewInWorker(
+    handle: FileSystemDirectoryHandle,
+    req: BranchRequest,
+    ctx: {
+      signal: { cancelled: boolean }
+      svc: GitService
+      cacheKey: string
+      fail: (message: string) => void
+    },
+  ): Promise<boolean> {
+    const { signal, svc, cacheKey, fail } = ctx
+    this.reviewWorker?.dispose()
+    const worker = new BranchPrefetchService()
+    this.reviewWorker = worker
+    return new Promise<boolean>((resolve) => {
+      let finished = false
+      const stale = () => signal.cancelled || this.gitSvc !== svc || this.reviewWorker !== worker
+      const started = worker.start(
+        handle,
+        (r, done) => {
+          if (stale()) return
+          if (r.blobs) svc.primeBlobs(r.blobs)
+          // A review already on screen keeps its full list until the full result lands.
+          if (r.partial && this.store.get(branchReviewAtom)?.status === 'ready') return
+          // Keep the cursor on the same file, and totals of files that did not change.
+          const prev = this.store.get(branchReviewAtom)
+          const prevPath = prev?.files[prev.index]?.path
+          const sameOids = new Map((prev?.files ?? []).map((f) => [f.path, `${f.mbOid}|${f.headOid}`]))
+          const stats: Record<string, { add: number; del: number }> = {}
+          for (const f of r.files) {
+            const old = prev?.stats[f.path]
+            if (old && sameOids.get(f.path) === `${f.mbOid}|${f.headOid}`) stats[f.path] = old
+          }
+          Object.assign(stats, r.stats)
+          const at = prevPath ? r.files.findIndex((f) => f.path === prevPath) : -1
+          this.branchPatch({
+            status: 'ready',
+            base: r.base,
+            branch: r.branch,
+            mergeBase: r.mergeBase,
+            head: r.head,
+            files: r.files,
+            index: at === -1 ? 0 : at,
+            stats,
+            statsDone: done,
+            partial: r.partial === true,
+            message: null,
+          })
+          if (r.partial) return
+          const key = this.branchMarksKey()
+          this.setBranchMarks(pruneMarks(key ? loadMarks(key) : {}, r.files))
+          this.rememberBranch(signal, cacheKey)
+          if (done) finished = true
+        },
+        () => {
+          if (this.reviewWorker === worker) this.reviewWorker = null
+          resolve(finished)
+        },
+        req,
+        (message) => {
+          if (stale()) return
+          finished = true
+          fail(message)
+        },
+        () => {
+          // Disposed: a newer review or a close needs nothing more; a workspace change does.
+          if (!signal.cancelled && this.gitSvc !== svc) fail('Workspace changed while reading the branch.')
+          finished = true
+          resolve(true)
+        },
+      )
+      if (!started) resolve(false)
+    })
   }
 
   /** Line totals per file, computed in the background (selected file first, a few at a time). */
@@ -711,6 +986,8 @@ export class WorkspaceController {
   closeBranchReview() {
     if (!this.store.get(branchReviewAtom)) return
     if (this.branchSignal) this.branchSignal.cancelled = true
+    this.reviewWorker?.dispose()
+    this.reviewWorker = null
     this.store.set(branchReviewAtom, null)
     this.store.set(branchConfirmAtom, null)
     this.handle?.view.focus()
@@ -947,13 +1224,20 @@ export class WorkspaceController {
     onBatch: (hits: GrepHit[]) => void,
     onDone: (truncated: boolean) => void,
   ): () => void {
-    const svc = this.grepSvc
-    if (!svc) {
-      onDone(false)
-      return () => {}
+    // Text search covers every file, so the whole tree is read (and indexed) first.
+    let stop = () => {}
+    let cancelled = false
+    void this.ensureFullTree().then(() => {
+      if (cancelled) return
+      const svc = this.grepSvc
+      if (!svc) return onDone(false)
+      const priority = [...(this.active ? [this.active] : []), ...this.tabs.map((t) => t.path)]
+      stop = svc.search(query, priority, onBatch, onDone)
+    })
+    return () => {
+      cancelled = true
+      stop()
     }
-    const priority = [...(this.active ? [this.active] : []), ...this.tabs.map((t) => t.path)]
-    return svc.search(query, priority, onBatch, onDone)
   }
 
   /** The current text of a file for the grep preview: the open buffer, else the disk. */
@@ -1537,9 +1821,11 @@ export class WorkspaceController {
       if (this.store.get(deletingPathsAtom).size > 0) return
       this.store.set(deletingPathsAtom, (current) => new Set(current).add(path))
       started = true
+      this.treeMutations++
       this.store.set(treeAtom, (entries) =>
         entries.filter((entry) => !isWithin(entry.path, path)),
       )
+      this.pruneLoaded()
 
       await fs.remove(path)
       if (this.fs !== fs || this.epoch !== epoch) return
@@ -1595,7 +1881,7 @@ export class WorkspaceController {
     await this.openFolderHandle(handle)
   }
 
-  async switchTo(id: string) {
+  async switchTo(id: string, opts: { seed?: () => Promise<string | undefined> } = {}) {
     const manager = this.requireManager()
     if (this.wsId) {
       await this.flushAll()
@@ -1612,6 +1898,7 @@ export class WorkspaceController {
     this.store.set(currentWorkspaceIdAtom, id)
     // The previous workspace's files leave the view while this folder is read.
     this.store.set(treeAtom, [])
+    this.resetTreeState()
     this.store.set(treeStatusAtom, { state: 'loading' })
     await manager.setLastId(id)
 
@@ -1639,8 +1926,17 @@ export class WorkspaceController {
       this.fs = this.fsFor(handle)
     }
     this.publishLink()
-    await this.refreshTree()
-    const wanted = meta?.openFiles ?? []
+    // Only the root is listed; the rest of the tree is read when it is needed.
+    const treeDone = this.refreshTree()
+    let wanted = meta?.openFiles ?? []
+    if (wanted.length === 0 && opts.seed) {
+      try {
+        const first = await opts.seed()
+        if (first) wanted = [first]
+      } catch {
+        /* unreadable folder: the tree already shows the permission or error state */
+      }
+    }
     for (const p of wanted) {
       if (epoch !== this.epoch) return
       try {
@@ -1658,6 +1954,8 @@ export class WorkspaceController {
     const active =
       act && this.buffers.has(act) ? act : (this.active ?? tabs[0]?.path ?? null)
     this.commit({ tabs, active }, { force: true })
+    // Tabs are on screen already; the tree may still be filling in.
+    await treeDone
   }
 
   async renameWorkspace(id: string, name: string) {
@@ -1774,34 +2072,40 @@ export class WorkspaceController {
     await manager.setLink(meta.id, handle)
     await this.refreshWorkspaces()
     this.store.set(sidebarOpenAtom, true)
-    await this.switchTo(meta.id)
     // The first file is a convenience: a folder that cannot be read (yet) must
-    // still open; refreshTree surfaces exactly how far the access reaches.
-    try {
-      const firstFile = await this.firstFilePath(handle)
-      if (firstFile) await this.openFile(firstFile)
-    } catch {
-      /* unreadable folder: the tree already shows the permission or error state */
-    }
+    // still open; refreshTree surfaces exactly how far the access reaches. It opens
+    // while the tree is still being read.
+    await this.switchTo(meta.id, { seed: () => this.firstFilePath(handle) })
     this.notify('info', `Opened "${meta.name}".`)
   }
 
+  /**
+   * The file a new workspace opens with: the first file (natural order) of the shallowest
+   * directory that has one, skipping folders that are never listed. Reads only as many
+   * directories as it takes, not the whole tree.
+   */
   private async firstFilePath(
     handle: FileSystemDirectoryHandle,
   ): Promise<string | undefined> {
-    const paths: string[] = []
-    const walk = async (dir: FileSystemDirectoryHandle, prefix: string) => {
+    const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true })
+    const search = async (
+      dir: FileSystemDirectoryHandle,
+      prefix: string,
+    ): Promise<string | undefined> => {
+      const files: string[] = []
+      const dirs: FileSystemDirectoryHandle[] = []
       for await (const [name, h] of dir.entries()) {
-        const path = joinPath(prefix, name)
-        if (h.kind === 'file') {
-          paths.push(path)
-        } else {
-          await walk(h as FileSystemDirectoryHandle, path)
-        }
+        if (h.kind === 'file') files.push(name)
+        else if (!IGNORED.has(name)) dirs.push(h as FileSystemDirectoryHandle)
       }
+      if (files.length > 0) return joinPath(prefix, files.sort(byName)[0]!)
+      for (const d of dirs.sort((a, b) => byName(a.name, b.name))) {
+        const found = await search(d, joinPath(prefix, d.name))
+        if (found) return found
+      }
+      return undefined
     }
-    await walk(handle, '')
-    return paths.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))[0]
+    return search(handle, '')
   }
 
   // ---- linked folder ---------------------------------------------------
