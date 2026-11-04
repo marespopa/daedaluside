@@ -154,6 +154,8 @@ describe('command palette: diff review', () => {
     await user.click(screen.getByRole('option', { name: 'Diff: Open (split)' }))
     expect(store.get(reviewOpenAtom)).toBe(true)
     expect(store.get(reviewLayoutAtom)).toBe('split')
+    // The review view is a lazy chunk: let it mount before reopening the palette.
+    await screen.findByTestId('diff-review')
 
     input = await openCommands(user)
     await user.type(input, 'diff open (unified')

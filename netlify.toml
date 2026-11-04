@@ -5,6 +5,13 @@
 [build.environment]
   NODE_VERSION = "22"
 
+# A missing hashed chunk must be a real 404, not the SPA fallback: HTML served for a
+# script URL (and cached as immutable) would break the tab until a hard reload.
+[[redirects]]
+  from = "/assets/*"
+  to = "/assets/:splat"
+  status = 404
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
@@ -21,5 +28,22 @@
 
 [[headers]]
   for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# The service worker and its manifest must always be revalidated, or updates never land.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Cache-Control = "no-cache"
+    Content-Type = "application/manifest+json"
+
+[[headers]]
+  for = "/workbox-*.js"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
