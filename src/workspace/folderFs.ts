@@ -94,10 +94,20 @@ export class FolderFS implements WorkspaceFS {
     const out: Entry[] = []
     const stats: Promise<void>[] = []
     for await (const [name, h] of d.entries()) {
-      const entry: Entry = { name, path: joinPath(p, name), kind: h.kind === 'file' ? 'file' : 'dir' }
+      const entry: Entry = {
+        name,
+        path: joinPath(p, name),
+        kind: h.kind === 'file' ? 'file' : 'dir',
+      }
       out.push(entry)
       if (h.kind === 'file' && opts.sizes !== false) {
-        stats.push((async () => (entry.size = (await (h as FileSystemFileHandle).getFile()).size))().then(() => {}))
+        stats.push(
+          (async () => {
+            const f = await (h as FileSystemFileHandle).getFile()
+            entry.size = f.size
+            entry.mtime = f.lastModified
+          })(),
+        )
       }
     }
     await Promise.all(stats)
@@ -128,7 +138,7 @@ export class FolderFS implements WorkspaceFS {
       try {
         const h = await parent.getFileHandle(name)
         const f = await h.getFile()
-        return { name, path: p, kind: 'file', size: f.size }
+        return { name, path: p, kind: 'file', size: f.size, mtime: f.lastModified }
       } catch (e) {
         if (e instanceof DOMException) {
           if (e.name === 'TypeMismatchError') {
@@ -142,7 +152,13 @@ export class FolderFS implements WorkspaceFS {
               if (e2 instanceof DOMException && e2.name === 'TypeMismatchError') {
                 const h = await parent.getFileHandle(name)
                 const f = await h.getFile()
-                return { name, path: p, kind: 'file', size: f.size }
+                return {
+                  name,
+                  path: p,
+                  kind: 'file',
+                  size: f.size,
+                  mtime: f.lastModified,
+                }
               }
               if (e2 instanceof DOMException && e2.name === 'NotFoundError') {
                 return null

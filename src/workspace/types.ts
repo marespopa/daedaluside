@@ -36,6 +36,8 @@ export interface Entry {
   kind: 'file' | 'dir'
   /** Bytes; files only. */
   size?: number
+  /** Last modified, ms since the epoch; files only, when the backend reports it. */
+  mtime?: number
 }
 
 /**

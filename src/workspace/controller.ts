@@ -124,7 +124,8 @@ function typingElsewhere(): boolean {
 export const AUTOSAVE_MS = 800
 const SESSION_SAVE_MS = 500
 const isPermissionDomError = (e: unknown) =>
-  e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError')
+  e instanceof DOMException &&
+  (e.name === 'NotAllowedError' || e.name === 'SecurityError')
 const MAX_OPEN_BYTES = 5 * 1024 * 1024
 
 interface Buffer {
@@ -167,6 +168,11 @@ export class WorkspaceController {
   private epoch = 0
   /** The folder or file handle of the current workspace, if it has one. */
   private linkHandle: LinkedFolder | LinkedFile | null = null
+  /** The linked directory handle, for workers that read files themselves; null for files or none. */
+  private folderRoot(): FileSystemDirectoryHandle | undefined {
+    const h = this.linkHandle
+    return h && h.kind !== 'file' ? (h as FileSystemDirectoryHandle) : undefined
+  }
   /** The browser does not grant readwrite access to `linkHandle` right now. */
   private linkPaused = false
   /** Last observed permission for `linkHandle`; null until first checked. */
@@ -314,7 +320,12 @@ export class WorkspaceController {
   /** Drops loaded markers of folders a rename or delete removed from the tree. */
   private pruneLoaded() {
     if (this.loaded.size <= 1) return
-    const dirs = new Set(this.store.get(treeAtom).filter((e) => e.kind === 'dir').map((e) => e.path))
+    const dirs = new Set(
+      this.store
+        .get(treeAtom)
+        .filter((e) => e.kind === 'dir')
+        .map((e) => e.path),
+    )
     const next = new Set([...this.loaded].filter((d) => d === '' || dirs.has(d)))
     if (next.size !== this.loaded.size) this.setLoaded(next)
   }
@@ -338,7 +349,8 @@ export class WorkspaceController {
     this.lastTreeRefresh = Date.now()
     const gen = ++this.treeGen
     const mutated = this.treeMutations
-    const silent = opts.silent === true && this.store.get(treeStatusAtom).state === 'ready'
+    const silent =
+      opts.silent === true && this.store.get(treeStatusAtom).state === 'ready'
     const fs = this.fs
     if (!fs) {
       this.resetTreeState()
@@ -358,7 +370,10 @@ export class WorkspaceController {
       let loaded: Set<string>
       if (wasComplete) {
         entries = await walkTree(fs)
-        loaded = new Set(['', ...entries.filter((e) => e.kind === 'dir').map((e) => e.path)])
+        loaded = new Set([
+          '',
+          ...entries.filter((e) => e.kind === 'dir').map((e) => e.path),
+        ])
       } else {
         const dirs = ['', ...this.loaded].filter((d, i, all) => all.indexOf(d) === i)
         const listed = await Promise.all(
@@ -430,7 +445,8 @@ export class WorkspaceController {
     const fs = this.fs
     // Nothing to read once the whole tree is known, or while access is lost.
     if (!fs || this.complete || this.loaded.has(dir)) return Promise.resolve()
-    if (this.linkPaused || this.store.get(treeStatusAtom).state !== 'ready') return Promise.resolve()
+    if (this.linkPaused || this.store.get(treeStatusAtom).state !== 'ready')
+      return Promise.resolve()
     const pending = this.dirLoads.get(dir)
     if (pending) return pending
     const gen = this.treeGen
@@ -444,7 +460,8 @@ export class WorkspaceController {
         // The folder itself may not be shown yet (a deeper folder was asked for first):
         // leave it unloaded; it is read again once its parent is there.
         const known =
-          dir === '' || this.store.get(treeAtom).some((e) => e.kind === 'dir' && e.path === dir)
+          dir === '' ||
+          this.store.get(treeAtom).some((e) => e.kind === 'dir' && e.path === dir)
         if (!known) return
         // A create, rename or delete since the read began may not be in it: read again.
         if (this.treeMutations !== mutated) {
@@ -459,7 +476,8 @@ export class WorkspaceController {
         else if (
           this.fs === fs &&
           this.treeGen === gen &&
-          (dir === '' || this.store.get(treeAtom).some((e) => e.kind === 'dir' && e.path === dir))
+          (dir === '' ||
+            this.store.get(treeAtom).some((e) => e.kind === 'dir' && e.path === dir))
         ) {
           // The folder was removed or cannot be listed: settle it as empty rather than
           // leave a spinner; the next refresh drops it from the tree.
@@ -484,7 +502,9 @@ export class WorkspaceController {
     if (this.fullWalk) return this.fullWalk
     const self: { p?: Promise<void> } = {}
     self.p = (async () => {
-      const total = this.wsId ? (this.knownCounts.get(this.wsId) ?? loadKnownCount(this.wsId)) : null
+      const total = this.wsId
+        ? (this.knownCounts.get(this.wsId) ?? loadKnownCount(this.wsId))
+        : null
       try {
         let entries: Entry[]
         // An edit during the read could be missing from it: read again (a few times at most).
@@ -502,7 +522,9 @@ export class WorkspaceController {
         }
         this.store.set(treeProgressAtom, null)
         this.store.set(treeAtom, entries)
-        this.setLoaded(new Set(['', ...entries.filter((e) => e.kind === 'dir').map((e) => e.path)]))
+        this.setLoaded(
+          new Set(['', ...entries.filter((e) => e.kind === 'dir').map((e) => e.path)]),
+        )
         this.setComplete(true)
         if (this.store.get(treeStatusAtom).state === 'loading') {
           this.store.set(treeStatusAtom, { state: 'ready' })
@@ -633,7 +655,8 @@ export class WorkspaceController {
   async reviewAction(path: string, action: ReviewAction, hunk: Hunk | null) {
     const svc = this.gitSvc
     const b = this.buffers.get(path)
-    if (!svc || !b || b.image) return this.notify('error', 'This file is not in a git repository.')
+    if (!svc || !b || b.image)
+      return this.notify('error', 'This file is not in a git repository.')
     try {
       const head = await svc.getHeadBlob(path)
       const live = this.liveDoc(b, path).toString()
@@ -642,7 +665,8 @@ export class WorkspaceController {
         return this.notify('info', 'The diff changed; try again.')
       }
       if (action === 'obtain' || action === 'revert') {
-        if (!hunk) return this.notify('info', 'Move the cursor onto a changed hunk first.')
+        if (!hunk)
+          return this.notify('info', 'Move the cursor onto a changed hunk first.')
         return await this.revertHunk(path, head ?? '', live, hunk)
       }
       if (!(await this.ensureGitWritable())) return
@@ -701,7 +725,10 @@ export class WorkspaceController {
   /** Last finished review per workspace/mode/base: shown at once, then revalidated. */
   private branchCache = new Map<
     string,
-    Pick<BranchReviewState, 'base' | 'branch' | 'mergeBase' | 'head' | 'files' | 'stats' | 'statsDone'>
+    Pick<
+      BranchReviewState,
+      'base' | 'branch' | 'mergeBase' | 'head' | 'files' | 'stats' | 'statsDone'
+    >
   >()
 
   /** Reads the default-base review in a worker so opening it finds the result waiting. */
@@ -727,7 +754,13 @@ export class WorkspaceController {
         // The review was opened while the worker was still reading: fill it in now.
         const cur = this.store.get(branchReviewAtom)
         if (r.blobs) this.gitSvc?.primeBlobs(r.blobs)
-        if (cur && cur.status === 'loading' && cur.mode === 'base' && cur.base === '…' && cur.files.length === 0) {
+        if (
+          cur &&
+          cur.status === 'loading' &&
+          cur.mode === 'base' &&
+          cur.base === '…' &&
+          cur.files.length === 0
+        ) {
           this.branchPatch({ ...entry, status: 'ready' })
         }
       },
@@ -795,7 +828,9 @@ export class WorkspaceController {
     if (mode === 'base') {
       const named = baseArg?.trim() || (await svc.defaultBase())
       if (!named) {
-        return fail('No main, master or trunk branch found; name a base, for example :BranchReview origin/dev')
+        return fail(
+          'No main, master or trunk branch found; name a base, for example :BranchReview origin/dev',
+        )
       }
       base = named
       baseOid = await svc.resolveBase(base)
@@ -811,7 +846,14 @@ export class WorkspaceController {
       if (signal.cancelled || this.gitSvc !== svc) return
       const cur = this.store.get(branchReviewAtom)
       if (!cur || cur.status === 'ready') return
-      this.branchPatch({ status: 'ready', mergeBase, head, files, index: 0, partial: true })
+      this.branchPatch({
+        status: 'ready',
+        mergeBase,
+        head,
+        files,
+        index: 0,
+        partial: true,
+      })
     })
     if (signal.cancelled) return
     if (this.gitSvc !== svc) return fail('Workspace changed while reading the branch.')
@@ -821,7 +863,9 @@ export class WorkspaceController {
     // Keep the cursor on the same file, and keep totals of files that did not change.
     const prev = this.store.get(branchReviewAtom)
     const prevPath = prev?.files[prev.index]?.path
-    const sameOids = new Map((prev?.files ?? []).map((f) => [f.path, `${f.mbOid}|${f.headOid}`]))
+    const sameOids = new Map(
+      (prev?.files ?? []).map((f) => [f.path, `${f.mbOid}|${f.headOid}`]),
+    )
     const keptStats: Record<string, { add: number; del: number }> = {}
     for (const f of res.files) {
       const st = prev?.stats[f.path]
@@ -884,7 +928,8 @@ export class WorkspaceController {
     this.reviewWorker = worker
     return new Promise<boolean>((resolve) => {
       let finished = false
-      const stale = () => signal.cancelled || this.gitSvc !== svc || this.reviewWorker !== worker
+      const stale = () =>
+        signal.cancelled || this.gitSvc !== svc || this.reviewWorker !== worker
       const started = worker.start(
         handle,
         (r, done) => {
@@ -895,11 +940,14 @@ export class WorkspaceController {
           // Keep the cursor on the same file, and totals of files that did not change.
           const prev = this.store.get(branchReviewAtom)
           const prevPath = prev?.files[prev.index]?.path
-          const sameOids = new Map((prev?.files ?? []).map((f) => [f.path, `${f.mbOid}|${f.headOid}`]))
+          const sameOids = new Map(
+            (prev?.files ?? []).map((f) => [f.path, `${f.mbOid}|${f.headOid}`]),
+          )
           const stats: Record<string, { add: number; del: number }> = {}
           for (const f of r.files) {
             const old = prev?.stats[f.path]
-            if (old && sameOids.get(f.path) === `${f.mbOid}|${f.headOid}`) stats[f.path] = old
+            if (old && sameOids.get(f.path) === `${f.mbOid}|${f.headOid}`)
+              stats[f.path] = old
           }
           Object.assign(stats, r.stats)
           const at = prevPath ? r.files.findIndex((f) => f.path === prevPath) : -1
@@ -934,7 +982,8 @@ export class WorkspaceController {
         },
         () => {
           // Disposed: a newer review or a close needs nothing more; a workspace change does.
-          if (!signal.cancelled && this.gitSvc !== svc) fail('Workspace changed while reading the branch.')
+          if (!signal.cancelled && this.gitSvc !== svc)
+            fail('Workspace changed while reading the branch.')
           finished = true
           resolve(true)
         },
@@ -953,7 +1002,10 @@ export class WorkspaceController {
     const stats = { ...known }
     const todo = files.filter((f) => !stats[f.path])
     if (todo.length === 0) return
-    const first = this.store.get(branchReviewAtom)?.files[this.store.get(branchReviewAtom)?.index ?? 0]
+    const first =
+      this.store.get(branchReviewAtom)?.files[
+        this.store.get(branchReviewAtom)?.index ?? 0
+      ]
     todo.sort((x, y) => Number(y.path === first?.path) - Number(x.path === first?.path))
     let n = 0
     await mapLimit(todo, 4, async (f) => {
@@ -974,8 +1026,12 @@ export class WorkspaceController {
     stats: Record<string, { add: number; del: number }>,
   ) {
     const [a, b] = await Promise.all([
-      f.mbOid ? svc.readBlobAt(f.mbOid) : Promise.resolve({ kind: 'text', text: '' } as const),
-      f.headOid ? svc.readBlobAt(f.headOid) : Promise.resolve({ kind: 'text', text: '' } as const),
+      f.mbOid
+        ? svc.readBlobAt(f.mbOid)
+        : Promise.resolve({ kind: 'text', text: '' } as const),
+      f.headOid
+        ? svc.readBlobAt(f.headOid)
+        : Promise.resolve({ kind: 'text', text: '' } as const),
     ])
     if (a.kind === 'text' && b.kind === 'text') {
       const { stats: st } = diffTexts(a.text, b.text)
@@ -1000,8 +1056,12 @@ export class WorkspaceController {
     const svc = this.gitSvc
     if (!svc) return { placeholder: 'No repository' }
     const [a, b] = await Promise.all([
-      file.mbOid ? svc.readBlobAt(file.mbOid) : Promise.resolve({ kind: 'text', text: '' } as const),
-      file.headOid ? svc.readBlobAt(file.headOid) : Promise.resolve({ kind: 'text', text: '' } as const),
+      file.mbOid
+        ? svc.readBlobAt(file.mbOid)
+        : Promise.resolve({ kind: 'text', text: '' } as const),
+      file.headOid
+        ? svc.readBlobAt(file.headOid)
+        : Promise.resolve({ kind: 'text', text: '' } as const),
     ])
     for (const side of [a, b]) {
       if (side.kind !== 'text') {
@@ -1018,7 +1078,10 @@ export class WorkspaceController {
     const svc = this.gitSvc
     if (!svc) return ''
     const parts: string[] = []
-    for (const [label, oid] of [['base', file.mbOid], ['head', file.headOid]] as const) {
+    for (const [label, oid] of [
+      ['base', file.mbOid],
+      ['head', file.headOid],
+    ] as const) {
       if (!oid) {
         parts.push(`${label}: none`)
         continue
@@ -1069,13 +1132,15 @@ export class WorkspaceController {
   /** :BRMarkReviewed: always marks, then advances. */
   markBranchReviewed() {
     const s = this.store.get(branchReviewAtom)
-    if (!s || s.files.length === 0) return this.notify('info', 'No branch review is open.')
+    if (!s || s.files.length === 0)
+      return this.notify('info', 'No branch review is open.')
     this.markBranchFile(s.index, true)
     if (s.files.length > 1) this.branchStep(1)
   }
 
   resetBranchReviewed() {
-    if (!this.store.get(branchReviewAtom)) return this.notify('info', 'No branch review is open.')
+    if (!this.store.get(branchReviewAtom))
+      return this.notify('info', 'No branch review is open.')
     this.setBranchMarks({})
     this.store.set(branchApprovedAtom, new Set())
   }
@@ -1102,7 +1167,8 @@ export class WorkspaceController {
         return void this.refreshGitStatus()
       }
       const mb = await svc.readBlobAt(file.mbOid!)
-      if (mb.kind !== 'text') return this.notify('error', 'Cannot revert a binary or large file here.')
+      if (mb.kind !== 'text')
+        return this.notify('error', 'Cannot revert a binary or large file here.')
       if (file.status === 'D') await this.createFile(file.path)
       else await this.openFile(file.path)
       const view = this.handle?.view
@@ -1131,8 +1197,13 @@ export class WorkspaceController {
       const live = view.state.doc.toString()
       const match = computeHunks(mb.text, live).find((h) => sameHunk(h, hunk))
       if (!match) return this.notify('info', 'The diff changed; try again.')
-      view.dispatch({ changes: minimalChange(live, revertHunkText(mb.text, live, match)) })
-      this.notify('info', 'Reverted the hunk to the base branch. Undo with Ctrl-Z in the editor.')
+      view.dispatch({
+        changes: minimalChange(live, revertHunkText(mb.text, live, match)),
+      })
+      this.notify(
+        'info',
+        'Reverted the hunk to the base branch. Undo with Ctrl-Z in the editor.',
+      )
     } catch (e) {
       this.fail(e)
     }
@@ -1185,7 +1256,10 @@ export class WorkspaceController {
   private requestGitWrite() {
     this.linkGranted = false
     this.setLinkPaused(true)
-    this.notify('error', 'Staging changes .git, which needs write access to the folder. Reconnect it to continue.')
+    this.notify(
+      'error',
+      'Staging changes .git, which needs write access to the folder. Reconnect it to continue.',
+    )
   }
 
   private applyDiff(path: string, hunks: readonly Hunk[]) {
@@ -1236,7 +1310,10 @@ export class WorkspaceController {
       if (cancelled) return
       const svc = this.grepSvc
       if (!svc) return onDone(false)
-      const priority = [...(this.active ? [this.active] : []), ...this.tabs.map((t) => t.path)]
+      const priority = [
+        ...(this.active ? [this.active] : []),
+        ...this.tabs.map((t) => t.path),
+      ]
       stop = svc.search(query, priority, onBatch, onDone)
     })
     return () => {
@@ -1415,7 +1492,8 @@ export class WorkspaceController {
     const bytes = await fs.readBytes(path)
     const kind = imageKind(path)
     if (kind) {
-      if (!sniffImage(kind, bytes)) throw new Error(`${path} is not a valid ${kind} image`)
+      if (!sniffImage(kind, bytes))
+        throw new Error(`${path} is not a valid ${kind} image`)
       if (epoch !== this.epoch) return null
       if (!this.buffers.has(path)) {
         const state = this.handle
@@ -2092,7 +2170,8 @@ export class WorkspaceController {
   private async firstFilePath(
     handle: FileSystemDirectoryHandle,
   ): Promise<string | undefined> {
-    const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true })
+    const byName = (a: string, b: string) =>
+      a.localeCompare(b, undefined, { numeric: true })
     const search = async (
       dir: FileSystemDirectoryHandle,
       prefix: string,

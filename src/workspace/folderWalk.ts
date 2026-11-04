@@ -9,7 +9,8 @@ const WALK_CONCURRENCY = 32
 
 function isPermissionError(e: unknown): boolean {
   return (
-    e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError')
+    e instanceof DOMException &&
+    (e.name === 'NotAllowedError' || e.name === 'SecurityError')
   )
 }
 
@@ -55,7 +56,8 @@ export async function walkFolder(
       await run(async () => {
         for await (const [name, h] of dir.entries()) {
           if (h.kind === 'file') files.push({ name, handle: h as FileSystemFileHandle })
-          else if (!IGNORED.has(name)) dirs.push({ name, handle: h as FileSystemDirectoryHandle })
+          else if (!IGNORED.has(name))
+            dirs.push({ name, handle: h as FileSystemDirectoryHandle })
         }
       })
     } catch (e) {
@@ -66,18 +68,24 @@ export async function walkFolder(
       files.map(({ name, handle }) =>
         run(async (): Promise<Entry> => {
           let size = 0
+          let mtime: number | undefined
           try {
-            size = (await handle.getFile()).size
+            const f = await handle.getFile()
+            size = f.size
+            mtime = f.lastModified
           } catch (e) {
             // A lost grant must surface as a permission problem; anything else
             // (a file that vanished mid-scan) still lists the file.
             if (isPermissionError(e)) throw e
           }
-          return { name, path: joinPath(path, name), kind: 'file', size }
+          const entry: Entry = { name, path: joinPath(path, name), kind: 'file', size }
+          if (typeof mtime === 'number') entry.mtime = mtime
+          return entry
         }),
       ),
     )
-    for (const { name } of dirs) chunk.push({ name, path: joinPath(path, name), kind: 'dir' })
+    for (const { name } of dirs)
+      chunk.push({ name, path: joinPath(path, name), kind: 'dir' })
     if (failed) return
     out.push(...chunk)
     if (chunk.length > 0) onChunk?.(chunk)
