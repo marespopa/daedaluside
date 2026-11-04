@@ -10,7 +10,8 @@ g.Buffer ??= Buffer
 const DIR = '/'
 /** Conventional names of a repository's main line, tried after the remote's own default. */
 export const DEFAULT_BASES = ['main', 'master', 'trunk', 'develop', 'dev']
-const MAX_TEXT_BYTES = 1024 * 1024
+/** Text above this is not decoded for review (manifests and lockfiles stay well below it). */
+export const MAX_TEXT_BYTES = 16 * 1024 * 1024
 
 export interface BranchFile {
   path: string

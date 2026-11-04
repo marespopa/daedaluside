@@ -1,6 +1,7 @@
 import {
   EditorState,
   Facet,
+  RangeSet,
   RangeSetBuilder,
   StateEffect,
   StateField,
@@ -8,6 +9,9 @@ import {
 } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
 import type { Hunk } from './diff'
+
+/** Deleted rows drawn at once; a longer run shows the rest on request. */
+const MAX_DELETED_ROWS = 200
 
 /** A run of lines deleted from HEAD, shown read-only above the line that replaced them. */
 class DeletedLines extends WidgetType {
@@ -23,17 +27,35 @@ class DeletedLines extends WidgetType {
       other.lines.every((l, i) => l === this.lines[i])
     )
   }
-  override toDOM() {
+  override toDOM(view: EditorView) {
     const el = document.createElement('div')
     el.className = 'cm-diff-deleted'
     el.dataset.diff = 'remove'
     el.setAttribute('aria-label', 'Deleted lines')
-    for (const line of this.lines) {
-      const row = document.createElement('div')
-      row.className = 'cm-diff-deleted-line'
-      row.textContent = line === '' ? ' ' : line
-      el.appendChild(row)
+    const addRows = (from: number, to: number) => {
+      for (let i = from; i < to; i++) {
+        const row = document.createElement('div')
+        row.className = 'cm-diff-deleted-line'
+        row.textContent = this.lines[i] === '' ? ' ' : this.lines[i]!
+        // The button is only attached when some rows are hidden.
+        if (more.parentNode === el) el.insertBefore(row, more)
+        else el.appendChild(row)
+      }
     }
+    const more = document.createElement('button')
+    more.type = 'button'
+    more.className = 'cm-diff-more'
+    const hidden = this.lines.length - MAX_DELETED_ROWS
+    if (hidden > 0) {
+      more.textContent = `Show ${hidden} more deleted lines`
+      more.onclick = () => {
+        addRows(MAX_DELETED_ROWS, this.lines.length)
+        more.remove()
+        view.requestMeasure()
+      }
+      el.appendChild(more)
+    }
+    addRows(0, Math.min(this.lines.length, MAX_DELETED_ROWS))
     return el
   }
   override ignoreEvent() {
@@ -77,6 +99,89 @@ export const setReviewHunks = StateEffect.define<{
   hunks: readonly Hunk[]
   base: readonly string[]
 }>()
+
+/** More hunks of the same diff, found after `setReviewHunks` (a streamed diff). */
+export const addReviewHunks = StateEffect.define<{
+  hunks: readonly Hunk[]
+  base: readonly string[]
+}>()
+
+/** Unchanged stretches longer than this (in lines) are folded once the diff is complete. */
+const FOLD_MIN_LINES = 20
+/** Unchanged lines kept visible on each side of a hunk. */
+const FOLD_CONTEXT = 3
+/** Only documents with more lines than this are folded. */
+export const FOLD_MIN_DOC = 2000
+
+/** The unchanged lines between hunks, collapsed to one clickable row. */
+class UnchangedLines extends WidgetType {
+  readonly count: number
+  constructor(count: number) {
+    super()
+    this.count = count
+  }
+  override eq(other: WidgetType) {
+    return other instanceof UnchangedLines && other.count === this.count
+  }
+  override toDOM(view: EditorView) {
+    const el = document.createElement('button')
+    el.type = 'button'
+    el.className = 'cm-diff-fold'
+    el.textContent = `${this.count} unchanged lines — click to show`
+    el.onclick = () => view.dispatch({ effects: expandFold.of(view.posAtDOM(el)) })
+    return el
+  }
+  override ignoreEvent() {
+    return false
+  }
+}
+
+/** Collapses the unchanged stretches between (and around) these hunks. */
+export const foldUnchanged = StateEffect.define<readonly Hunk[]>()
+const expandFold = StateEffect.define<number>()
+
+function foldRanges(doc: EditorState['doc'], hunks: readonly Hunk[]) {
+  const out: Range<Decoration>[] = []
+  const fold = (first: number, last: number) => {
+    // 0-based, [first, last) lines
+    if (last - first < FOLD_MIN_LINES) return
+    const from = doc.line(first + 1).from
+    const to = doc.line(last).to
+    out.push(
+      Decoration.replace({ widget: new UnchangedLines(last - first), block: true }).range(from, to),
+    )
+  }
+  let prevEnd = 0
+  hunks.forEach((h, i) => {
+    fold(i === 0 ? 0 : prevEnd + FOLD_CONTEXT, Math.max(h.newRange.start - FOLD_CONTEXT, 0))
+    prevEnd = h.newRange.start + h.newRange.count
+  })
+  fold(hunks.length === 0 ? 0 : prevEnd + FOLD_CONTEXT, doc.lines)
+  return out
+}
+
+export const foldField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (e.is(setReviewHunks)) return Decoration.none
+      if (e.is(foldUnchanged)) {
+        if (tr.state.doc.lines <= FOLD_MIN_DOC || tr.state.facet(paneMode) !== 'unified') {
+          return Decoration.none
+        }
+        return Decoration.set(foldRanges(tr.state.doc, e.value), true)
+      }
+      if (e.is(expandFold)) {
+        return value.update({ filter: (from) => from !== e.value })
+      }
+    }
+    return tr.docChanged ? value.map(tr.changes) : value
+  },
+  provide: (f) => [
+    EditorView.decorations.from(f),
+    EditorView.atomicRanges.of((view) => view.state.field(f)),
+  ],
+})
 
 /** One half of the split view: tinted hunk lines, and spacers where the other half has more lines. */
 function decorateSplit(doc: EditorState['doc'], hunks: readonly Hunk[], side: 'left' | 'right') {
@@ -158,6 +263,15 @@ export const reviewField = StateField.define<{
   create: () => ({ hunks: [], decorations: Decoration.none }),
   update(value, tr) {
     for (const e of tr.effects) {
+      if (e.is(addReviewHunks)) {
+        return {
+          hunks: [...value.hunks, ...e.value.hunks],
+          decorations: RangeSet.join([
+            value.decorations,
+            decorate(tr.state.doc, e.value.hunks, e.value.base, tr.state.facet(paneMode)),
+          ]),
+        }
+      }
       if (e.is(setReviewHunks)) {
         return {
           hunks: e.value.hunks,
@@ -195,6 +309,20 @@ export const reviewTheme = EditorView.theme({
     whiteSpace: 'pre-wrap',
     textDecoration: 'line-through',
     textDecorationColor: 'color-mix(in srgb, var(--diff-remove-fg) 50%, transparent)',
+  },
+  '.cm-diff-more, .cm-diff-fold': {
+    display: 'block',
+    width: '100%',
+    padding: '0.25rem var(--editor-gutter, 1rem)',
+    textAlign: 'left',
+    color: 'var(--muted)',
+    fontSize: '0.85em',
+    cursor: 'pointer',
+  },
+  '.cm-diff-fold': {
+    backgroundColor: 'color-mix(in srgb, var(--muted) 8%, var(--canvas))',
+    borderTop: '1px solid var(--line)',
+    borderBottom: '1px solid var(--line)',
   },
   '.cm-gutters': { borderRight: '1px solid var(--line)', backgroundColor: 'transparent' },
   '.cm-activeLine': { backgroundColor: 'transparent' },

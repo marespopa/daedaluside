@@ -1,4 +1,4 @@
-import { diffTexts, type DiffResult } from './diff'
+import { diffTexts, hunkStats, streamHunks, type DiffResult, type DiffStats, type Hunk } from './diff'
 import type { FromWorker, ToWorker } from './diff.worker'
 
 /** Where diffs are computed: a Web Worker in the browser, in-process elsewhere. */
@@ -9,6 +9,16 @@ export interface DiffBackend {
     current: string,
     onDone: (r: DiffResult | null) => void,
   ): void
+  /** Streams hunks as they are found; `onDone` gets the totals, or null on failure. */
+  stream(
+    id: number,
+    base: string,
+    current: string,
+    onPartial: (hunks: Hunk[]) => void,
+    onDone: (stats: DiffStats | null) => void,
+  ): void
+  /** Stops a stream; its callbacks no longer run. */
+  cancel(id: number): void
   dispose(): void
 }
 
@@ -25,16 +35,48 @@ export function createBackend(): DiffBackend {
 
 class WorkerBackend implements DiffBackend {
   private listeners = new Map<number, (r: DiffResult | null) => void>()
+  private streams = new Map<
+    number,
+    { partial: (h: Hunk[]) => void; done: (s: DiffStats | null) => void }
+  >()
   private readonly worker: Worker
   constructor(worker: Worker) {
     this.worker = worker
     worker.onmessage = (e: MessageEvent<FromWorker>) => {
       const m = e.data
+      if (m.t === 'partial' || m.t === 'done') {
+        const s = this.streams.get(m.id)
+        if (!s) return
+        if (m.t === 'partial') return s.partial(m.hunks)
+        this.streams.delete(m.id)
+        return s.done(m.stats)
+      }
+      const st = this.streams.get(m.id)
+      if (st && m.t === 'error') {
+        this.streams.delete(m.id)
+        return st.done(null)
+      }
       const l = this.listeners.get(m.id)
       if (!l) return
       this.listeners.delete(m.id)
       l(m.t === 'result' ? { hunks: m.hunks, stats: m.stats } : null)
     }
+  }
+  stream(
+    id: number,
+    base: string,
+    current: string,
+    onPartial: (hunks: Hunk[]) => void,
+    onDone: (stats: DiffStats | null) => void,
+  ) {
+    this.streams.set(id, { partial: onPartial, done: onDone })
+    const m: ToWorker = { t: 'stream', id, base, current }
+    this.worker.postMessage(m)
+  }
+  cancel(id: number) {
+    if (!this.streams.delete(id)) return
+    const m: ToWorker = { t: 'cancel', id }
+    this.worker.postMessage(m)
   }
   compute(
     id: number,
@@ -48,12 +90,42 @@ class WorkerBackend implements DiffBackend {
   }
   dispose() {
     this.listeners.clear()
+    this.streams.clear()
     this.worker.terminate()
   }
 }
 
 class LocalBackend implements DiffBackend {
   private disposed = false
+  private readonly stopped = new Set<number>()
+  stream(
+    id: number,
+    base: string,
+    current: string,
+    onPartial: (hunks: Hunk[]) => void,
+    onDone: (stats: DiffStats | null) => void,
+  ) {
+    const all: Hunk[] = []
+    const off = () => this.disposed || this.stopped.has(id)
+    streamHunks(
+      base,
+      current,
+      (h) => {
+        all.push(...h)
+        if (!off()) onPartial(h)
+      },
+      off,
+    )
+      .then((finished) => {
+        if (finished && !off()) onDone(hunkStats(all))
+      })
+      .catch(() => {
+        if (!off()) onDone(null)
+      })
+  }
+  cancel(id: number) {
+    this.stopped.add(id)
+  }
   compute(
     _id: number,
     base: string,
@@ -124,5 +196,33 @@ export class DiffService {
     this.disposed = true
     this.cancel()
     this.backend.dispose()
+  }
+}
+
+let shared: DiffBackend | null = null
+let nextStreamId = 1
+/**
+ * Diffs two texts off the main thread, delivering hunks as they are found. Returns a
+ * function that stops it. One worker serves every caller.
+ */
+export function streamDiff(
+  base: string,
+  current: string,
+  onPartial: (hunks: Hunk[]) => void,
+  onDone: (stats: DiffStats | null) => void,
+): () => void {
+  const backend = (shared ??= createBackend())
+  const id = nextStreamId++
+  let live = true
+  backend.stream(
+    id,
+    base,
+    current,
+    (h) => live && onPartial(h),
+    (s) => live && onDone(s),
+  )
+  return () => {
+    live = false
+    backend.cancel(id)
   }
 }

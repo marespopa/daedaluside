@@ -1,6 +1,6 @@
 import git from 'isomorphic-git'
 import { createGitFs } from './gitFs'
-import { GitService } from './gitService'
+import { GitService, MAX_TEXT_BYTES } from './gitService'
 import { MemDisk } from './testing/memoryDisk'
 
 const enc = (s: string) => new TextEncoder().encode(s)
@@ -230,12 +230,17 @@ describe('GitService branch review', () => {
 
   it('classes blobs as text, binary or large', async () => {
     const { svc, commit } = await branched()
-    await commit('big', { 'big.txt': 'x'.repeat(1024 * 1024 + 1) })
+    await commit('big', {
+      'big.txt': 'x'.repeat(MAX_TEXT_BYTES + 1),
+      'lock.json': 'y\n'.repeat(1024 * 1024),
+    })
     const res = await svc.branchChanges((await svc.resolveBase('base'))!)
     if (res.kind !== 'ok') throw new Error('expected ok')
     const byPath = Object.fromEntries(res.files.map((f) => [f.path, f]))
     expect(await svc.readBlobAt(byPath['a.txt']!.headOid!)).toEqual({ kind: 'text', text: 'one\nTWO\nthree\n' })
     expect((await svc.readBlobAt(byPath['img.bin']!.headOid!)).kind).toBe('binary')
     expect((await svc.readBlobAt(byPath['big.txt']!.headOid!)).kind).toBe('large')
+    // A multi-megabyte text file is still reviewable.
+    expect((await svc.readBlobAt(byPath['lock.json']!.headOid!)).kind).toBe('text')
   })
 })

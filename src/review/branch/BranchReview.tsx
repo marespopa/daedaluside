@@ -17,11 +17,24 @@ import {
 import type { BranchFile } from '../../workspace/gitService'
 import { useController } from '../../workspace/useWorkspace'
 import { computeHunks, splitLines, type Hunk } from '../diff'
-import { hunkAt, paneMode, reviewField, reviewTheme, setReviewHunks } from '../diffView'
+import {
+  addReviewHunks,
+  foldField,
+  foldUnchanged,
+  hunkAt,
+  paneMode,
+  reviewField,
+  reviewTheme,
+  setReviewHunks,
+} from '../diffView'
+import { streamDiff } from '../diffService'
 import { getReviewPane, hunkAnchors, setReviewPane, stepHunk } from '../reviewPane'
 import { isReviewed } from './marks'
 
 /** The patch of the branch against its merge base, one file at a time. */
+/** Texts longer than this (both sides together) are diffed in the worker, hunk by hunk. */
+const STREAM_DIFF_CHARS = 200_000
+
 export default function BranchReview() {
   const open = useAtomValue(branchReviewAtom) !== null
   return open ? <Surface /> : null
@@ -82,6 +95,7 @@ function Surface() {
   const pendingS = useRef(0)
   const pendingHunk = useRef<Hunk | null>(null)
   const pendingBracket = useRef<{ dir: 1 | -1; at: number } | null>(null)
+  const [diffing, setDiffing] = useState(false)
   const [placeholder, setPlaceholder] = useState<{ text: string; meta: string | null } | null>(null)
 
   const file: BranchFile | undefined = s.files[s.index]
@@ -231,6 +245,7 @@ function Surface() {
         doc: '',
         extensions: [
           reviewField,
+          foldField,
           paneMode.of('unified'),
           reviewTheme,
           lineNumbers(),
@@ -302,6 +317,8 @@ function Surface() {
     const view = viewRef.current
     if (!view || !file) return
     let stale = false
+    let stop: (() => void) | null = null
+    setDiffing(false)
     void controller.branchFileContent(file).then(async (c) => {
       if (stale || viewRef.current !== view) return
       const replace = (doc: string, hunks: Hunk[], base: string[]) =>
@@ -316,7 +333,29 @@ function Surface() {
         return
       }
       setPlaceholder(null)
-      replace(c.current, computeHunks(c.base, c.current), splitLines(c.base))
+      const base = splitLines(c.base)
+      if (c.base.length + c.current.length <= STREAM_DIFF_CHARS) {
+        const hunks = computeHunks(c.base, c.current)
+        replace(c.current, hunks, base)
+        view.dispatch({ effects: foldUnchanged.of(hunks) })
+        return
+      }
+      // A big file: show it at once and let the hunks arrive from the worker.
+      replace(c.current, [], base)
+      setDiffing(true)
+      stop = streamDiff(
+        c.base,
+        c.current,
+        (hunks) => {
+          if (stale || viewRef.current !== view) return
+          view.dispatch({ effects: addReviewHunks.of({ hunks, base }) })
+        },
+        () => {
+          if (stale || viewRef.current !== view) return
+          setDiffing(false)
+          view.dispatch({ effects: foldUnchanged.of(view.state.field(reviewField).hunks) })
+        },
+      )
     }).catch(() => {
       if (!stale) setPlaceholder({ text: '[Could not read this file]', meta: null })
     })
@@ -327,6 +366,8 @@ function Surface() {
     })
     return () => {
       stale = true
+      stop?.()
+      setDiffing(false)
     }
     // The oids name the content; `file` itself changes identity with every stats update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -472,6 +513,11 @@ function Surface() {
                 </button>
                 {placeholder.meta && <p className="mt-2 font-mono text-xs">{placeholder.meta}</p>}
               </div>
+            )}
+            {diffing && (
+              <p role="status" className="px-3 py-1 font-sans text-xs text-muted">
+                Computing diff…
+              </p>
             )}
             <div
               className={`min-h-0 flex-1 overflow-hidden ${placeholder ? 'hidden' : ''}`}
