@@ -1211,7 +1211,12 @@ export class WorkspaceController {
       this.store.set(grepStatusAtom, null)
     }
     if (!fs) return
-    this.grepSvc ??= new GrepService(fs, (s) => this.store.set(grepStatusAtom, s))
+    this.grepSvc ??= new GrepService(
+      fs,
+      (s) => this.store.set(grepStatusAtom, s),
+      undefined,
+      this.folderRoot(),
+    )
     this.grepSvc.sync(entries)
   }
 
