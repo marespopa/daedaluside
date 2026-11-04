@@ -20,6 +20,8 @@ import {
   settingsOpenAtom,
   sidebarOpenAtom,
   treeAtom,
+  treeCompleteAtom,
+  treeProgressAtom,
   workspacesAtom,
 } from '../state/workspaceAtoms'
 import { GlassPopover, Input } from '../ui'
@@ -136,7 +138,11 @@ export default function CommandPalette() {
     }))
     return [
       { id: 'save', label: 'File: Save', run: () => void controller.saveActive() },
-      { id: 'copy-text', label: 'File: Copy Contents', run: () => void controller.copyActiveText() },
+      {
+        id: 'copy-text',
+        label: 'File: Copy Contents',
+        run: () => void controller.copyActiveText(),
+      },
       {
         id: 'close',
         label: 'File: Close Buffer',
@@ -472,6 +478,8 @@ function PaletteDialog({
         ? 'Search commands'
         : 'Search files. Type > for commands'
 
+  const treeComplete = useAtomValue(treeCompleteAtom)
+  const progress = useAtomValue(treeProgressAtom)
   const emptyText = naming
     ? null
     : locating
@@ -480,9 +488,11 @@ function PaletteDialog({
         ? 'No matching commands'
         : !hasWorkspace
           ? 'Open a folder to search files.'
-          : files.length === 0
-            ? 'No files in this workspace'
-            : 'No matching files'
+          : !treeComplete
+            ? `Reading folders${progress ? `… ${progress.done} found` : '…'}`
+            : files.length === 0
+              ? 'No files in this workspace'
+              : 'No matching files'
 
   const nameHint =
     naming && creating?.parent !== undefined

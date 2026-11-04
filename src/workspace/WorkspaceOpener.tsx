@@ -51,7 +51,12 @@ export default function WorkspaceOpener() {
   const hasWorkspace = currentId != null
   // Folder actions wait for the tree to finish loading; switching workspaces never needs it.
   const folderReady = ready && hasWorkspace && treeStatus.state === 'ready'
-  const loadingTree = hasWorkspace && treeStatus.state === 'loading'
+  // "Ready" waits for the whole tree: file search needs every name.
+  const loadingTree =
+    hasWorkspace && (treeStatus.state === 'loading' || (folderReady && !treeComplete))
+  useEffect(() => {
+    if (folderReady) void controller.ensureFullTree()
+  }, [folderReady, controller])
   const title = current?.name ?? 'daedalus'
 
   // A printable key on the blank page starts an untitled file, and the key goes into it.
@@ -111,28 +116,54 @@ export default function WorkspaceOpener() {
     store.set(paletteOpenAtom, true)
   }
 
-  const paletteAction = { keys: `${MOD_KEY_LABEL}+K`, label: 'Command Palette', enabled: ready, run: showPalette('') }
+  const paletteAction = {
+    keys: `${MOD_KEY_LABEL}+K`,
+    label: 'Command Palette',
+    enabled: ready,
+    run: showPalette(''),
+  }
   const switchAction = {
     keys: `${MOD_KEY_LABEL}+O`,
     label: 'Switch Workspace',
     enabled: ready,
     run: showPalette(`${COMMAND_PREFIX}Workspace: `),
   }
-  const actions: { keys?: string; label: string; enabled: boolean; run: () => void }[] = hasWorkspace
-    ? [
-        { keys: `${MOD_KEY_LABEL}+P`, label: 'Search Files', enabled: folderReady, run: searchFiles },
-        { keys: `${MOD_KEY_LABEL}+Shift+F`, label: 'Find in Files', enabled: folderReady, run: () => store.set(grepOpenAtom, true) },
-        { keys: `${MOD_KEY_LABEL}+N`, label: 'New Scratch Buffer', enabled: folderReady, run: () => void controller.startUntitled('') },
-        { keys: `${MOD_KEY_LABEL}+Shift+B`, label: 'Branch Review', enabled: folderReady, run: () => void controller.openBranchReview() },
-        paletteAction,
-        switchAction,
-      ]
-    : [
-        { label: 'Open folder', enabled: ready, run: () => void openFolder() },
-        { label: 'Open file', enabled: ready, run: () => void openFile() },
-        paletteAction,
-        switchAction,
-      ]
+  const actions: { keys?: string; label: string; enabled: boolean; run: () => void }[] =
+    hasWorkspace
+      ? [
+          {
+            keys: `${MOD_KEY_LABEL}+P`,
+            label: 'Search Files',
+            enabled: folderReady,
+            run: searchFiles,
+          },
+          {
+            keys: `${MOD_KEY_LABEL}+Shift+F`,
+            label: 'Find in Files',
+            enabled: folderReady,
+            run: () => store.set(grepOpenAtom, true),
+          },
+          {
+            keys: `${MOD_KEY_LABEL}+N`,
+            label: 'New Scratch Buffer',
+            enabled: folderReady,
+            run: () => void controller.startUntitled(''),
+          },
+          {
+            keys: `${MOD_KEY_LABEL}+Shift+B`,
+            label: 'Branch Review',
+            enabled: folderReady,
+            run: () => void controller.openBranchReview(),
+          },
+          paletteAction,
+          switchAction,
+        ]
+      : [
+          { label: 'Open folder', enabled: ready, run: () => void openFolder() },
+          { label: 'Open file', enabled: ready, run: () => void openFile() },
+          paletteAction,
+          switchAction,
+        ]
 
   return (
     <section
@@ -151,11 +182,14 @@ export default function WorkspaceOpener() {
               Access to this folder expired. Reconnect it from the sidebar.
             </p>
           ) : (
-            <p className="text-xs text-muted" role={loadingTree || folderReady ? 'status' : undefined}>
+            <p
+              className="text-xs text-muted"
+              role={loadingTree || folderReady ? 'status' : undefined}
+            >
               {loadingTree
                 ? `Loading workspace…${progress ? ` ${progress.done}${progress.total ? ` / ${progress.total}` : ''} files` : ''}${eta ? ` · ${eta}` : elapsed ? ` · ${elapsed}` : ''}`
                 : folderReady
-                  ? `Workspace ready${treeComplete ? ` · ${fileCount} ${fileCount === 1 ? 'file' : 'files'}` : ''}`
+                  ? `Workspace ready · ${fileCount} ${fileCount === 1 ? 'file' : 'files'}`
                   : 'Open a folder to start editing.'}
             </p>
           )}
@@ -166,7 +200,9 @@ export default function WorkspaceOpener() {
             {progress?.total ? (
               <div
                 className="h-full bg-accent transition-[width] duration-150 motion-reduce:transition-none"
-                style={{ width: `${Math.min(100, Math.round((progress.done / progress.total) * 100))}%` }}
+                style={{
+                  width: `${Math.min(100, Math.round((progress.done / progress.total) * 100))}%`,
+                }}
               />
             ) : (
               <div className="h-full w-1/3 animate-pulse bg-accent motion-reduce:animate-none" />
@@ -184,7 +220,9 @@ export default function WorkspaceOpener() {
                 className="flex h-16 w-full flex-col items-center justify-center gap-1 rounded-lg border border-line px-2 text-xs text-text transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40"
               >
                 <span>{a.label}</span>
-                {a.keys && <kbd className="font-mono text-[11px] text-muted">{a.keys}</kbd>}
+                {a.keys && (
+                  <kbd className="font-mono text-[11px] text-muted">{a.keys}</kbd>
+                )}
               </button>
             </li>
           ))}
