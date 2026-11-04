@@ -1,3 +1,4 @@
+import { isAbort } from './controller'
 import type { LinkedFolder } from './types'
 import { useController } from './useWorkspace'
 
@@ -21,10 +22,16 @@ export function useFolderPicker() {
     if (!pickerWindow.showDirectoryPicker) {
       throw new Error('Your browser does not support opening folders')
     }
-    const folder = (await pickerWindow.showDirectoryPicker({
-      mode: 'readwrite',
-    })) as LinkedFolder
-    await controller.importFolderHandle(folder)
+    const folder = (await pickerWindow
+      .showDirectoryPicker({
+        mode: 'readwrite',
+      })
+      .catch((e: unknown) => {
+        // Dismissing the picker is not an error: cancel silently.
+        if (isAbort(e)) return null
+        throw e
+      })) as LinkedFolder | null
+    if (folder) await controller.importFolderHandle(folder)
   }
 
   return { pick }

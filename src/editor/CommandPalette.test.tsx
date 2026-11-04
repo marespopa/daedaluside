@@ -4,9 +4,14 @@ import { IDBFactory } from 'fake-indexeddb'
 import { createStore, Provider } from 'jotai'
 import App from '../App'
 import { editorHandleAtom } from '../state/editorAtoms'
+import { reviewLayoutAtom, reviewOpenAtom } from '../state/gitAtoms'
 import { getController } from '../workspace/controller'
 import { MemDisk } from '../workspace/testing/memoryDisk'
-import { activePathAtom, treeAtom, workspaceStatusAtom } from '../state/workspaceAtoms'
+import {
+  activePathAtom,
+  noticeAtom,
+  treeAtom, workspaceStatusAtom,
+} from '../state/workspaceAtoms'
 
 function mount() {
   const store = createStore()
@@ -105,5 +110,114 @@ describe('command palette: new file or folder', () => {
     const back = screen.getByRole('combobox') as HTMLInputElement
     expect(back.value).toBe('>')
     expect(screen.getByRole('option', { name: 'File: New File' })).toBeInTheDocument()
+  })
+})
+
+describe('command palette: no folder open', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+  })
+
+  it('file mode says to open a folder instead of listing matches', async () => {
+    const user = userEvent.setup()
+    const store = mount()
+    await waitFor(() => expect(store.get(workspaceStatusAtom).state).toBe('ready'))
+
+    await user.keyboard('{Control>}p{/Control}')
+
+    const input = (await screen.findByRole('combobox')) as HTMLInputElement
+    expect(input).toHaveValue('')
+    expect(await screen.findByText('Open a folder to search files.')).toBeInTheDocument()
+    expect(screen.queryByRole('option')).toBeNull()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull()
+  })
+})
+
+describe('command palette: diff review', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+  })
+
+  it('opens the review in either layout and closes it again', async () => {
+    const user = userEvent.setup()
+    const store = mount()
+    await openFolder(store)
+
+    let input = await openCommands(user)
+    await user.type(input, 'diff')
+    expect(
+      screen.getByRole('option', { name: 'Diff: Open (unified)' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Diff: Open (split)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Diff: Close' })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'Diff: Open (split)' }))
+    expect(store.get(reviewOpenAtom)).toBe(true)
+    expect(store.get(reviewLayoutAtom)).toBe('split')
+
+    input = await openCommands(user)
+    await user.type(input, 'diff open (unified')
+    await user.keyboard('{Enter}')
+    expect(store.get(reviewLayoutAtom)).toBe('unified')
+
+    input = await openCommands(user)
+    await user.type(input, 'diff close')
+    await user.keyboard('{Enter}')
+    expect(store.get(reviewOpenAtom)).toBe(false)
+  })
+})
+
+describe('command palette: open a file', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+  })
+
+  async function withFile(store: ReturnType<typeof createStore>) {
+    await openFolder(store)
+    await waitFor(() => expect(store.get(editorHandleAtom)).toBeTruthy())
+    const c = getController(store)
+    await act(async () => {
+      await c.createFile('notes.txt')
+      await c.createFile('other.txt')
+    })
+    await waitFor(() => expect(store.get(activePathAtom)).toBe('other.txt'))
+  }
+
+  it('opens the typed file name with Enter', async () => {
+    const user = userEvent.setup()
+    const store = mount()
+    await withFile(store)
+
+    await user.keyboard('{Control>}p{/Control}')
+    await user.type(screen.getByRole('combobox'), 'notes')
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(store.get(activePathAtom)).toBe('notes.txt'))
+    expect(store.get(noticeAtom)?.kind).not.toBe('error')
+  })
+
+  it('opens a typed path with a leading ./ that the fuzzy match misses', async () => {
+    const user = userEvent.setup()
+    const store = mount()
+    await withFile(store)
+
+    await user.keyboard('{Control>}p{/Control}')
+    await user.type(screen.getByRole('combobox'), './notes.txt')
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(store.get(activePathAtom)).toBe('notes.txt'))
+  })
+
+  it('reports a typed path that is not a file instead of doing nothing', async () => {
+    const user = userEvent.setup()
+    const store = mount()
+    await withFile(store)
+
+    await user.keyboard('{Control>}p{/Control}')
+    await user.type(screen.getByRole('combobox'), 'missing/nope.txt')
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(store.get(noticeAtom)?.kind).toBe('error'))
+    expect(store.get(activePathAtom)).toBe('other.txt')
   })
 })

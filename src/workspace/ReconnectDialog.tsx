@@ -42,8 +42,8 @@ export default function ReconnectDialog() {
           Reconnect {link.name}?
         </h2>
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          This workspace cannot read or write the folder without permission. Reconnect to
-          allow access and continue editing.
+          The browser has not granted write access to this folder. Reconnect to allow
+          editing; the files stay available for reading.
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={later}>
@@ -55,7 +55,7 @@ export default function ReconnectDialog() {
             autoFocus
             onClick={() => void controller.reconnectFolder()}
           >
-            Reconnect folder
+            Reconnect
           </Button>
         </div>
       </div>

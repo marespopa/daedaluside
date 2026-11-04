@@ -2,7 +2,14 @@ import { useStore } from 'jotai'
 import { useEffect, useMemo } from 'react'
 import { bindVimHost } from '../editor/vimMode'
 import { matchFiles } from '../editor/paletteSearch'
-import { editorHandleAtom, vimStatusAtom } from '../state/editorAtoms'
+import { getReviewPane } from '../review/reviewPane'
+import { gitHeadAtom, reviewLayoutAtom, reviewOpenAtom } from '../state/gitAtoms'
+import {
+  editorHandleAtom,
+  grepOpenAtom,
+  grepQueryAtom,
+  vimStatusAtom,
+} from '../state/editorAtoms'
 import {
   activePathAtom,
   fileTreeFocusAtom,
@@ -51,6 +58,21 @@ export function useWorkspaceLifecycle() {
       },
       cycle: (delta) => controller.cycleTab(delta),
       explore: () => focusFileTree(store),
+      grep: (q) => {
+        if (q !== '') store.set(grepQueryAtom, q)
+        store.set(grepOpenAtom, true)
+      },
+      diffOpen: (layout) => openReview(store, layout),
+      diffClose: () => closeReview(store),
+      diffFile: (delta) => {
+        const paths = reviewFiles(store)
+        if (paths.length === 0) return notify('No modified files')
+        const at = paths.indexOf(store.get(activePathAtom) ?? '')
+        const next = at === -1 ? (delta > 0 ? 0 : paths.length - 1) : at + delta
+        void controller.openFile(
+          paths[((next % paths.length) + paths.length) % paths.length]!,
+        )
+      },
       notify,
       status: (next) => store.set(vimStatusAtom, next),
     })
@@ -97,22 +119,58 @@ export function useWorkspaceLifecycle() {
       if (document.visibilityState === 'hidden') controller.flushOnHide()
     }
     const onPageHide = () => controller.flushOnHide()
+    const onFocus = () => void controller.revalidateOnFocus()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void controller.revalidateOnFocus()
+    }
     window.addEventListener('keydown', onWindowPrefix, true)
     window.addEventListener('keydown', onKey)
     document.addEventListener('visibilitychange', onHide)
     window.addEventListener('pagehide', onPageHide)
+    // The File System Access API has no change events; the controller re-checks the
+    // link's permission and the folder contents whenever the tab is seen again.
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       bindVimHost(null)
       window.removeEventListener('keydown', onWindowPrefix, true)
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('visibilitychange', onHide)
       window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [controller, store])
 }
 
+/** Focuses the review pane while it is open, otherwise the editor. */
 export function focusEditor(store: ReturnType<typeof useStore>) {
+  const view = store.get(reviewOpenAtom)
+    ? getReviewPane()?.view
+    : store.get(editorHandleAtom)?.view
+  view?.focus()
+}
+
+export function openReview(
+  store: ReturnType<typeof useStore>,
+  layout: 'unified' | 'split',
+) {
+  store.set(reviewLayoutAtom, layout)
+  store.set(reviewOpenAtom, true)
+}
+
+export function closeReview(store: ReturnType<typeof useStore>) {
+  if (!store.get(reviewOpenAtom)) return
+  store.set(reviewOpenAtom, false)
   store.get(editorHandleAtom)?.view.focus()
+}
+
+/** Paths git reports as changed and still on disk, in path order: the files ]f and [f step through. */
+export function reviewFiles(store: ReturnType<typeof useStore>): string[] {
+  return [...store.get(gitHeadAtom).status]
+    .filter(([, s]) => s !== 'deleted')
+    .map(([p]) => p)
+    .sort()
 }
 
 function fileTreeHasFocus() {

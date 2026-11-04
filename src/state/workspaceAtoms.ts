@@ -33,6 +33,25 @@ export const workspacesAtom = atom<WorkspaceMeta[]>([])
 export const currentWorkspaceIdAtom = atom<string | null>(null)
 /** Every entry of the current workspace, flat; the tree UI derives hierarchy from paths. */
 export const treeAtom = atom<Entry[]>([])
+
+/**
+ * State of the current workspace's tree, separate from storage startup (that is
+ * `workspaceStatusAtom`). `no-folder` means no workspace is linked at all; the
+ * tree asks for a folder instead of pretending the folder is empty.
+ */
+export type TreeStatus =
+  | { state: 'no-folder' }
+  | { state: 'loading' }
+  | { state: 'ready' }
+  | { state: 'permission' }
+  | { state: 'error'; message: string }
+
+export const treeStatusAtom = atom<TreeStatus>({ state: 'no-folder' })
+/**
+ * Progress of a full folder read: entries found so far and, when a previous read of
+ * the same workspace knew it, the expected total. Null unless the tree is loading.
+ */
+export const treeProgressAtom = atom<{ done: number; total: number | null } | null>(null)
 /** Paths currently being deleted from the workspace. Tree actions stay disabled while non-empty. */
 export const deletingPathsAtom = atom<ReadonlySet<string>>(new Set<string>())
 export const openBuffersAtom = atom<OpenBuffer[]>([])
@@ -42,7 +61,7 @@ export const activePathAtom = atom<string | null>(null)
  * no longer grants readwrite access (after a reload, or the user revoked it); the tree
  * offers Reconnect.
  */
-export const linkedFolderAtom = atom<{ name: string; paused: boolean } | null>(null)
+export const linkedFolderAtom = atom<{ name: string; paused: boolean; single?: boolean } | null>(null)
 /**
  * Whether the reconnect dialog is showing. Set when the linked folder is paused (on open,
  * or after a failed write). "Later" clears it until the next open or failed write.
@@ -50,6 +69,9 @@ export const linkedFolderAtom = atom<{ name: string; paused: boolean } | null>(n
 export const reconnectPromptAtom = atom(false)
 
 export const sidebarOpenAtom = atom(false)
+/** PRD-named aliases. The tree is a flat list; files are keyed by path. */
+export const workspaceTreeAtom = treeAtom
+export const activeFileIdAtom = activePathAtom
 /** Incremented to put keyboard focus on the tree's selected row after it opens. */
 export const fileTreeFocusAtom = atom(0)
 export const settingsOpenAtom = atom(false)

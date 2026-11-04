@@ -8,6 +8,8 @@ import {
   activeBufferAtom,
   editorHandleAtom,
   editorWidthAtom,
+  grepOpenAtom,
+  grepQueryAtom,
   paletteOpenAtom,
   paletteQueryAtom,
   vimEnabledAtom,
@@ -22,7 +24,12 @@ import {
 } from '../state/workspaceAtoms'
 import { GlassPopover, Input } from '../ui'
 import { joinPath } from '../workspace/path'
-import { useController } from '../workspace/useWorkspace'
+import {
+  closeReview,
+  focusEditor,
+  openReview,
+  useController,
+} from '../workspace/useWorkspace'
 import type { Entry } from '../workspace/types'
 import { languageList } from './languages'
 import {
@@ -218,6 +225,29 @@ export default function CommandPalette() {
       ...THEMES.map((t) => theme(t.id, `${t.name} (${t.kind})`)),
       theme('system', 'System'),
       {
+        id: 'grep',
+        label: 'Search: Live Grep in Files (Ctrl-Shift-F)',
+        run: () => {
+          store.set(grepQueryAtom, '')
+          store.set(grepOpenAtom, true)
+        },
+      },
+      {
+        id: 'diff-unified',
+        label: 'Diff: Open (unified)',
+        run: () => openReview(store, 'unified'),
+      },
+      {
+        id: 'diff-split',
+        label: 'Diff: Open (split)',
+        run: () => openReview(store, 'split'),
+      },
+      {
+        id: 'diff-close',
+        label: 'Diff: Close',
+        run: () => closeReview(store),
+      },
+      {
         id: 'find',
         label: 'Find and Replace',
         run: () => handle && openSearchPanel(handle.view),
@@ -258,8 +288,9 @@ export default function CommandPalette() {
       query={query}
       onQuery={setQuery}
       onOpenFile={openFile}
+      hasWorkspace={currentId != null}
       onClose={() => setOpen(false)}
-      onRestoreFocus={() => handle?.view.focus()}
+      onRestoreFocus={() => focusEditor(store)}
     />
   )
 }
@@ -272,6 +303,7 @@ function PaletteDialog({
   onQuery,
   onOpenFile,
   onCreate,
+  hasWorkspace,
   onClose,
   onRestoreFocus,
 }: {
@@ -282,6 +314,8 @@ function PaletteDialog({
   onQuery: (q: string) => void
   onOpenFile: (path: string) => void
   onCreate: (kind: NewEntryRequest['kind'], path: string) => void
+  /** False when no workspace/folder is open, so file mode has nothing to search. */
+  hasWorkspace: boolean
   onClose: () => void
   onRestoreFocus: () => void
 }) {
@@ -323,14 +357,28 @@ function PaletteDialog({
       }))
       return [...root, ...dirs]
     }
-    return commandMode
-      ? matchCommands(commands, needle)
-      : matchFiles(files, needle).map((e) => ({
-          id: `file:${e.path}`,
-          label: e.path,
-          run: () => onOpenFile(e.path),
-        }))
+    if (commandMode) return matchCommands(commands, needle)
+    const hits: PaletteItem[] = matchFiles(files, needle).map((e) => ({
+      id: `file:${e.path}`,
+      label: e.path,
+      run: () => onOpenFile(e.path),
+    }))
+    // A path the tree does not list (still loading, or skipped like node_modules) is
+    // tried directly, so Enter never does nothing; a bad path raises a notice.
+    const typed = query.trim().replace(/^(\.?\/)+/, '')
+    if (hits.length === 0 && hasWorkspace && typed !== '') {
+      return [
+        {
+          id: `open:${typed}`,
+          label: `Open ${typed}`,
+          run: () => onOpenFile(typed),
+        },
+      ]
+    }
+    return hits
   }, [
+    query,
+    hasWorkspace,
     naming,
     locating,
     commandMode,
@@ -420,9 +468,11 @@ function PaletteDialog({
       ? 'No matching folders'
       : commandMode
         ? 'No matching commands'
-        : files.length === 0
-          ? 'No files in this workspace'
-          : 'No matching files'
+        : !hasWorkspace
+          ? 'Open a folder to search files.'
+          : files.length === 0
+            ? 'No files in this workspace'
+            : 'No matching files'
 
   const nameHint =
     naming && creating?.parent !== undefined

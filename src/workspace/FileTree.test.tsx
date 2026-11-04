@@ -1,15 +1,21 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createStore, Provider } from 'jotai'
 import { vi } from 'vitest'
 import {
   activePathAtom,
+  linkedFolderAtom,
+  openBuffersAtom,
   sidebarOpenAtom,
   treeAtom,
+  treeProgressAtom,
+  treeStatusAtom,
   workspaceStatusAtom,
+  type TreeStatus,
 } from '../state/workspaceAtoms'
 import FileTree from './FileTree'
 import { getController } from './controller'
+import { MemDisk } from './testing/memoryDisk'
 import { ROW_HEIGHT } from './treeRows'
 import type { Entry } from './types'
 
@@ -25,6 +31,7 @@ function mountTree(entries: Entry[]) {
   const store = createStore()
   store.set(sidebarOpenAtom, true)
   store.set(workspaceStatusAtom, { state: 'ready' })
+  store.set(treeStatusAtom, { state: 'ready' })
   store.set(treeAtom, entries)
   render(
     <Provider store={store}>
@@ -98,6 +105,7 @@ describe('file tree virtualization', () => {
     const store = createStore()
     store.set(sidebarOpenAtom, true)
     store.set(workspaceStatusAtom, { state: 'ready' })
+    store.set(treeStatusAtom, { state: 'ready' })
     store.set(treeAtom, flatFiles(5_000))
     store.set(activePathAtom, 'f4000.ts')
     render(
@@ -295,5 +303,191 @@ describe('quick finder', () => {
     expect(input).toHaveValue('')
     expect(screen.queryByRole('listbox')).toBeNull()
     expect(screen.getByRole('button', { name: 'docs' })).toBeInTheDocument()
+  })
+})
+
+describe('file tree states', () => {
+  /** Mounts the sidebar with a given tree status, like the controller would leave it. */
+  function mountState(
+    status: TreeStatus,
+    entries: Entry[] = [],
+    link: { name: string; paused: boolean } | null = null,
+  ) {
+    const store = createStore()
+    store.set(sidebarOpenAtom, true)
+    store.set(workspaceStatusAtom, { state: 'ready' })
+    store.set(treeStatusAtom, status)
+    store.set(treeAtom, entries)
+    store.set(linkedFolderAtom, link)
+    render(
+      <Provider store={store}>
+        <FileTree />
+      </Provider>,
+    )
+    return store
+  }
+
+  it('asks for a folder when there is none, instead of an empty workspace', async () => {
+    const user = userEvent.setup()
+    const handle = new MemDisk().handle()
+    vi.stubGlobal('showDirectoryPicker', async () => handle)
+    const store = mountState({ state: 'no-folder' })
+    const open = vi.spyOn(getController(store), 'importFolderHandle').mockResolvedValue()
+
+    expect(screen.getByText('No folder open')).toBeInTheDocument()
+    expect(screen.queryByText(/folder is empty|Empty folder/)).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Find a file' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Open folder' }))
+    expect(open).toHaveBeenCalledWith(handle)
+    vi.unstubAllGlobals()
+  })
+
+  it('shows a loading message, not an empty folder, while the folder is read', () => {
+    mountState({ state: 'loading' })
+    const tree = screen.getByRole('complementary', { name: 'File tree' })
+    expect(tree).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByText('Loading…')).toBeInTheDocument()
+    expect(screen.queryByText(/folder is empty|Empty folder/)).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Find a file' })).toBeDisabled()
+  })
+
+  it('keeps the current rows visible with a loading indicator during a refresh', () => {
+    mountState({ state: 'loading' }, [
+      { name: 'a.md', path: 'a.md', kind: 'file', size: 1 },
+    ])
+    expect(screen.getByRole('button', { name: 'a.md' })).toBeInTheDocument()
+    expect(screen.getByText('Loading files…')).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'File tree' })).toHaveAttribute(
+      'aria-busy',
+      'true',
+    )
+  })
+
+  it('shows a determinate bar and count when the total is known', () => {
+    const store = mountState({ state: 'loading' })
+    act(() => store.set(treeProgressAtom, { done: 120, total: 480 }))
+    expect(screen.getByRole('status')).toHaveTextContent('Reading files… 120 / 480')
+    expect(screen.getByTestId('tree-progress').querySelector('[data-progress]')).toHaveAttribute(
+      'data-progress',
+      '25',
+    )
+  })
+
+  it('shows an indeterminate bar and file count when the total is unknown', () => {
+    const store = mountState({ state: 'loading' })
+    act(() => store.set(treeProgressAtom, { done: 120, total: null }))
+    expect(screen.getByRole('status')).toHaveTextContent('Reading files… 120 files')
+    expect(screen.getByTestId('tree-progress')).toBeInTheDocument()
+    expect(document.querySelector('[data-progress]')).toBeNull()
+  })
+
+  it('hides the progress bar and status once the tree is ready', () => {
+    const store = mountState({ state: 'loading' })
+    act(() => store.set(treeProgressAtom, { done: 5, total: 10 }))
+    act(() => {
+      store.set(treeProgressAtom, null)
+      store.set(treeStatusAtom, { state: 'ready' })
+    })
+    expect(screen.queryByTestId('tree-progress')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('opens files while the tree is still loading', async () => {
+    const user = userEvent.setup()
+    const store = mountState({ state: 'loading' }, [
+      { name: 'a.md', path: 'a.md', kind: 'file', size: 1 },
+    ])
+    const open = vi.spyOn(getController(store), 'openFile').mockResolvedValue()
+    await user.click(screen.getByRole('button', { name: 'a.md' }))
+    expect(open).toHaveBeenCalledWith('a.md')
+  })
+
+  it('asks to reconnect when the folder is not granted, and Reconnect stays available', async () => {
+    const user = userEvent.setup()
+    const store = mountState({ state: 'permission' }, [], { name: 'proj', paused: true })
+    const reconnect = vi
+      .spyOn(getController(store), 'reconnectFolder')
+      .mockResolvedValue()
+
+    expect(
+      screen.getByText('Reconnect to see the files in this folder.'),
+    ).toBeInTheDocument()
+
+    const button = screen.getByRole('button', { name: 'Reconnect' })
+    expect(button).toBeEnabled()
+    await user.click(button)
+    expect(reconnect).toHaveBeenCalledOnce()
+  })
+
+  it('shows the listing error and a Retry that refreshes the workspace', async () => {
+    const user = userEvent.setup()
+    const store = mountState({ state: 'error', message: 'the disk fell over' })
+    const refresh = vi.spyOn(getController(store), 'refreshWorkspace').mockResolvedValue()
+
+    expect(
+      screen.getByText('Could not list this folder: the disk fell over'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('the disk fell over')
+    expect(screen.queryByRole('tree')).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(refresh).toHaveBeenCalledOnce()
+  })
+
+  it('says the folder is empty when connected and empty', () => {
+    mountState({ state: 'ready' })
+    expect(
+      screen.getByText('This folder is empty. Create a file to start.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('No folder open')).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Find a file' })).toBeEnabled()
+  })
+})
+
+describe('minimal sidebar chrome', () => {
+  const nested: Entry[] = [
+    { name: 'src', path: 'src', kind: 'dir' },
+    { name: 'a.ts', path: 'src/a.ts', kind: 'file', size: 1 },
+  ]
+
+  it('names the root in the header and closes from its button', async () => {
+    const user = userEvent.setup()
+    const store = mountTree(nested)
+    store.set(linkedFolderAtom, { name: 'proj', paused: false, single: false })
+    const names = await screen.findAllByText('proj')
+    expect(names.some((n) => n.className.includes('uppercase'))).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Close file tree' }))
+    expect(store.get(sidebarOpenAtom)).toBe(false)
+  })
+
+  it('collapses every folder from the header', async () => {
+    const user = userEvent.setup()
+    mountTree(nested)
+    await user.click(screen.getByRole('button', { name: 'src' }))
+    expect(rowButtons()).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: 'Collapse all' }))
+    expect(rowButtons()).toHaveLength(1)
+  })
+
+  it('draws one guide per nesting level', async () => {
+    const user = userEvent.setup()
+    mountTree(nested)
+    await user.click(screen.getByRole('button', { name: 'src' }))
+    expect(document.querySelectorAll('[data-guide]')).toHaveLength(1)
+  })
+
+  it('marks dirty files, and their collapsed folders, with a dot', async () => {
+    const store = mountTree(nested)
+    store.set(openBuffersAtom, [
+      { path: 'src/a.ts', pinned: false, dirty: true, saveError: false },
+    ])
+    expect(await screen.findAllByRole('img', { name: 'Unsaved changes' })).toHaveLength(1)
+    store.set(openBuffersAtom, [
+      { path: 'src/a.ts', pinned: false, dirty: false, saveError: false },
+    ])
+    await waitFor(() =>
+      expect(screen.queryByRole('img', { name: 'Unsaved changes' })).toBeNull(),
+    )
   })
 })

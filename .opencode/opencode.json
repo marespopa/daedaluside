@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode-go/glm-5.3",
+  "agents": {
+    "compaction": { "model": "opencode-go/glm-5.3-flash" }
+  },
+  "worktree": { "directory": "~/projects/worktrees" },
+  "experimental": {
+    "background_compaction": true
+  }
+}

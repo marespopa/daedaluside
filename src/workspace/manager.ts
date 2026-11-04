@@ -1,5 +1,14 @@
-import { idbAll, idbDelete, idbGet, idbPut, linkKey, SETTINGS, WORKSPACES } from './db'
-import type { LinkedFolder } from './types'
+import {
+  idbAll,
+  idbDelete,
+  idbGet,
+  idbPut,
+  fileLinkKey,
+  linkKey,
+  SETTINGS,
+  WORKSPACES,
+} from './db'
+import type { LinkedFile, LinkedFolder } from './types'
 
 /** Stored in the `workspaces` IndexedDB store. The folder handle lives in settings. */
 export interface WorkspaceMeta {
@@ -14,6 +23,8 @@ export interface WorkspaceMeta {
   pinnedFiles?: string[]
   /** Identity of the folder source (see `sourceKey`). */
   source?: string | undefined
+  /** `file` for a single-file workspace; absent means a folder workspace. */
+  kind?: 'file' | undefined
   /** Set once the placeholder scratch.ts check has run for legacy blank workspaces. */
   scratchChecked?: boolean
 }
@@ -90,6 +101,28 @@ export class WorkspaceManager {
     return all.sort((a, b) => a.created - b.created || a.name.localeCompare(b.name))
   }
 
+  /**
+   * Enforces the folder-only invariant: a workspace without a linked folder (a
+   * record left by the old OPFS model, or one created without a link) can never
+   * be read, so it is deleted. Returns the workspaces that remain, so callers
+   * can treat the pruned store as the real list.
+   */
+  async pruneUnlinked(): Promise<WorkspaceMeta[]> {
+    const kept: WorkspaceMeta[] = []
+    const stale: string[] = []
+    for (const w of await this.list()) {
+      // Either link counts: a single-file workspace is a real workspace too.
+      if ((await this.getLink(w.id)) || (await this.getFileLink(w.id))) kept.push(w)
+      else stale.push(w.id)
+    }
+    if (stale.length > 0) {
+      for (const id of stale) await this.deleteRecords(id)
+      // One announcement for the whole prune, not one per deleted record.
+      announce({ ws: null })
+    }
+    return kept
+  }
+
   get(id: string): Promise<WorkspaceMeta | undefined> {
     return idbGet<WorkspaceMeta>(this.db, 'workspaces', id)
   }
@@ -98,7 +131,7 @@ export class WorkspaceManager {
     return (await this.list()).find((w) => w.source === source)
   }
 
-  async create(name: string, source?: string): Promise<WorkspaceMeta> {
+  async create(name: string, source?: string, kind?: 'file'): Promise<WorkspaceMeta> {
     const now = Date.now()
     const meta: WorkspaceMeta = {
       id: crypto.randomUUID(),
@@ -108,6 +141,7 @@ export class WorkspaceManager {
       openFiles: [],
       activeFile: null,
       ...(source ? { source } : {}),
+      ...(kind ? { kind } : {}),
     }
     await idbPut(this.db, 'workspaces', meta.id, meta)
     announce({ ws: null })
@@ -153,14 +187,29 @@ export class WorkspaceManager {
     return idbPut(this.db, 'settings', linkKey(id), folder)
   }
 
+  /** The file a single-file workspace reads and writes through. */
+  getFileLink(id: string): Promise<LinkedFile | undefined> {
+    return idbGet<LinkedFile>(this.db, 'settings', fileLinkKey(id))
+  }
+
+  setFileLink(id: string, file: LinkedFile): Promise<void> {
+    return idbPut(this.db, 'settings', fileLinkKey(id), file)
+  }
+
   /**
    * Deletes the workspace record and its linked-folder record from IndexedDB. Files on
    * disk are left untouched: the picked folder is the source of truth.
    */
   async remove(id: string): Promise<void> {
+    await this.deleteRecords(id)
+    announce({ ws: null })
+  }
+
+  /** The storage-side half of `remove`, without the cross-tab announcement. */
+  private async deleteRecords(id: string): Promise<void> {
     await idbDelete(this.db, WORKSPACES, id)
     await idbDelete(this.db, SETTINGS, linkKey(id))
-    announce({ ws: null })
+    await idbDelete(this.db, SETTINGS, fileLinkKey(id))
   }
 
   async getLastId(): Promise<string | null> {

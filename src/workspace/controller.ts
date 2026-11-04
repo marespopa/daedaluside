@@ -1,13 +1,28 @@
 import { EditorSelection, EditorState, StateEffect, type Text } from '@codemirror/state'
 import { EditorView, type ViewUpdate } from '@codemirror/view'
 import type { createStore } from 'jotai'
+import { setHunks } from '../editor/diffGutter'
 import type { EditorHandle } from '../editor/createEditor'
 import {
   activeBufferAtom,
+  activeImageAtom,
   editorHandleAtom,
+  grepOpenAtom,
+  grepStatusAtom,
   initialBuffer,
   paletteOpenAtom,
 } from '../state/editorAtoms'
+import { computeHunks, type Hunk } from '../review/diff'
+import type { ReviewAction } from '../review/reviewPane'
+import {
+  minimalChange,
+  revertHunkText,
+  sameHunk,
+  stageHunkText,
+  unstageHunkText,
+} from '../review/stage'
+import { DiffService } from '../review/diffService'
+import { fileDiffMapAtom, gitHeadAtom } from '../state/gitAtoms'
 import {
   activePathAtom,
   currentWorkspaceIdAtom,
@@ -19,6 +34,8 @@ import {
   settingsOpenAtom,
   sidebarOpenAtom,
   treeAtom,
+  treeProgressAtom,
+  treeStatusAtom,
   workspaceStatusAtom,
   workspacesAtom,
 } from '../state/workspaceAtoms'
@@ -36,16 +53,39 @@ import {
   type TabRef,
   type TabState,
 } from '../state/tabOps'
+import { imageKind, imageMime, sniffImage } from './image'
 import { downloadBytes, exportZip, walkTree } from './archive'
 import { openDB } from './db'
 import { startSnapshotSync } from './snapshot'
 import { FolderFS } from './folderFs'
+import { GitService } from './gitService'
+import { GrepService } from './grepService'
+import type { GrepHit } from './grep'
+import { SingleFileFS } from './singleFileFs'
 import { sourceKey, WorkspaceManager, type RemoteChange } from './manager'
-import { isWithin, joinPath, normalizePath } from './path'
+import {
+  addEntry,
+  basename,
+  isWithin,
+  joinPath,
+  normalizePath,
+  renameEntries,
+} from './path'
 import { requestPersistence } from './storage'
-import type { LinkedFolder, WorkspaceFS } from './types'
+import type {
+  Entry,
+  LinkedFile,
+  LinkedFolder,
+  PermissionedHandle,
+  WorkspaceFS,
+} from './types'
 
 type Store = ReturnType<typeof createStore>
+
+/** True when a picker was dismissed: the API rejects with an AbortError DOMException. */
+export function isAbort(e: unknown): boolean {
+  return e instanceof DOMException && e.name === 'AbortError'
+}
 
 /**
  * True while the user types in a field outside the editor (a new name, the finder). A file
@@ -67,6 +107,8 @@ interface Buffer {
   dirty: boolean
   saveError: boolean
   languageSet: boolean
+  /** Set for images: shown read-only by ImageViewer; `state` stays an empty document. */
+  image?: { path: string; bytes: Uint8Array; mime: string }
   timer: ReturnType<typeof setTimeout> | undefined
   /** Saves run one at a time per buffer. */
   chain: Promise<void>
@@ -86,6 +128,8 @@ export class WorkspaceController {
   private manager: WorkspaceManager | null = null
   private fs: WorkspaceFS | null = null
   private wsId: string | null = null
+  /** Entry count of each workspace's last full read, the total shown while it is re-read. */
+  private knownCounts = new Map<string, number>()
   private buffers = new Map<string, Buffer>()
   /** Tab strip order. Pinned tabs form a prefix. Every path here has a buffer. */
   private tabs: TabRef[] = []
@@ -94,11 +138,25 @@ export class WorkspaceController {
   private sessionTimer: ReturnType<typeof setTimeout> | undefined
   /** Bumped on every workspace switch so stale async work can bail out. */
   private epoch = 0
-  /** The folder handle of the current workspace, if it has one. */
-  private linkHandle: LinkedFolder | null = null
+  /** The folder or file handle of the current workspace, if it has one. */
+  private linkHandle: LinkedFolder | LinkedFile | null = null
   /** The browser does not grant readwrite access to `linkHandle` right now. */
   private linkPaused = false
+  /** Last observed permission for `linkHandle`; null until first checked. */
+  private linkGranted: boolean | null = null
+  /** One focus revalidation at a time: a focus storm must not stack refreshes. */
+  private revalidating = false
   private unsubscribeRemote: (() => void) | null = null
+  /** Text index for live grep; one per file system, rebuilt when the workspace changes. */
+  private grepSvc: GrepService | null = null
+  /** Git reader for the linked folder; null for single files and unlinked workspaces. */
+  private gitSvc: GitService | null = null
+  /** The file system `gitSvc` was built for, to notice a workspace switch or reconnect. */
+  private gitFor: WorkspaceFS | null = null
+  private diffSvc: DiffService | null = null
+  private gitTimer: ReturnType<typeof setTimeout> | undefined
+  /** Orders diff requests: only the newest may touch the editor. */
+  private diffSeq = 0
 
   constructor(store: Store) {
     this.store = store
@@ -120,7 +178,9 @@ export class WorkspaceController {
     const manager = (this.manager = new WorkspaceManager(db))
     this.unsubscribeRemote?.()
     this.unsubscribeRemote = manager.onRemoteChange((c) => this.onRemoteChange(c))
-    const list = await manager.list()
+    // Folder-only: records without a linked folder (from the old OPFS model) are
+    // pruned before one of them can be picked as the workspace to open.
+    const list = await manager.pruneUnlinked()
     this.store.set(workspacesAtom, list)
     if (list.length > 0) {
       // First workspace: ask the browser not to evict our metadata.
@@ -129,7 +189,7 @@ export class WorkspaceController {
       const first = list.find((w) => w.id === last) ?? list[0]!
       await this.switchTo(first.id)
     } else {
-      this.store.set(currentWorkspaceIdAtom, null)
+      this.noWorkspaceLeft()
     }
     this.store.set(workspaceStatusAtom, { state: 'ready' })
   }
@@ -192,22 +252,316 @@ export class WorkspaceController {
     }))
   }
 
-  /** Rebuilds the tree from the linked folder. */
+  /**
+   * Rebuilds the tree from the linked folder: `loading` while it is listed, then
+   * `ready`. A failed listing clears the tree: a permission failure becomes the
+   * `permission` state (reading may still be re-granted from a click), anything
+   * else the `error` state, so no caller is left with an unhandled promise.
+   */
   async refreshTree() {
-    if (!this.fs) {
+    const fs = this.fs
+    if (!fs) {
       this.store.set(treeAtom, [])
+      this.syncGrep([])
+      this.syncGit()
       return
     }
-    this.store.set(treeAtom, await walkTree(this.fs))
+    this.store.set(treeStatusAtom, { state: 'loading' })
+    // The last full read of this workspace is the best guess at the total.
+    const total = this.knownCounts.get(this.wsId ?? '') ?? null
+    this.store.set(treeProgressAtom, { done: 0, total })
+    try {
+      const entries = await walkTree(fs, (done) => {
+        if (this.fs === fs) this.store.set(treeProgressAtom, { done, total })
+      })
+      if (this.fs !== fs) return // another workspace (or a reconnect took over)
+      if (this.wsId) this.knownCounts.set(this.wsId, entries.length)
+      this.store.set(treeAtom, entries)
+      this.store.set(treeProgressAtom, null)
+      this.store.set(treeStatusAtom, { state: 'ready' })
+      this.syncGrep(entries)
+      this.syncGit()
+    } catch (e) {
+      if (this.fs !== fs) return
+      this.store.set(treeProgressAtom, null)
+      this.store.set(treeAtom, [])
+      this.syncGrep([])
+      this.syncGit()
+      if (
+        e instanceof DOMException &&
+        (e.name === 'NotAllowedError' || e.name === 'SecurityError')
+      ) {
+        // The folder itself may be fine; reading just needs a click to re-grant.
+        this.linkPaused = true
+        this.publishLink()
+        this.store.set(treeStatusAtom, { state: 'permission' })
+      } else {
+        this.store.set(treeStatusAtom, {
+          state: 'error',
+          message: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
   }
 
-  /** Refreshes the tree on demand (Ctrl-R), reporting storage failures as a notice. */
+  /** Refreshes the tree on demand (Ctrl-R and the tree's Retry). */
   async refreshWorkspace() {
-    try {
-      await this.refreshTree()
-    } catch (e) {
-      this.fail(e)
+    await this.refreshTree()
+  }
+
+  /**
+   * Applies a local tree patch instead of a full walk. Mutations know exactly which
+   * entry changed, so only the patch is wrong way to scan the whole folder per keypress.
+   * A patch that cannot be applied locally falls back to a full refresh.
+   */
+  private async patchTree(patch: (entries: readonly Entry[]) => Entry[] | null) {
+    const next = patch(this.store.get(treeAtom))
+    if (next) {
+      this.store.set(treeAtom, next)
+      this.syncGrep(next)
+    } else await this.refreshTree()
+  }
+
+  // ---- git -------------------------------------------------------------
+
+  /** Builds (or drops) the git reader to match the current file system, then reads status. */
+  private syncGit() {
+    const fs = this.fs
+    const handle = this.linkHandle
+    if (this.gitFor !== fs) {
+      this.gitSvc = null
+      this.gitFor = null
+      this.diffSvc?.dispose()
+      this.diffSvc = null
+      clearTimeout(this.gitTimer)
+      this.diffSeq++
+      this.store.set(gitHeadAtom, (g) => ({ version: g.version + 1, status: new Map() }))
+      this.store.set(fileDiffMapAtom, new Map())
     }
+    if (!fs || !handle || handle.kind === 'file') return
+    if (!this.gitSvc) {
+      this.gitSvc = new GitService(handle as FileSystemDirectoryHandle)
+      this.gitFor = fs
+      this.diffSvc = new DiffService()
+    }
+    void this.refreshGitStatus()
+  }
+
+  /** Re-reads HEAD and the changed-file list, then re-diffs the open file against it. */
+  private async refreshGitStatus() {
+    const svc = this.gitSvc
+    if (!svc) return
+    try {
+      const status = await svc.listChanged()
+      if (this.gitSvc !== svc) return
+      this.store.set(gitHeadAtom, (g) => ({ version: g.version + 1, status }))
+    } catch {
+      return // a failed read just leaves the previous marks
+    }
+    if (this.active) this.pushDiff(this.active, true)
+  }
+
+  /** Status changes after a save or a commit; coalesce bursts of saves. */
+  private scheduleGitRefresh() {
+    if (!this.gitSvc) return
+    clearTimeout(this.gitTimer)
+    this.gitTimer = setTimeout(() => void this.refreshGitStatus(), 500)
+  }
+
+  /** Diffs a buffer's live text against HEAD and shows the hunks. */
+  private pushDiff(path: string, immediate = false) {
+    const svc = this.gitSvc
+    const diffs = this.diffSvc
+    const b = this.buffers.get(path)
+    if (!svc || !diffs || !b || b.image) return
+    const seq = ++this.diffSeq
+    const text = this.liveDoc(b, path).toString()
+    void svc.getHeadBlob(path).then((base) => {
+      if (seq !== this.diffSeq || this.diffSvc !== diffs) return
+      if (base === null) {
+        // Untracked or new files show as all added; anything else HEAD cannot read gets no marks.
+        const s = this.store.get(gitHeadAtom).status.get(path)
+        if (s !== 'untracked' && s !== 'added') return this.applyDiff(path, [])
+      }
+      diffs.schedule(base ?? '', text, (r) => this.applyDiff(path, r.hunks), immediate)
+    })
+  }
+
+  /**
+   * Both sides of a file's diff for the review pane: HEAD's text (empty for a new file)
+   * and the live text. Null when there is no repository, or HEAD has no text for it.
+   */
+  async reviewSnapshot(path: string): Promise<{ base: string; current: string } | null> {
+    const svc = this.gitSvc
+    const b = this.buffers.get(path)
+    if (!svc || !b || b.image) return null
+    const base = await svc.getHeadBlob(path)
+    if (base === null) {
+      const s = this.store.get(gitHeadAtom).status.get(path)
+      if (s !== 'untracked' && s !== 'added') return null
+    }
+    return { base: base ?? '', current: this.liveDoc(b, path).toString() }
+  }
+
+  /**
+   * Git action on a hunk of the active file's diff against HEAD (null: the whole file).
+   * Staging writes to `.git` and needs write access; reverting is an ordinary edit of
+   * the open buffer, so the editor's undo brings the hunk back.
+   */
+  async reviewAction(path: string, action: ReviewAction, hunk: Hunk | null) {
+    const svc = this.gitSvc
+    const b = this.buffers.get(path)
+    if (!svc || !b || b.image) return this.notify('error', 'This file is not in a git repository.')
+    try {
+      const head = await svc.getHeadBlob(path)
+      const live = this.liveDoc(b, path).toString()
+      if (hunk && !computeHunks(head ?? '', live).some((h) => sameHunk(h, hunk))) {
+        void this.refreshGitStatus()
+        return this.notify('info', 'The diff changed; try again.')
+      }
+      if (action === 'obtain' || action === 'revert') {
+        if (!hunk) return this.notify('info', 'Move the cursor onto a changed hunk first.')
+        return await this.revertHunk(path, head ?? '', live, hunk)
+      }
+      if (!(await this.ensureGitWritable())) return
+      await this.stageChange(svc, path, action, head, live, hunk)
+      await this.refreshGitStatus()
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'NotAllowedError') {
+        this.requestGitWrite()
+      } else this.fail(e)
+    }
+  }
+
+  private async revertHunk(path: string, head: string, live: string, hunk: Hunk) {
+    const view = this.handle?.view
+    if (!view || this.active !== path) return
+    view.dispatch({ changes: minimalChange(live, revertHunkText(head, live, hunk)) })
+    this.notify('info', 'Reverted the hunk to HEAD. Undo with Ctrl-Z in the editor.')
+    await this.refreshGitStatus()
+  }
+
+  private async stageChange(
+    svc: GitService,
+    path: string,
+    action: ReviewAction,
+    head: string | null,
+    live: string,
+    hunk: Hunk | null,
+  ) {
+    const index = await svc.readIndex(path)
+    if (hunk === null) {
+      // The whole file: stage the buffer's text, or take it out of the index again.
+      if (action === 'stage' && index === live) {
+        await svc.resetIndex(path)
+        return this.notify('info', `Unstaged ${path}.`)
+      }
+      await svc.writeIndex(path, live)
+      return this.notify('info', `Staged ${path}.`)
+    }
+    const base = index ?? head ?? ''
+    const staged = stageHunkText(base, live, hunk)
+    if (staged !== null) {
+      await svc.writeIndex(path, staged)
+      return this.notify('info', 'Staged the hunk.')
+    }
+    if (action === 'put') return this.notify('info', 'The hunk is already staged.')
+    const unstaged = unstageHunkText(head ?? '', base, hunk)
+    if (unstaged === null) return this.notify('info', 'Nothing to stage for this hunk.')
+    if (head === null && unstaged === '') await svc.removeFromIndex(path)
+    else await svc.writeIndex(path, unstaged)
+    this.notify('info', 'Unstaged the hunk.')
+  }
+
+  /** True when `.git` can be written; otherwise raises the reconnect prompt. */
+  private async ensureGitWritable(): Promise<boolean> {
+    const handle = this.linkHandle
+    if (!handle || handle.kind === 'file')
+      return (this.notify('error', 'Staging needs a linked git folder.'), false)
+    if (this.linkPaused || !(await this.queryPermission(handle))) {
+      this.requestGitWrite()
+      return false
+    }
+    return true
+  }
+
+  private requestGitWrite() {
+    this.linkGranted = false
+    this.setLinkPaused(true)
+    this.notify('error', 'Staging changes .git, which needs write access to the folder. Reconnect it to continue.')
+  }
+
+  private applyDiff(path: string, hunks: readonly Hunk[]) {
+    this.store.set(fileDiffMapAtom, (m) => {
+      const next = new Map(m)
+      if (hunks.length > 0) next.set(path, hunks)
+      else next.delete(path)
+      return next
+    })
+    if (path === this.active && this.handle) {
+      this.handle.view.dispatch({ effects: setHunks.of(hunks) })
+    }
+  }
+
+  // ---- live grep -------------------------------------------------------
+
+  /** Keeps the text index in step with the tree; builds a fresh one for a new file system. */
+  private syncGrep(entries: readonly Entry[]) {
+    const fs = this.fs
+    if (this.grepSvc && this.grepSvc.fs !== fs) {
+      this.grepSvc.dispose()
+      this.grepSvc = null
+      this.store.set(grepStatusAtom, null)
+    }
+    if (!fs) return
+    this.grepSvc ??= new GrepService(fs, (s) => this.store.set(grepStatusAtom, s))
+    this.grepSvc.sync(entries)
+  }
+
+  /**
+   * Live grep over the indexed workspace. Hits stream into `onBatch`; the returned
+   * function cancels. Open buffers are searched first.
+   */
+  grep(
+    query: string,
+    onBatch: (hits: GrepHit[]) => void,
+    onDone: (truncated: boolean) => void,
+  ): () => void {
+    const svc = this.grepSvc
+    if (!svc) {
+      onDone(false)
+      return () => {}
+    }
+    const priority = [...(this.active ? [this.active] : []), ...this.tabs.map((t) => t.path)]
+    return svc.search(query, priority, onBatch, onDone)
+  }
+
+  /** The current text of a file for the grep preview: the open buffer, else the disk. */
+  async readForPreview(path: string): Promise<string | null> {
+    const b = this.buffers.get(path)
+    if (b && !b.image) return this.liveDoc(b, path).toString()
+    try {
+      const fs = this.requireFS()
+      const bytes = await fs.readBytes(path)
+      return new TextDecoder().decode(bytes)
+    } catch {
+      return null
+    }
+  }
+
+  /** Opens a file and puts the cursor on a 1-based line, centered in view. */
+  async openFileAt(path: string, line: number, col = 0) {
+    await this.openFile(path)
+    const view = this.handle?.view
+    if (!view || this.active !== normalizePath(path)) return
+    const doc = view.state.doc
+    const ln = doc.line(Math.min(Math.max(line, 1), doc.lines))
+    const at = ln.from + Math.min(Math.max(col, 0), ln.length)
+    view.dispatch({
+      selection: EditorSelection.cursor(at),
+      effects: EditorView.scrollIntoView(at, { y: 'center' }),
+    })
+    if (!this.overlayOpen()) view.focus()
   }
 
   private async refreshWorkspaces() {
@@ -244,8 +598,7 @@ export class WorkspaceController {
     if (list.length > 0) {
       await this.switchTo(list[0]!.id)
     } else {
-      this.store.set(currentWorkspaceIdAtom, null)
-      this.store.set(treeAtom, [])
+      this.noWorkspaceLeft()
     }
   }
 
@@ -255,7 +608,9 @@ export class WorkspaceController {
     const h = this.handle
     if (!h) return
     const b = this.active ? this.buffers.get(this.active) : undefined
-    if (!b) {
+    // Same object while the tab stays active, so the viewer keeps one object URL.
+    this.store.set(activeImageAtom, b?.image ?? null)
+    if (!b || b.image) {
       const empty = h.createState('')
       h.setState(
         empty.update({
@@ -265,10 +620,22 @@ export class WorkspaceController {
           ]),
         }).state,
       )
-      this.store.set(activeBufferAtom, { ...initialBuffer })
+      this.store.set(
+        activeBufferAtom,
+        b?.image && this.active
+          ? { ...initialBuffer, id: this.active, name: this.active }
+          : { ...initialBuffer },
+      )
       return
     }
     h.setState(b.state)
+    if (this.active) {
+      // A stashed state carries the hunks it was left with; show the freshest, then re-diff.
+      h.view.dispatch({
+        effects: setHunks.of(this.store.get(fileDiffMapAtom).get(this.active) ?? []),
+      })
+      this.pushDiff(this.active, true)
+    }
     if (!b.languageSet && this.active) {
       b.languageSet = true
       const path = this.active
@@ -294,7 +661,11 @@ export class WorkspaceController {
   }
 
   private overlayOpen(): boolean {
-    return this.store.get(paletteOpenAtom) || this.store.get(settingsOpenAtom)
+    return (
+      this.store.get(paletteOpenAtom) ||
+      this.store.get(grepOpenAtom) ||
+      this.store.get(settingsOpenAtom)
+    )
   }
 
   /** Called by the Editor component for every CodeMirror update. */
@@ -316,6 +687,7 @@ export class WorkspaceController {
       b.dirty = dirty
       this.publishBuffers()
     }
+    this.pushDiff(path)
     clearTimeout(b.timer)
     b.timer = dirty ? setTimeout(() => void this.save(path), AUTOSAVE_MS) : undefined
   }
@@ -332,6 +704,28 @@ export class WorkspaceController {
     if (!st || st.kind !== 'file') throw new Error(`Not a file: ${path}`)
     if ((st.size ?? 0) > MAX_OPEN_BYTES) throw new Error(`${path} is too large to edit`)
     const bytes = await fs.readBytes(path)
+    const kind = imageKind(path)
+    if (kind) {
+      if (!sniffImage(kind, bytes)) throw new Error(`${path} is not a valid ${kind} image`)
+      if (epoch !== this.epoch) return null
+      if (!this.buffers.has(path)) {
+        const state = this.handle
+          ? this.handle.createState('')
+          : EditorState.create({ doc: '' })
+        this.buffers.set(path, {
+          state,
+          saved: state.doc,
+          dirty: false,
+          saveError: false,
+          languageSet: true,
+          image: { path, bytes, mime: imageMime(kind) },
+          timer: undefined,
+          chain: Promise.resolve(),
+        })
+        this.tabs.push({ path, pinned: false })
+      }
+      return path
+    }
     if (bytes.subarray(0, 8192).includes(0)) throw new Error(`${path} is a binary file`)
     if (epoch !== this.epoch) return null
     if (!this.buffers.has(path)) {
@@ -484,7 +878,7 @@ export class WorkspaceController {
 
   save(path: string): Promise<void> {
     const b = this.buffers.get(path)
-    if (!b || !this.fs) return Promise.resolve()
+    if (!b || !this.fs || b.image) return Promise.resolve() // images are read-only
     clearTimeout(b.timer)
     b.timer = undefined
     const fs = this.fs
@@ -497,6 +891,10 @@ export class WorkspaceController {
         await fs.write(path, text)
         b.saved = snapshot
         b.saveError = false
+        if (this.fs === fs) {
+          this.grepSvc?.touch(path)
+          this.scheduleGitRefresh()
+        }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'NotAllowedError') {
           this.setLinkPaused(true)
@@ -531,6 +929,10 @@ export class WorkspaceController {
    * once it is shown, so typing on the blank page loses nothing.
    */
   async startUntitled(initial = ''): Promise<void> {
+    if (this.fs instanceof SingleFileFS) {
+      this.notify('info', 'This workspace is a single file; open a folder to create more')
+      return
+    }
     if (this.untitledTyping) {
       this.untitledTyping.text += initial
       return
@@ -540,8 +942,12 @@ export class WorkspaceController {
     try {
       const fs = this.requireFS()
       const path = await this.nextUntitledPath(fs)
+      const epoch = this.epoch
       await fs.write(path, '')
-      await this.refreshTree()
+      if (this.fs !== fs || this.epoch !== epoch) return
+      await this.patchTree((entries) =>
+        addEntry(entries, { name: basename(path), path, kind: 'file', size: 0 }),
+      )
       await this.openFile(path)
       // openFile has focused the editor, so later keys go there directly.
       this.untitledTyping = null
@@ -600,9 +1006,20 @@ export class WorkspaceController {
       const path = normalizePath(rawPath)
       if (path === '') throw new Error('Name cannot be empty')
       const fs = this.requireFS()
+      if (this.fs instanceof SingleFileFS) {
+        this.notify(
+          'info',
+          'This workspace is a single file; open a folder to create more',
+        )
+        return
+      }
       if (await fs.stat(path)) throw new Error(`Already exists: ${path}`)
+      const epoch = this.epoch
       await fs.write(path, '')
-      await this.refreshTree()
+      if (this.fs !== fs || this.epoch !== epoch) return
+      await this.patchTree((entries) =>
+        addEntry(entries, { name: basename(path), path, kind: 'file', size: 0 }),
+      )
       await this.openFile(path)
     } catch (e) {
       this.fail(e)
@@ -614,9 +1031,20 @@ export class WorkspaceController {
       const path = normalizePath(rawPath)
       if (path === '') throw new Error('Name cannot be empty')
       const fs = this.requireFS()
+      if (this.fs instanceof SingleFileFS) {
+        this.notify(
+          'info',
+          'This workspace is a single file; open a folder to create more',
+        )
+        return
+      }
       if (await fs.stat(path)) throw new Error(`Already exists: ${path}`)
+      const epoch = this.epoch
       await fs.mkdir(path)
-      await this.refreshTree()
+      if (this.fs !== fs || this.epoch !== epoch) return
+      await this.patchTree((entries) =>
+        addEntry(entries, { name: basename(path), path, kind: 'dir' }),
+      )
     } catch (e) {
       this.fail(e)
     }
@@ -627,12 +1055,16 @@ export class WorkspaceController {
       const from = normalizePath(fromRaw)
       const to = normalizePath(toRaw)
       const fs = this.requireFS()
+      const epoch = this.epoch
       await Promise.all(
         [...this.buffers.keys()]
           .filter((p) => isWithin(p, from))
           .map((p) => this.save(p)),
       )
       await fs.rename(from, to)
+      // The switch first: renaming the buffers of a workspace the user already left
+      // would corrupt them; the tree patch can afford to be skipped instead.
+      if (this.fs !== fs || this.epoch !== epoch) return
       this.stash() // the live state must move with the buffer
       const mv = (p: string) => (isWithin(p, from) ? to + p.slice(from.length) : p)
       const next = new Map<string, Buffer>()
@@ -650,7 +1082,7 @@ export class WorkspaceController {
       }
       this.publishBuffers()
       this.scheduleSession()
-      await this.refreshTree()
+      await this.patchTree((entries) => renameEntries(entries, from, to))
     } catch (e) {
       this.fail(e)
     }
@@ -660,7 +1092,6 @@ export class WorkspaceController {
     let deletingPath: string | null = null
     let fs: WorkspaceFS | null = null
     let epoch = this.epoch
-    let before: Awaited<ReturnType<typeof walkTree>> = []
     let started = false
     try {
       const path = normalizePath(rawPath)
@@ -668,7 +1099,6 @@ export class WorkspaceController {
       fs = this.requireFS()
       epoch = this.epoch
       if (this.store.get(deletingPathsAtom).size > 0) return
-      before = this.store.get(treeAtom)
       this.store.set(deletingPathsAtom, (current) => new Set(current).add(path))
       started = true
       this.store.set(treeAtom, (entries) =>
@@ -680,17 +1110,13 @@ export class WorkspaceController {
 
       const gone = [...this.buffers.keys()].filter((p) => isWithin(p, path))
       this.commit(removeTabs(this.tabState(), gone), { removed: gone })
-      await this.refreshTree()
+      // The optimistic filter above already removed the entries; a full walk would
+      // only re-derive what the delete decided.
       this.notify('info', `Deleted "${path}".`)
     } catch (e) {
-      if (fs && this.fs === fs && this.epoch === epoch) {
-        try {
-          await this.refreshTree()
-        } catch {
-          // Keep the pre-delete tree visible if the filesystem cannot be listed either.
-          this.store.set(treeAtom, before)
-        }
-      }
+      // A failed delete may have left the tree half-updated; refresh it. If the
+      // folder cannot be listed either, the refresh itself surfaces that state.
+      if (fs && this.fs === fs && this.epoch === epoch) await this.refreshTree()
       this.fail(e)
     } finally {
       if (started && deletingPath !== null) {
@@ -715,6 +1141,17 @@ export class WorkspaceController {
     this.active = null
   }
 
+  /** No workspace is left: nothing is open, and the tree asks for a folder. */
+  private noWorkspaceLeft() {
+    this.linkHandle = null
+    this.linkPaused = false
+    this.linkGranted = null
+    this.publishLink()
+    this.store.set(currentWorkspaceIdAtom, null)
+    this.store.set(treeAtom, [])
+    this.store.set(treeStatusAtom, { state: 'no-folder' })
+  }
+
   /** Opens a folder picker and creates or switches to the workspace for that folder. */
   async newWorkspace() {
     const handle = await this.pickFolder()
@@ -737,21 +1174,36 @@ export class WorkspaceController {
     this.fs = null
     this.linkHandle = null
     this.store.set(currentWorkspaceIdAtom, id)
+    // The previous workspace's files leave the view while this folder is read.
+    this.store.set(treeAtom, [])
+    this.store.set(treeStatusAtom, { state: 'loading' })
     await manager.setLastId(id)
 
-    const handle = await manager.getLink(id)
-    if (handle) {
+    const meta = await manager.get(id)
+    // A single-file workspace keeps its handle under a different key (see `fileLinkKey`).
+    const handle =
+      meta?.kind === 'file' ? await manager.getFileLink(id) : await manager.getLink(id)
+    if (!handle) {
+      // Rare after pruning: a record with no linked handle cannot be read at all.
+      this.linkPaused = false
+      this.linkGranted = null
+      this.store.set(treeStatusAtom, {
+        state: 'error',
+        message: 'Workspace is missing its linked folder',
+      })
+    } else {
       this.linkHandle = handle
-      if (await this.queryPermission(handle)) {
-        this.fs = new FolderFS(handle)
-        this.linkPaused = false
-      } else {
-        this.linkPaused = true
-      }
+      // Readwrite is checked, never required: listing needs only read, and a
+      // freshly picked handle is always readable (the pick grants read). A
+      // lapsed or partial write grant keeps the files visible read-only; failed
+      // writes raise Reconnect (see `save`).
+      const writable = await this.queryPermission(handle)
+      this.linkGranted = writable
+      this.linkPaused = !writable
+      this.fs = this.fsFor(handle)
     }
     this.publishLink()
     await this.refreshTree()
-    const meta = await manager.get(id)
     const wanted = meta?.openFiles ?? []
     for (const p of wanted) {
       if (epoch !== this.epoch) return
@@ -793,8 +1245,7 @@ export class WorkspaceController {
         if (list.length > 0) {
           await this.switchTo(list[0]!.id)
         } else {
-          this.store.set(currentWorkspaceIdAtom, null)
-          this.store.set(treeAtom, [])
+          this.noWorkspaceLeft()
         }
       }
     } catch (e) {
@@ -807,6 +1258,32 @@ export class WorkspaceController {
   /** A picked folder becomes the workspace itself; changes read and write directly to it. */
   async importFolderHandle(handle: LinkedFolder) {
     await this.openFolderHandle(handle)
+  }
+
+  /** A picked file becomes a workspace with that one file; `SingleFileFS` serves it. */
+  async importFileHandle(handle: LinkedFile) {
+    const manager = this.requireManager()
+    // Keyed by the file name, so opening the same file again switches to its existing
+    // workspace, mirroring how folders reuse theirs. The marker keeps a same-named
+    // folder and file from sharing one source key; folder hashing stays untouched.
+    const source = await sourceKey(handle.name, ['<single-file>'])
+    const existing = await manager.findBySource(source)
+    if (existing) {
+      await manager.setFileLink(existing.id, handle)
+      await this.refreshWorkspaces()
+      await this.switchTo(existing.id)
+      this.notify(
+        'info',
+        `"${existing.name}" is already open, so it was switched to. Delete it under Recent workspaces to open this file again.`,
+      )
+      return
+    }
+    const meta = await manager.create(handle.name, source, 'file')
+    await manager.setFileLink(meta.id, handle)
+    await this.refreshWorkspaces()
+    await this.switchTo(meta.id)
+    if (this.active !== handle.name) await this.openFile(handle.name)
+    this.notify('info', `Opened "${meta.name}".`)
   }
 
   async exportCurrentZip() {
@@ -830,8 +1307,13 @@ export class WorkspaceController {
     if (typeof window === 'undefined' || !w.showDirectoryPicker) {
       throw new Error('Your browser does not support opening folders')
     }
-    const folder = await w.showDirectoryPicker({ mode: 'readwrite' })
-    return folder as LinkedFolder
+    try {
+      const folder = await w.showDirectoryPicker({ mode: 'readwrite' })
+      return folder as LinkedFolder
+    } catch (e) {
+      if (isAbort(e)) return null
+      throw e
+    }
   }
 
   private async openFolderHandle(handle: LinkedFolder) {
@@ -844,6 +1326,7 @@ export class WorkspaceController {
     if (existing) {
       await manager.setLink(existing.id, handle)
       await this.refreshWorkspaces()
+      this.store.set(sidebarOpenAtom, true)
       await this.switchTo(existing.id)
       this.notify(
         'info',
@@ -854,10 +1337,16 @@ export class WorkspaceController {
     const meta = await manager.create(name, source)
     await manager.setLink(meta.id, handle)
     await this.refreshWorkspaces()
-    await this.switchTo(meta.id)
     this.store.set(sidebarOpenAtom, true)
-    const firstFile = await this.firstFilePath(handle)
-    if (firstFile) await this.openFile(firstFile)
+    await this.switchTo(meta.id)
+    // The first file is a convenience: a folder that cannot be read (yet) must
+    // still open; refreshTree surfaces exactly how far the access reaches.
+    try {
+      const firstFile = await this.firstFilePath(handle)
+      if (firstFile) await this.openFile(firstFile)
+    } catch {
+      /* unreadable folder: the tree already shows the permission or error state */
+    }
     this.notify('info', `Opened "${meta.name}".`)
   }
 
@@ -885,13 +1374,19 @@ export class WorkspaceController {
     const handle = this.linkHandle
     this.store.set(
       linkedFolderAtom,
-      handle ? { name: handle.name, paused: this.linkPaused } : null,
+      handle
+        ? {
+            name: handle.name,
+            paused: this.linkPaused,
+            single: handle.kind === 'file',
+          }
+        : null,
     )
     // Ask on open and after a failed write. A dismissed prompt stays dismissed until then.
     this.store.set(reconnectPromptAtom, this.linkPaused)
   }
 
-  private async queryPermission(handle: LinkedFolder): Promise<boolean> {
+  private async queryPermission(handle: LinkedFolder | LinkedFile): Promise<boolean> {
     try {
       return (await handle.queryPermission({ mode: 'readwrite' })) === 'granted'
     } catch {
@@ -899,9 +1394,53 @@ export class WorkspaceController {
     }
   }
 
+  /** The workspace reads and writes through an FS shaped like the linked handle. */
+  private fsFor(handle: LinkedFolder | LinkedFile): WorkspaceFS {
+    return handle.kind === 'file'
+      ? new SingleFileFS(handle as FileSystemFileHandle & PermissionedHandle)
+      : new FolderFS(handle as FileSystemDirectoryHandle & PermissionedHandle)
+  }
+
   private setLinkPaused(paused: boolean) {
     this.linkPaused = paused
     this.publishLink()
+  }
+
+  /**
+   * Re-checks the link permission when the tab regains focus or becomes visible. The
+   * File System Access API has no change events, so a revoke or an external disk change
+   * is otherwise only noticed by a failed save. While `linkGranted` says granted and
+   * the browser now says otherwise, that lapse is new: the reconnect prompt is raised
+   * again even if an earlier one was dismissed, because access still does not work.
+   */
+  async revalidateOnFocus() {
+    if (document.visibilityState === 'hidden') return
+    const handle = this.linkHandle
+    if (!handle || this.revalidating) return
+    // One refresh at a time: a switch's own first listing or a Ctrl-R covers it. A
+    // paused link still gets checked, so it is the one state that can recover here.
+    if (this.store.get(treeStatusAtom).state === 'loading') return
+    this.revalidating = true
+    const epoch = this.epoch
+    try {
+      const granted = await this.queryPermission(handle)
+      if (this.epoch !== epoch || this.linkHandle !== handle) return
+      const wasGranted = this.linkGranted
+      this.linkGranted = granted
+      if (wasGranted && !granted) {
+        this.setLinkPaused(true)
+      } else if (granted && this.linkPaused) {
+        // Access can also come back without a click (browser site settings): rebuild
+        // the FS exactly like reconnectFolder does, folder and file alike.
+        this.fs = this.fsFor(handle)
+        this.setLinkPaused(false)
+        await this.refreshTree()
+      } else if (granted) {
+        await this.refreshTree()
+      }
+    } finally {
+      this.revalidating = false
+    }
   }
 
   /**
@@ -922,8 +1461,9 @@ export class WorkspaceController {
         )
         return
       }
+      this.linkGranted = true
       this.setLinkPaused(false)
-      this.fs = new FolderFS(handle)
+      this.fs = this.fsFor(handle)
       await this.refreshTree()
       this.notify('info', `Connected "${handle.name}".`)
     } catch (e) {

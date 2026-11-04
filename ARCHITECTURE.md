@@ -124,23 +124,38 @@ Ex commands are wired to workspace actions:
 | `:e <path>` | Open an existing file by exact or unique fuzzy path |
 | `:bnext` / `:bprev` | Cycle to the next or previous tab |
 | `:Explore` / `:Ex` / `:E` / `:Sexplore` / `:Vexplore` | Open and focus the file tree |
+| `:grep [text]` / `:gr` | Open live grep, optionally with a starting query |
+
+### Live Grep
+
+`Mod-Shift-F` (also `:grep` and the palette command "Search: Live Grep in Files") opens a Telescope-style finder: type to search file contents across the workspace, with a context preview, and Enter jumps to the line (`controller.openFileAt`). Ctrl-N/P/J/K move the selection.
+
+It is built so typing never touches disk:
+
+- **Warm index.** `GrepService` (`src/workspace/grepService.ts`) reads files in the background as soon as the tree loads and ships the bytes to a Web Worker (`grep.worker.ts`), where `GrepIndex` (`grep.ts`) holds decoded text. Without `Worker` (tests) the same index runs in-process.
+- **Fast search.** Native `indexOf` over the text, smart case (any uppercase makes the query exact), one hit per line, and line numbers computed only for hits. A query that extends the previous one rescans only the files the previous one matched.
+- **Responsive.** The search yields every ~10 ms; a new keystroke cancels it. Results stream in batches, open tabs are searched first, and the list is virtualized. The cap is 500 hits (100 per file).
+- **Bounded.** Skipped: `.git`/`node_modules` (pruned by `FolderFS`), images and other binary extensions, files over 1 MiB, files with NUL bytes, and everything past 200 MB of text (the finder says the index is partial). Reads use a concurrency of 2 because `FolderFS` serializes calls and a user action must not queue behind the whole index.
+- **Fresh.** `refreshTree` and tree patches diff entries by path and size; saves call `touch(path)`. A file edited outside the app with an unchanged size is picked up on the next change to it or when the workspace is reopened.
+- **Read-only.** Grep reads only the linked folder through `WorkspaceFS` and renders results as text, never as HTML.
 
 ### Worktree Sidebar
 
 The sidebar is an extension of the paper, not a developer dashboard. It is quiet, typographic, and secondary to the editor canvas.
 
-**Layout.** A flush-left, canvas-colored overlay, 240 px wide (`w-sidebar`), full height, separated by a 1 px `line` divider. No shadow, no radius, no blur. It overlays the editor, so opening it never moves the editor column.
+**Layout.** A flush-left, canvas-colored overlay, 240 px wide (`w-sidebar`; 200 px, `w-sidebar-compact`, below 1280 px), full height, separated by a 1 px `line` divider. No shadow, no radius, no blur. It overlays the editor, so opening it never moves the editor column.
 
-**Header (40 px).** A single `Files` label in `muted`. The expand-all / collapse-all toolbar buttons and the floating edge chevron were removed; the tree is driven by keyboard commands instead.
+**Header (36 px).** The linked folder name in uppercase 11 px mono (`muted`). New file, Collapse all and Close buttons appear on hover or focus. There is no floating edge chevron.
 
 **Toggles.** `:Explore` (and its variants), `Mod-B`, and the command palette open the tree. `q` closes it. `Ctrl-W W` toggles focus between the tree and the editor without closing the tree. `Ctrl-R` refreshes the workspace. The sidebar closes automatically below 1024 px, and when the editor is clicked or receives keyboard input.
 
 **Tree.** Typographic, not an icon tree.
- * 28 px rows, 12 px indentation per level, faint `line` guide lines at 40% opacity.
+ * 28 px rows, 12 px indentation per level, faint `line` guide lines.
  * No file-type icons. One subtle chevron per folder, rotating 90° when open.
  * The active file uses a `surface` background with `font-medium` text; other rows are `muted`.
  * Dirty buffers carry a 4 px `accent` dot at the row's right edge.
- * No expand-all or collapse-all controls, and no per-row action buttons.
+ * Dirty state comes from `openBuffersAtom`; folders above a dirty file show the dot too.
+ * No per-row action buttons. Rename and delete go through keys and the context menu.
 
 **Keyboard** follows a netrw-style scheme. Arrow-key equivalents remain available for accessibility.
 
@@ -163,11 +178,11 @@ The sidebar is an extension of the paper, not a developer dashboard. It is quiet
 
 **Finder.** A compact, softly surfaced input with a small top inset, in the Apple style: no heavy border until focused, then a faint accent ring. It filters the tree in place.
 
-**Linked folder.** The picked folder is the source of truth for the workspace. It is surfaced only when it needs attention: when readwrite permission lapses, a quiet "Not connected" row with Reconnect appears. There is no app-side mirror.
+**Linked folder.** The picked folder is the source of truth for the workspace. It is surfaced only when it needs attention: when readwrite permission lapses, a quiet "Not connected" row with Reconnect appears. There is no app-side mirror. Listing is read-first: the tree is shown whenever the browser allows reading, and write access is requested separately via Reconnect, so a lapsed edit grant keeps the files visible read-only instead of hiding them.
 
-**Footer.** One 10 px mono line: the linked folder name (or "No folder"), the file count, and the aggregate file size. A footnote, not a status bar.
+**Footer (28 px).** 10 px mono. The storage engine on the left (`Folder`, `File`, or `—`) and key hints on the right. File count and size sit in the tooltip. A footnote, not a status bar. `workspaceTreeAtom` and `activeFileIdAtom` alias `treeAtom` and `activePathAtom`.
 
-**Conflicts resolved against the original spec.** `Enter` renames in the spec; here `Enter` opens a file or toggles a folder, as in every file tree, and `F2` renames, so both actions stay reachable. The spec's per-row action buttons and bulk expand/collapse toolbar are omitted in favor of netrw-style tree keys.
+**Conflicts resolved against the original spec.** `Enter` renames in the spec; here `Enter` opens a file or toggles a folder, as in every file tree, and `F2` renames, so both actions stay reachable. The spec's `fs.worker.ts`, OPFS and IndexedDB engine are not used: storage is folder-only. Per-row action buttons are omitted in favor of netrw-style tree keys.
 
 ## Security Policy
 

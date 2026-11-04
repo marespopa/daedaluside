@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { VimStatus } from '../state/editorAtoms'
 import { createEditor, type EditorHandle } from './createEditor'
 import { runEx } from './testing/runEx'
+import { setReviewPane } from '../review/reviewPane'
 import { bindVimHost, openExPrompt, vimModeLabel } from './vimMode'
 import { loadVimEnabled } from '../state/editorAtoms'
 
@@ -16,6 +17,10 @@ function fakeHost() {
     open: vi.fn(),
     cycle: vi.fn(),
     explore: vi.fn(),
+    grep: vi.fn(),
+    diffOpen: vi.fn(),
+    diffClose: vi.fn(),
+    diffFile: vi.fn(),
     notify: vi.fn(),
     status: vi.fn(),
   }
@@ -32,6 +37,7 @@ afterEach(() => {
   handles.forEach((h) => h.destroy())
   handles = []
   bindVimHost(null)
+  setReviewPane(null)
 })
 
 describe('vim mode toggle', () => {
@@ -187,6 +193,18 @@ describe('Ex commands', () => {
     expect(host.explore).toHaveBeenCalledTimes(6)
   })
 
+  it('opens live grep with :grep and an optional query', () => {
+    const host = fakeHost()
+    bindVimHost(host)
+    const h = editor()
+    h.setVim(true)
+
+    run(h, 'grep')
+    run(h, 'grep needle')
+    expect(host.grep).toHaveBeenNthCalledWith(1, '')
+    expect(host.grep).toHaveBeenNthCalledWith(2, 'needle')
+  })
+
   it('maps :w, :q, :wq and :bd to the workspace host', () => {
     const host = fakeHost()
     bindVimHost(host)
@@ -239,5 +257,108 @@ describe('Ex commands', () => {
     run(h, 'w other.txt')
     expect(host.save).not.toHaveBeenCalled()
     expect(host.notify).toHaveBeenCalledWith('Writing to another file is not supported')
+  })
+})
+
+describe('diff review commands', () => {
+  it(':Gdiffsplit and :DiffviewOpen open the review in their layout, :DiffviewClose closes it', () => {
+    const host = fakeHost()
+    bindVimHost(host)
+    const h = editor()
+    h.setVim(true)
+    runEx(h.view, 'Gdiffsplit')
+    expect(host.diffOpen).toHaveBeenLastCalledWith('split')
+    runEx(h.view, 'DiffviewOpen')
+    expect(host.diffOpen).toHaveBeenLastCalledWith('unified')
+    runEx(h.view, 'DiffviewClose')
+    expect(host.diffClose).toHaveBeenCalledTimes(1)
+  })
+
+  function pane(h: EditorHandle) {
+    const jump = vi.fn()
+    const edge = vi.fn(() => 2)
+    const act = vi.fn()
+    setReviewPane({ view: h.view, jump, edge, act })
+    return { jump, edge, act }
+  }
+  const keys = (h: EditorHandle, ...ks: string[]) => {
+    const cm = getCM(h.view)!
+    for (const k of ks) Vim.handleKey(cm, k, 'user')
+  }
+
+  it('does nothing for ]c, ]f and friends outside the review pane', () => {
+    const host = fakeHost()
+    bindVimHost(host)
+    const h = editor('a\nb\nc')
+    h.setVim(true)
+    const { jump } = pane(editor('other'))
+    keys(h, ']', 'c', '[', 'c', ']', 'f', '[', 'f')
+    expect(jump).not.toHaveBeenCalled()
+    expect(host.diffFile).not.toHaveBeenCalled()
+  })
+
+  it('steps hunks and files with counts in the review pane', () => {
+    const host = fakeHost()
+    bindVimHost(host)
+    const h = editor('a\nb\nc')
+    h.setVim(true)
+    const { jump } = pane(h)
+    keys(h, ']', 'c')
+    expect(jump).toHaveBeenLastCalledWith(1)
+    keys(h, '[', 'c')
+    expect(jump).toHaveBeenLastCalledWith(-1)
+    keys(h, '3', ']', 'c')
+    expect(jump).toHaveBeenLastCalledWith(3)
+    keys(h, ']', 'f')
+    expect(host.diffFile).toHaveBeenLastCalledWith(1)
+    keys(h, '[', 'f')
+    expect(host.diffFile).toHaveBeenLastCalledWith(-1)
+  })
+
+  it('gg and G go to the first and last hunk in the review, and keep Vim meaning elsewhere', () => {
+    const h = editor('  a\nb\nc\nd')
+    h.setVim(true)
+    keys(h, 'G')
+    expect(h.view.state.doc.lineAt(h.view.state.selection.main.head).number).toBe(4)
+    keys(h, 'g', 'g')
+    expect(h.view.state.selection.main.head).toBe(2) // first non-blank of line 1
+    keys(h, '3', 'G')
+    expect(h.view.state.doc.lineAt(h.view.state.selection.main.head).number).toBe(3)
+
+    const { edge } = pane(h)
+    keys(h, 'g', 'g')
+    expect(edge).toHaveBeenLastCalledWith('first')
+    expect(h.view.state.doc.lineAt(h.view.state.selection.main.head).number).toBe(3)
+    keys(h, 'G')
+    expect(edge).toHaveBeenLastCalledWith('last')
+  })
+
+  it('dp and do put and obtain the hunk in the review pane only', () => {
+    const h = editor('a\nb\nc')
+    h.setVim(true)
+    const { act } = pane(editor('other'))
+    keys(h, 'd', 'p', 'd', 'o')
+    expect(act).not.toHaveBeenCalled()
+
+    const { act: here } = pane(h)
+    keys(h, 'd', 'p')
+    expect(here).toHaveBeenLastCalledWith('put')
+    keys(h, 'd', 'o')
+    expect(here).toHaveBeenLastCalledWith('obtain')
+    expect(h.view.state.doc.toString()).toBe('a\nb\nc')
+  })
+
+  it('keeps s, X and u for the main editor while a review pane is open elsewhere', () => {
+    const h = editor('abc\ndef')
+    h.setVim(true)
+    const { act } = pane(editor('other'))
+    keys(h, 's')
+    expect(h.view.state.doc.toString()).toBe('bc\ndef') // s substitutes a character
+    keys(h, '<Esc>')
+    keys(h, 'l', 'X')
+    expect(h.view.state.doc.toString()).toBe('c\ndef')
+    keys(h, 'u')
+    expect(h.view.state.doc.toString()).not.toBe('c\ndef') // u still undoes
+    expect(act).not.toHaveBeenCalled()
   })
 })

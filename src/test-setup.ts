@@ -16,6 +16,15 @@ beforeEach(() => {
   vi.spyOn(WorkspaceManager.prototype, 'setLink').mockImplementation(async (id, h) => {
     links.set(id, h)
   })
+  // Same in-memory treatment for single-file links: file handles are classes too.
+  vi.spyOn(WorkspaceManager.prototype, 'getFileLink').mockImplementation(
+    async (id) => links.get(`file:${id}`) as never,
+  )
+  vi.spyOn(WorkspaceManager.prototype, 'setFileLink').mockImplementation(
+    async (id, h) => {
+      links.set(`file:${id}`, h)
+    },
+  )
 })
 
 // jsdom's KeyboardEvent does not give Enter a keyCode, but some editor deps check it.

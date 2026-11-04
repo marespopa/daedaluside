@@ -45,6 +45,8 @@ const pairs: [string, string, number][] = [
   ['diff-add-fg', 'canvas', 4.5],
   ['diff-remove-fg', 'canvas', 4.5],
   ['accent', 'canvas', 3],
+  // The change marker is a non-text indicator, like accent.
+  ['diff-change-fg', 'canvas', 3],
 ]
 
 // Code colors are read as text, so every one needs AA on both backgrounds.
@@ -79,6 +81,7 @@ describe.each(THEMES.map((t) => [t.id, t.kind] as const))('%s theme', (id, kind)
         'accent',
         'canvas',
         'diff-add-fg',
+        'diff-change-fg',
         'diff-remove-fg',
         'line',
         'muted',

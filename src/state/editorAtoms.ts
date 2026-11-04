@@ -90,7 +90,22 @@ export interface VimStatus {
 export const vimStatusAtom = atom<VimStatus | null>(null)
 
 export const activeBufferAtom = atom<BufferMeta>(initialBuffer)
+/** The active tab is an image: shown by ImageViewer instead of the editor. */
+export const activeImageAtom = atom<{
+  path: string
+  bytes: Uint8Array
+  mime: string
+} | null>(null)
 export const editorHandleAtom = atom<EditorHandle | null>(null)
 export const paletteOpenAtom = atom(false)
 /** Palette input text. A leading `>` means commands; anything else searches files. */
 export const paletteQueryAtom = atom('')
+/** The live grep finder (Mod-Shift-F). */
+export const grepOpenAtom = atom(false)
+export const grepQueryAtom = atom('')
+/** Background index progress; null until a workspace has been indexed. */
+export const grepStatusAtom = atom<{
+  indexed: number
+  total: number
+  partial: boolean
+} | null>(null)

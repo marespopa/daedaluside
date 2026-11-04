@@ -10,7 +10,15 @@ import {
   normalizePath,
   splitPath,
 } from './path'
+import { IGNORED } from './archive'
 import { FSError, type Entry, type WorkspaceFS } from './types'
+
+function isPermissionError(e: unknown): boolean {
+  return (
+    e instanceof DOMException &&
+    (e.name === 'NotAllowedError' || e.name === 'SecurityError')
+  )
+}
 
 function mapDomException(e: unknown, expected: 'file' | 'dir'): never {
   if (e instanceof FSError) throw e
@@ -103,10 +111,10 @@ export class FolderFS implements WorkspaceFS {
     })
   }
 
-  async listAll(): Promise<Entry[]> {
+  async listAll(onProgress?: (count: number) => void): Promise<Entry[]> {
     return this.enqueue(async () => {
       const entries: Entry[] = []
-      await this.walk(this.root, '', entries)
+      await this.walk(this.root, '', entries, onProgress)
       return depthFirst(entries)
     })
   }
@@ -115,15 +123,29 @@ export class FolderFS implements WorkspaceFS {
     dir: FileSystemDirectoryHandle,
     path: string,
     out: Entry[],
+    onProgress?: (count: number) => void,
   ): Promise<void> {
     const items: { name: string; handle: FileSystemHandle; size?: number }[] = []
-    for await (const [name, h] of dir.entries()) {
-      if (h.kind === 'file') {
-        const f = await (h as FileSystemFileHandle).getFile()
-        items.push({ name, handle: h, size: f.size })
-      } else {
-        items.push({ name, handle: h })
+    try {
+      for await (const [name, h] of dir.entries()) {
+        if (h.kind === 'file') {
+          let size = 0
+          try {
+            size = (await (h as FileSystemFileHandle).getFile()).size
+          } catch (e) {
+            // A lost grant must surface as a permission problem; anything else
+            // (a file that vanished mid-scan) still lists the file.
+            if (isPermissionError(e)) throw e
+          }
+          items.push({ name, handle: h, size })
+        } else if (!IGNORED.has(name)) {
+          items.push({ name, handle: h })
+        }
+        if (items.length % 50 === 0) onProgress?.(out.length + items.length)
       }
+    } catch (e) {
+      // One unreadable directory must not empty the whole tree; the root still fails.
+      if (path === '' || isPermissionError(e)) throw e
     }
     for (const { name, handle, size } of items) {
       const cp = joinPath(path, name)
@@ -131,9 +153,10 @@ export class FolderFS implements WorkspaceFS {
         out.push({ name, path: cp, kind: 'file', size: size ?? 0 })
       } else {
         out.push({ name, path: cp, kind: 'dir' })
-        await this.walk(handle as FileSystemDirectoryHandle, cp, out)
+        await this.walk(handle as FileSystemDirectoryHandle, cp, out, onProgress)
       }
     }
+    onProgress?.(out.length)
   }
 
   async stat(path: string): Promise<Entry | null> {

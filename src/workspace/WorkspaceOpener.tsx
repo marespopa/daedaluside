@@ -1,18 +1,23 @@
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { MOD_KEY_LABEL } from '../lib/platform'
 import { openExPrompt } from '../editor/vimMode'
-import { editorHandleAtom, paletteOpenAtom, vimEnabledAtom } from '../state/editorAtoms'
+import {
+  editorHandleAtom,
+  paletteOpenAtom,
+  paletteQueryAtom,
+  vimEnabledAtom,
+} from '../state/editorAtoms'
 import {
   currentWorkspaceIdAtom,
   noticeAtom,
   settingsOpenAtom,
-  treeAtom,
   workspacesAtom,
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
-import FileFinder from './FileFinder'
+import { Icon } from '../ui'
 import { useFolderPicker } from './useFolderPicker'
+import { useFilePicker } from './useFilePicker'
 import { useController } from './useWorkspace'
 
 const KEYMAP: { keys: string; label: string }[] = [
@@ -22,19 +27,23 @@ const KEYMAP: { keys: string; label: string }[] = [
   { keys: `${MOD_KEY_LABEL}+O`, label: 'Switch Workspace' },
 ]
 
+/** Quiet dashed-border styling shared by the opener's actions. */
+const ACTION_CLASS =
+  'rounded-xl border border-dashed border-line px-6 py-4 text-sm text-muted transition-colors hover:border-accent hover:text-text'
+
 /**
  * The blank page, shown when no file is open. A single quiet column on the canvas: no
  * cards, no borders. Typing starts an untitled file, so the page works like paper.
+ * Searching uses the command palette, not a finder of its own.
  */
 export default function WorkspaceOpener() {
   const controller = useController()
-  const { pick } = useFolderPicker()
+  const { pick: pickFolder } = useFolderPicker()
+  const { pick: pickFile } = useFilePicker()
   const store = useStore()
   const status = useAtomValue(workspaceStatusAtom)
   const workspaces = useAtomValue(workspacesAtom)
   const currentId = useAtomValue(currentWorkspaceIdAtom)
-  const tree = useAtomValue(treeAtom)
-  const [query, setQuery] = useState('')
   const setNotice = useSetAtom(noticeAtom)
 
   const ready = status.state === 'ready'
@@ -67,7 +76,7 @@ export default function WorkspaceOpener() {
     return () => window.removeEventListener('keydown', onKey)
   }, [controller, store, hasWorkspace])
 
-  const openFolder = async () => {
+  const openWith = async (pick: () => Promise<void>) => {
     if (!ready) {
       setNotice({
         kind: 'info',
@@ -83,6 +92,15 @@ export default function WorkspaceOpener() {
         text: e instanceof Error ? e.message : String(e),
       })
     }
+  }
+
+  const openFolder = () => openWith(pickFolder)
+  const openFile = () => openWith(pickFile)
+
+  /** Opens the command palette in file mode, as Mod-P does, from a click. */
+  const searchFiles = () => {
+    store.set(paletteQueryAtom, '')
+    store.set(paletteOpenAtom, true)
   }
 
   return (
@@ -101,23 +119,43 @@ export default function WorkspaceOpener() {
         </header>
 
         {hasWorkspace ? (
-          <FileFinder
-            tree={tree}
-            value={query}
-            onChange={setQuery}
-            onOpen={(path) => void controller.openFile(path)}
-            label="Search files"
-            className="w-full"
-            listClassName="max-h-56 overflow-auto px-2 pb-2"
-          />
+          <label className="flex h-9 w-full items-center gap-2 rounded-md bg-surface px-3 text-muted focus-within:text-text focus-within:ring-1 focus-within:ring-accent/50">
+            <Icon name="search" className="size-3.5 shrink-0" />
+            <input
+              type="text"
+              readOnly
+              aria-label="Search files"
+              aria-haspopup="dialog"
+              placeholder="Search files"
+              spellCheck={false}
+              autoComplete="off"
+              onClick={searchFiles}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  searchFiles()
+                }
+              }}
+              className="min-w-0 flex-1 cursor-pointer bg-transparent text-sm text-text outline-none placeholder:text-muted"
+            />
+          </label>
         ) : (
-          <button
-            type="button"
-            onClick={() => void openFolder()}
-            className="rounded-xl border border-dashed border-line px-6 py-4 text-sm text-muted transition-colors hover:border-accent hover:text-text"
-          >
-            Open folder
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => void openFolder()}
+              className={ACTION_CLASS}
+            >
+              Open folder
+            </button>
+            <button
+              type="button"
+              onClick={() => void openFile()}
+              className={ACTION_CLASS}
+            >
+              Open file
+            </button>
+          </div>
         )}
 
         <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-5 gap-y-2 text-left text-xs text-muted">

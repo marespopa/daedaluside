@@ -3,7 +3,7 @@ import { joinPath, normalizePath } from './path'
 import { FSError, type Entry, type WorkspaceFS } from './types'
 
 /** Folders that are never imported: huge, regenerable, and not useful as AI context. */
-const IGNORED = new Set(['.git', 'node_modules', '__MACOSX'])
+export const IGNORED = new Set(['.git', 'node_modules', '__MACOSX'])
 export const MAX_IMPORT_BYTES = 256 * 1024 * 1024
 export const MAX_IMPORT_FILES = 20_000
 
@@ -14,8 +14,11 @@ export type ImportEntry =
 const ignored = (path: string) => path.split('/').some((s) => IGNORED.has(s))
 
 /** Every entry of the workspace, depth-first. One backend call, not one per directory. */
-export function walkTree(fs: WorkspaceFS): Promise<Entry[]> {
-  return fs.listAll()
+export function walkTree(
+  fs: WorkspaceFS,
+  onProgress?: (count: number) => void,
+): Promise<Entry[]> {
+  return fs.listAll(onProgress)
 }
 
 export async function exportZip(fs: WorkspaceFS): Promise<Uint8Array> {

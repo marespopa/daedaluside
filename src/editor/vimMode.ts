@@ -1,7 +1,9 @@
 import { Compartment, Prec, type Extension } from '@codemirror/state'
 import { EditorView, ViewPlugin, type PluginValue } from '@codemirror/view'
 import { getCM, Vim, vim, type CodeMirror, type ExParams } from '@replit/codemirror-vim'
+import { getReviewPane, isReviewView } from '../review/reviewPane'
 import type { VimModeLabel, VimStatus } from '../state/editorAtoms'
+import type { ReviewLayout } from '../state/gitAtoms'
 
 /**
  * What Vim commands do to the workspace. The app binds it once (useWorkspaceLifecycle);
@@ -14,6 +16,13 @@ export interface VimHost {
   open(name: string): void
   cycle(delta: 1 | -1): void
   explore(): void
+  /** Opens live grep, optionally with a starting query. */
+  grep(query: string): void
+  /** Opens the diff review of the active file. */
+  diffOpen(layout: ReviewLayout): void
+  diffClose(): void
+  /** Opens the next (or previous) modified file from git status in the review. */
+  diffFile(delta: number): void
   notify(text: string): void
   status(next: VimStatus): void
 }
@@ -51,6 +60,66 @@ export function vimModeLabel(e: { mode: string; subMode?: string }): VimModeLabe
   }
 }
 
+/**
+ * Hunk and file navigation for the review pane. The Vim registry is global, so each
+ * command first checks that its editor is the review pane and does nothing elsewhere.
+ */
+function registerReviewKeys() {
+  const inReview = (cm: CodeMirror) => isReviewView(cm.cm6)
+  const step = (name: string, keys: string, run: (n: number) => void) => {
+    Vim.defineAction(name, (cm, args) => {
+      if (inReview(cm)) run(args.repeat ?? 1)
+    })
+    Vim.mapCommand(keys, 'action', name, {}, { context: 'normal' })
+  }
+  step('reviewNextHunk', ']c', (n) => getReviewPane()?.jump(n))
+  step('reviewPrevHunk', '[c', (n) => getReviewPane()?.jump(-n))
+  step('reviewNextFile', ']f', (n) => host?.diffFile(n))
+  step('reviewPrevFile', '[f', (n) => host?.diffFile(-n))
+  // gg and G are motions so `dgg` and `vG` keep working. In the review they go to the
+  // first or last hunk; anywhere else (or with a count) they behave as Vim does.
+  const edge = (name: string, keys: string, forward: boolean) => {
+    Vim.defineMotion(name, (cm, head, args) => {
+      const pane = inReview(cm) && !args.repeatIsExplicit ? getReviewPane() : null
+      let line = pane?.edge(forward ? 'last' : 'first')
+      if (pane && line == null) return head
+      if (line == null) {
+        line = forward ? cm.lastLine() : cm.firstLine()
+        if (args.repeatIsExplicit) line = args.repeat! - cm.getOption('firstLineNumber')
+      }
+      const text = cm.getLine(line)
+      const col = text.search(/\S/)
+      return { line, ch: col === -1 ? text.length : col } as typeof head
+    })
+    Vim.mapCommand(
+      keys,
+      'motion',
+      name,
+      { forward, explicitRepeat: true, linewise: true, toJumplist: true },
+      { context: 'normal' },
+    )
+  }
+  // dp puts the hunk into the index, do obtains HEAD's text for it. `d` is a complete
+  // operator, so the second key can only arrive as a motion in operator-pending mode. The
+  // motion performs the action and stays put (the pane is read-only, so the delete is
+  // empty); anywhere else, or after another operator, it is not a motion at all.
+  // The single-key mappings (s, <Space>, X, u) mean something in the main editor, so they
+  // are handled on the review view itself; see reviewKeys.
+  const act = (name: string, key: string, action: 'put' | 'obtain') => {
+    Vim.defineMotion(name, (cm, head, _args, _vim, input) => {
+      const pane = getReviewPane()
+      if (!inReview(cm) || !pane || input?.operator !== 'delete') return null
+      pane.act(action)
+      return head
+    })
+    Vim.mapCommand(key, 'motion', name, {}, { context: 'operatorPending' })
+  }
+  act('reviewPutHunk', 'p', 'put')
+  act('reviewObtainHunk', 'o', 'obtain')
+  edge('reviewFirstHunk', 'gg', false)
+  edge('reviewLastHunk', 'G', true)
+}
+
 function registerVimCommands() {
   // Vim passes the text after a command as argString. A lone `!` is the bang of `:q!`.
   const argOf = (p: ExParams) => p.argString?.trim() ?? ''
@@ -75,11 +144,16 @@ function registerVimCommands() {
   Vim.defineEx('bnext', 'bn', () => host?.cycle(1))
   Vim.defineEx('bprev', 'bp', () => host?.cycle(-1))
   // netrw's drawer commands all open the same left-hand tree and focus it.
+  Vim.defineEx('grep', 'gr', (_cm, p) => host?.grep(argOf(p)))
   Vim.defineEx('Explore', 'Ex', () => host?.explore())
   Vim.defineEx('Explore', 'E', () => host?.explore())
   Vim.defineEx('explore', 'explore', () => host?.explore())
   Vim.defineEx('Sexplore', 'Sex', () => host?.explore())
   Vim.defineEx('Vexplore', 'Vex', () => host?.explore())
+  Vim.defineEx('Gdiffsplit', 'Gdiffsplit', () => host?.diffOpen('split'))
+  Vim.defineEx('DiffviewOpen', 'DiffviewOpen', () => host?.diffOpen('unified'))
+  Vim.defineEx('DiffviewClose', 'DiffviewClose', () => host?.diffClose())
+  registerReviewKeys()
   // Escape from insert mode without reaching for the Esc key.
   Vim.map('jk', '<Esc>', 'insert')
   Vim.map('jj', '<Esc>', 'insert')

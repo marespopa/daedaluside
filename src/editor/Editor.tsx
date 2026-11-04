@@ -1,5 +1,6 @@
 import { useAtomValue, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
+import DiffReview from '../review/DiffReview'
 import { editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
 import {
   activePathAtom,
@@ -9,6 +10,7 @@ import {
 import WorkspaceOpener from '../workspace/WorkspaceOpener'
 import { useController } from '../workspace/useWorkspace'
 import { createEditor } from './createEditor'
+import ImageViewer from './ImageViewer'
 import EditorSkeleton from './EditorSkeleton'
 
 export default function Editor() {
@@ -45,6 +47,8 @@ export default function Editor() {
   return (
     <div className="relative h-full" data-editor-width={width}>
       <div ref={host} className="h-full" data-testid="editor" />
+      <ImageViewer />
+      <DiffReview />
       {restoring && <EditorSkeleton />}
       {/* Not while storage is starting: the workspace is about to open a file. */}
       {activePath === null && status.state !== 'loading' && <WorkspaceOpener />}

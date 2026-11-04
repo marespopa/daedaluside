@@ -8,10 +8,16 @@ export type StoreName = (typeof STORES)[number]
 /** Where a workspace's linked folder handle is kept in SETTINGS. */
 export const linkKey = (workspaceId: string) => `link:${workspaceId}`
 
+/**
+ * The file handle of a single-file workspace. Separate key so existing `link:` writes
+ * (raw handles persisted by earlier versions) keep their shape.
+ */
+export const fileLinkKey = (workspaceId: string) => `flink:${workspaceId}`
+
 export const DB_NAME = 'daedalus'
 /**
  * Version 2 added path-keyed file stores. Version 3 keyed files by id with a parent index.
- * Version 4 removes the IndexedDB file stores now that workspace files live in OPFS.
+ * Version 4 removes the IndexedDB file stores: workspace files live in the linked folder.
  */
 const DB_VERSION = 4
 
@@ -29,7 +35,7 @@ export function openDB(
       const tx = req.transaction!
       const oldVersion = event.oldVersion
       if (oldVersion > 0 && oldVersion < 4) {
-        // Old file stores are gone; workspace files now live in OPFS.
+        // Old file stores are gone; workspace files live in the linked folder now.
         if (db.objectStoreNames.contains('fs-meta')) db.deleteObjectStore('fs-meta')
         if (db.objectStoreNames.contains('fs-blob')) db.deleteObjectStore('fs-blob')
       }

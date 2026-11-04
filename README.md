@@ -4,7 +4,7 @@
 
 ## Overview
 
-**DaedalusIDE** is a lightweight, browser-based development environment engineered for focused, cost-optimized software craft. Built on top of **CodeMirror 6**, **React**, and the **Origin Private File System (OPFS)**, it delivers a local-first workspace with zero server overhead.
+**DaedalusIDE** is a lightweight, browser-based development environment engineered for focused, cost-optimized software craft. Built on top of **CodeMirror 6**, **React**, and the **File System Access API**, it delivers a local-first workspace with zero server overhead.
 
 Instead of running autonomous AI agents that burn through API budgets, DaedalusIDE uses a structured **Plan \\rightarrow Review \\rightarrow Execute** workflow. High-context models map out architectural blueprints, which you review visually before running execution tasks through cheap or local models (e.g., Ollama or Gemini Flash).
 
@@ -32,7 +32,7 @@ graph TD
         State["App State<br/><i>Jotai Atoms</i>"]
         
         subgraph Storage ["Local Storage"]
-            FS["Workspace FS<br/><i>OPFS</i>"]
+            FS["Workspace FS<br/><i>Linked folder</i>"]
             IDB["Settings & Sessions<br/><i>IndexedDB</i>"]
         end
         
@@ -78,7 +78,7 @@ graph TD
   - **Plan:** Generate implementation blueprints using high-reasoning models (Gemini Flash, Claude 3.5 Sonnet, DeepSeek).
   - **Review:** Visually inspect diffs, logic breakdowns, and file operations before executing code modifications.
   - **Execute:** Apply changes using zero-cost local LLMs (`Ollama`) or low-cost cloud models.
-- **Native Browser Storage (OPFS):** Direct, near-native file system performance inside browser storage.
+- **Linked Folders:** Edit files in place in a folder you pick; nothing is copied.
 - **Zero Backend Dependency:** Static asset hosting via Netlify CDN; network calls go straight from client to provider APIs.
 
 ## Getting Started
@@ -116,7 +116,7 @@ graph TD
 - **UI & Framework:** React, Tailwind CSS
 - **Editor Core:** CodeMirror 6
 - **State Management:** Jotai
-- **Storage:** Origin Private File System (OPFS), IndexedDB
+- **Storage:** File System Access API (linked folder), IndexedDB for metadata
 - **Security:** Web Crypto API (`SubtleCrypto`)
 - **Hosting:** Netlify CDN
 

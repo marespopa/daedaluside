@@ -22,6 +22,12 @@ export interface PermissionedHandle {
 /** The folder the user picked for a workspace. */
 export type LinkedFolder = FileSystemDirectoryHandle & PermissionedHandle
 
+/**
+ * The single file the user picked for a one-file workspace. File handles expose the
+ * same permission methods as directory handles.
+ */
+export type LinkedFile = FileSystemFileHandle & PermissionedHandle
+
 export interface Entry {
   /** Base name. */
   name: string
@@ -43,7 +49,8 @@ export interface WorkspaceFS {
    * Every entry of the workspace in depth-first order (see `depthFirst` in `path.ts`).
    * One call for the whole tree, so backends can avoid a round trip per directory.
    */
-  listAll(): Promise<Entry[]>
+  /** `onProgress` receives the running entry count while a large folder is read. */
+  listAll(onProgress?: (count: number) => void): Promise<Entry[]>
   stat(path: string): Promise<Entry | null>
   read(path: string): Promise<string>
   readBytes(path: string): Promise<Uint8Array>

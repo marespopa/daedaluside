@@ -22,6 +22,7 @@ import {
   lineNumbers,
   type ViewUpdate,
 } from '@codemirror/view'
+import { diffGutter } from './diffGutter'
 import { loadLanguage } from './languages'
 import { editorTheme } from './theme'
 import { vimCompartment, vimExtension } from './vimMode'
@@ -72,6 +73,7 @@ export function createEditor({
     history(),
     drawSelection(),
     lineNumbers(),
+    diffGutter,
     highlightActiveLine(),
     highlightActiveLineGutter(),
     indentOnInput(),

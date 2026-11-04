@@ -16,6 +16,7 @@
   --diff-mix: 14%;
   --diff-add-fg: #15803d;
   --diff-remove-fg: #b91c1c;
+  --diff-change-fg: #b45309;
   --syntax-keyword: #7c3aed;
   --syntax-string: #15803d;
   --syntax-number: #b45309;
@@ -37,6 +38,7 @@
   --diff-mix: 14%;
   --diff-add-fg: #1a7f37;
   --diff-remove-fg: #cf222e;
+  --diff-change-fg: #9a6700;
   --syntax-keyword: #cf222e;
   --syntax-string: #0a3069;
   --syntax-number: #0550ae;
@@ -58,6 +60,7 @@
   --diff-mix: 14%;
   --diff-add-fg: #4f6a00;
   --diff-remove-fg: #b52a27;
+  --diff-change-fg: #8a6100;
   --syntax-keyword: #566400;
   --syntax-string: #126b66;
   --syntax-number: #b0306b;
@@ -79,6 +82,7 @@
   --diff-mix: 14%;
   --diff-add-fg: #3d7a3c;
   --diff-remove-fg: #c9372c;
+  --diff-change-fg: #986801;
   --syntax-keyword: #a626a4;
   --syntax-string: #3b7a38;
   --syntax-number: #86600a;
@@ -100,6 +104,7 @@
   --diff-mix: 16%;
   --diff-add-fg: #4ade80;
   --diff-remove-fg: #f87171;
+  --diff-change-fg: #fbbf24;
   --syntax-keyword: #c4b5fd;
   --syntax-string: #86efac;
   --syntax-number: #fdba74;
@@ -121,6 +126,7 @@
   --diff-mix: 16%;
   --diff-add-fg: #3fb950;
   --diff-remove-fg: #f85149;
+  --diff-change-fg: #d29922;
   --syntax-keyword: #ff7b72;
   --syntax-string: #a5d6ff;
   --syntax-number: #79c0ff;
@@ -142,6 +148,7 @@
   --diff-mix: 16%;
   --diff-add-fg: #98c379;
   --diff-remove-fg: #ea7d84;
+  --diff-change-fg: #e5c07b;
   --syntax-keyword: #c678dd;
   --syntax-string: #98c379;
   --syntax-number: #d19a66;
@@ -163,6 +170,7 @@
   --diff-mix: 16%;
   --diff-add-fg: #50fa7b;
   --diff-remove-fg: #ff6e6e;
+  --diff-change-fg: #f1fa8c;
   --syntax-keyword: #ff79c6;
   --syntax-string: #f1fa8c;
   --syntax-number: #bd93f9;
@@ -182,6 +190,11 @@
     var(--diff-remove-fg) var(--diff-mix),
     var(--canvas)
   );
+  --diff-change-bg: color-mix(
+    in srgb,
+    var(--diff-change-fg) var(--diff-mix),
+    var(--canvas)
+  );
 }
 
 @theme inline {
@@ -195,4 +208,6 @@
   --color-diff-add-fg: var(--diff-add-fg);
   --color-diff-remove: var(--diff-remove-bg);
   --color-diff-remove-fg: var(--diff-remove-fg);
+  --color-diff-change: var(--diff-change-bg);
+  --color-diff-change-fg: var(--diff-change-fg);
 }
