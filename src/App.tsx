@@ -1,21 +1,22 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import CommandPalette from './editor/CommandPalette'
 import GrepFinder from './editor/GrepFinder'
 import DiffStat from './editor/DiffStat'
 import Editor from './editor/Editor'
 import VimStatus from './editor/VimStatus'
 import { activeBufferAtom, editorWidthAtom } from './state/editorAtoms'
-import { activePathAtom, sidebarOpenAtom } from './state/workspaceAtoms'
+import { activePathAtom, settingsOpenAtom, sidebarOpenAtom } from './state/workspaceAtoms'
 import { IconButton } from './ui'
 import FileTree from './workspace/FileTree'
 import HomeButton from './workspace/HomeButton'
 import Notice from './workspace/Notice'
 import ReconnectDialog from './workspace/ReconnectDialog'
 import SaveButton from './workspace/SaveButton'
-import SettingsDialog from './workspace/SettingsDialog'
 import Tabs from './workspace/Tabs'
 import { useController, useWorkspaceLifecycle } from './workspace/useWorkspace'
+
+const SettingsDialog = lazy(() => import('./workspace/SettingsDialog'))
 
 export default function App() {
   useWorkspaceLifecycle()
@@ -24,6 +25,7 @@ export default function App() {
   const buffer = useAtomValue(activeBufferAtom)
   const [width, setWidth] = useAtom(editorWidthAtom)
   const setSidebarOpen = useSetAtom(sidebarOpenAtom)
+  const settingsOpen = useAtomValue(settingsOpenAtom)
   useEffect(() => {
     let wasNarrow = window.innerWidth < 1024
     if (wasNarrow) setSidebarOpen(false)
@@ -90,7 +92,7 @@ export default function App() {
       </div>
       <CommandPalette />
       <GrepFinder />
-      <SettingsDialog />
+      <Suspense fallback={null}>{settingsOpen && <SettingsDialog />}</Suspense>
       <ReconnectDialog />
       <Notice />
     </div>

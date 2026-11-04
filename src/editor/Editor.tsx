@@ -1,8 +1,8 @@
 import { useAtomValue, useStore } from 'jotai'
-import { useEffect, useRef } from 'react'
-import BranchReview from '../review/branch/BranchReview'
-import DiffReview from '../review/DiffReview'
-import { editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
+import { lazy, Suspense, useEffect, useRef } from 'react'
+import { branchReviewAtom } from '../review/branch/branchReviewAtoms'
+import { activeImageAtom, editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
+import { reviewOpenAtom } from '../state/gitAtoms'
 import {
   activePathAtom,
   snapshotAtom,
@@ -11,8 +11,12 @@ import {
 import WorkspaceOpener from '../workspace/WorkspaceOpener'
 import { useController } from '../workspace/useWorkspace'
 import { createEditor } from './createEditor'
-import ImageViewer from './ImageViewer'
 import EditorSkeleton from './EditorSkeleton'
+
+// Rarely-open views load on first use, keeping them out of the startup chunk.
+const DiffReview = lazy(() => import('../review/DiffReview'))
+const BranchReview = lazy(() => import('../review/branch/BranchReview'))
+const ImageViewer = lazy(() => import('./ImageViewer'))
 
 export default function Editor() {
   const host = useRef<HTMLDivElement>(null)
@@ -22,6 +26,9 @@ export default function Editor() {
   const status = useAtomValue(workspaceStatusAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const width = useAtomValue(editorWidthAtom)
+  const reviewOpen = useAtomValue(reviewOpenAtom)
+  const branchOpen = useAtomValue(branchReviewAtom) !== null
+  const image = useAtomValue(activeImageAtom)
   // Last session's file is being restored: show its place, not an empty editor.
   const restoring = status.state === 'loading' && snapshot?.activeFile != null
 
@@ -48,9 +55,11 @@ export default function Editor() {
   return (
     <div className="relative h-full" data-editor-width={width}>
       <div ref={host} className="h-full" data-testid="editor" />
-      <ImageViewer />
-      <DiffReview />
-      <BranchReview />
+      <Suspense fallback={null}>
+        {image && <ImageViewer />}
+        {reviewOpen && <DiffReview />}
+        {branchOpen && <BranchReview />}
+      </Suspense>
       {restoring && <EditorSkeleton />}
       {/* Not while storage is starting: the workspace is about to open a file. */}
       {activePath === null && status.state !== 'loading' && <WorkspaceOpener />}
