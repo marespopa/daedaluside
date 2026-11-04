@@ -22,19 +22,21 @@ const astro = LanguageDescription.of({
   async load() {
     const [html, ts] = await Promise.all([load('HTML'), load('TypeScript')])
     const tsParser = (ts.language as LRLanguage).parser
-    const language = (html.language as LRLanguage).configure({
-      // Added to HTML's own wrapper (script/style), not a replacement for it.
-      wrap: parseMixed((node, input) => {
-        // Mount on the leading Text node: cursors do not descend into a root mount.
-        if (node.name !== 'Text' || node.from !== 0) return null
-        const m = FRONTMATTER.exec(input.read(0, Math.min(input.length, 50_000)))
-        if (!m) return null
-        const from = m[0].indexOf('\n') + 1
-        const to = from + m[1]!.length
-        return to > from ? { parser: tsParser, overlay: [{ from, to }] } : null
-      }),
-      name: 'astro',
-    })
+    const language = (html.language as LRLanguage).configure(
+      {
+        // Added to HTML's own wrapper (script/style), not a replacement for it.
+        wrap: parseMixed((node, input) => {
+          // Mount on the leading Text node: cursors do not descend into a root mount.
+          if (node.name !== 'Text' || node.from !== 0) return null
+          const m = FRONTMATTER.exec(input.read(0, Math.min(input.length, 50_000)))
+          if (!m) return null
+          const from = m[0].indexOf('\n') + 1
+          const to = from + m[1]!.length
+          return to > from ? { parser: tsParser, overlay: [{ from, to }] } : null
+        }),
+      },
+      'astro',
+    )
     return new LanguageSupport(language, [html.support])
   },
 })

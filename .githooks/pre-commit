@@ -1,0 +1,7 @@
+#!/bin/sh
+# Block the commit unless the production build (what Netlify runs) passes.
+echo "pre-commit: npm run build"
+npm run build || {
+  echo "pre-commit: build failed, commit aborted." >&2
+  exit 1
+}

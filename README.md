@@ -103,13 +103,19 @@ graph TD
    npm install
    ```
 
-3. **Start the local development server:**
+3. **Enable the pre-commit hook** (runs `npm run build` and blocks the commit if it fails):
+
+   ```
+   git config core.hooksPath .githooks
+   ```
+
+4. **Start the local development server:**
 
    ```
    npm run dev
    ```
 
-4. Open your browser and navigate to `http://localhost:517
+5. Open your browser and navigate to `http://localhost:517
 
 ## Tech Stack
 
