@@ -21,6 +21,10 @@ function fakeHost() {
     diffOpen: vi.fn(),
     diffClose: vi.fn(),
     diffFile: vi.fn(),
+    branchOpen: vi.fn(),
+    branchStep: vi.fn(),
+    branchMark: vi.fn(),
+    branchReset: vi.fn(),
     notify: vi.fn(),
     status: vi.fn(),
   }
@@ -257,6 +261,46 @@ describe('Ex commands', () => {
     run(h, 'w other.txt')
     expect(host.save).not.toHaveBeenCalled()
     expect(host.notify).toHaveBeenCalledWith('Writing to another file is not supported')
+  })
+})
+
+describe('branch review commands', () => {
+  it(':BR and :BranchReview open the review, with an optional base', () => {
+    const host = fakeHost()
+    bindVimHost(host)
+    const h = editor()
+    h.setVim(true)
+    runEx(h.view, 'BR')
+    expect(host.branchOpen).toHaveBeenLastCalledWith('')
+    runEx(h.view, 'BranchReview main')
+    expect(host.branchOpen).toHaveBeenLastCalledWith('main')
+    runEx(h.view, 'BR origin/dev')
+    expect(host.branchOpen).toHaveBeenLastCalledWith('origin/dev')
+  })
+
+  it('steps, marks and resets through :BRNext, :BRPrev, :BRMarkReviewed and :BRReset', () => {
+    const host = fakeHost()
+    bindVimHost(host)
+    const h = editor()
+    h.setVim(true)
+    runEx(h.view, 'BRNext')
+    expect(host.branchStep).toHaveBeenLastCalledWith(1)
+    runEx(h.view, 'BRPrev')
+    expect(host.branchStep).toHaveBeenLastCalledWith(-1)
+    runEx(h.view, 'BRMarkReviewed')
+    expect(host.branchMark).toHaveBeenCalledTimes(1)
+    runEx(h.view, 'BRReset')
+    expect(host.branchReset).toHaveBeenCalledTimes(1)
+  })
+
+  it('matches names case-sensitively: :BRN is not a command', () => {
+    const host = fakeHost()
+    bindVimHost(host)
+    const h = editor()
+    h.setVim(true)
+    runEx(h.view, 'BRN')
+    expect(host.branchStep).not.toHaveBeenCalled()
+    expect(host.branchOpen).not.toHaveBeenCalled()
   })
 })
 

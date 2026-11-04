@@ -77,12 +77,12 @@ describe('workspace opener', () => {
     expect(store.get(activePathAtom)).toBeNull()
 
     const o = await opener()
-    expect(
-      within(o).getByText('Select a file or press Ctrl+K to begin.'),
-    ).toBeInTheDocument()
+    expect(within(o).getByText(/Workspace ready · 2 files/)).toBeInTheDocument()
     expect(within(o).queryByRole('button', { name: 'Open folder' })).toBeNull()
+    expect(within(o).queryByRole('button', { name: 'Open file' })).toBeNull()
+    expect(within(o).getByRole('button', { name: /Find in Files/ })).toBeInTheDocument()
 
-    await user.click(within(o).getByRole('textbox', { name: 'Search files' }))
+    await user.click(within(o).getByRole('button', { name: /Search Files/ }))
 
     expect(store.get(paletteOpenAtom)).toBe(true)
     const input = (await screen.findByRole('combobox')) as HTMLInputElement

@@ -68,6 +68,7 @@ describe('GitService', () => {
     disk.setFile('a.txt', enc('changed, longer\n'))
     disk.files.delete('src/b.txt')
     disk.setFile('new.txt', enc('n\n'))
+    svc.invalidateStatus()
     expect(Object.fromEntries(await svc.listChanged())).toEqual({
       'a.txt': 'modified',
       'src/b.txt': 'deleted',
@@ -128,5 +129,113 @@ describe('GitService staging', () => {
     disk.access = 'readonly'
     await expect(svc.writeIndex('a.txt', 'x\n')).rejects.toMatchObject({ name: 'NotAllowedError' })
     expect(await svc.readIndex('a.txt')).toBe('one\ntwo\nthree\n')
+  })
+})
+
+describe('GitService branch review', () => {
+  /** main has the init commit; feature adds, edits and deletes files on top of it. */
+  async function branched() {
+    const f = await fixture()
+    const { disk, fs } = f
+    await git.branch({ fs, dir: '/', ref: 'main', checkout: false }).catch(() => {})
+    const commit = async (message: string, files: Record<string, string | null>) => {
+      for (const [p, text] of Object.entries(files)) {
+        if (text === null) {
+          disk.files.delete(p)
+          await git.remove({ fs, dir: '/', filepath: p })
+        } else {
+          disk.setFile(p, p.endsWith('.bin') ? new Uint8Array([0, 1, 2]) : enc(text))
+          await git.add({ fs, dir: '/', filepath: p })
+        }
+      }
+      return git.commit({ fs, dir: '/', message, author })
+    }
+    const initial = await git.resolveRef({ fs, dir: '/', ref: 'HEAD' })
+    await git.branch({ fs, dir: '/', ref: 'base', object: initial })
+    await git.branch({ fs, dir: '/', ref: 'feature', checkout: true })
+    await commit('feature', {
+      'a.txt': 'one\nTWO\nthree\n',
+      'src/new.ts': 'export {}\n',
+      'src/b.txt': null,
+      'img.bin': '',
+    })
+    return { ...f, commit, initial }
+  }
+
+  it('resolves branches, short oids and annotated tags to commits', async () => {
+    const { svc, fs, initial } = await branched()
+    expect(await svc.resolveBase('base')).toBe(initial)
+    expect(await svc.resolveBase(initial.slice(0, 8))).toBe(initial)
+    await git.annotatedTag({ fs, dir: '/', ref: 'v1', object: initial, message: 'v1', tagger: author })
+    expect(await svc.resolveBase('v1')).toBe(initial)
+    expect(await svc.resolveBase('nope')).toBeNull()
+  })
+
+  it('names the current branch and the default base', async () => {
+    const { svc } = await branched()
+    expect(await svc.currentBranch()).toBe('feature')
+    // fixture's first branch is master or main depending on git config; either is a default.
+    expect(['main', 'master']).toContain(await svc.defaultBase())
+  })
+
+  it('lists added, modified and deleted files against the merge base, sorted', async () => {
+    const { svc, initial } = await branched()
+    const res = await svc.branchChanges(initial)
+    expect(res.kind).toBe('ok')
+    if (res.kind !== 'ok') return
+    expect(res.mergeBase).toBe(initial)
+    expect(res.files.map((f) => [f.path, f.status])).toEqual([
+      ['a.txt', 'M'],
+      ['img.bin', 'A'],
+      ['src/b.txt', 'D'],
+      ['src/new.ts', 'A'],
+    ])
+    const a = res.files[0]!
+    expect(a.mbOid).not.toBeNull()
+    expect(a.headOid).not.toBeNull()
+  })
+
+  it('uses the merge base, not the base tip, when the base moved on', async () => {
+    const { svc, fs, commit, initial } = await branched()
+    await git.checkout({ fs, dir: '/', ref: 'base' })
+    await commit('base moved', { 'other.txt': 'x\n' })
+    const baseTip = await git.resolveRef({ fs, dir: '/', ref: 'base' })
+    await git.checkout({ fs, dir: '/', ref: 'feature' })
+    const res = await svc.branchChanges(baseTip)
+    expect(res.kind === 'ok' && res.mergeBase).toBe(initial)
+    expect(res.kind === 'ok' && res.files.some((f) => f.path === 'other.txt')).toBe(false)
+  })
+
+  it('reports no changes when the branch equals the base', async () => {
+    const { svc, initial, fs } = await branched()
+    await git.checkout({ fs, dir: '/', ref: 'base' })
+    const res = await svc.branchChanges(initial)
+    expect(res.kind === 'ok' && res.files).toEqual([])
+  })
+
+  it('reports unrelated histories as an error', async () => {
+    const { svc, fs, disk } = await branched()
+    await git.checkout({ fs, dir: '/', ref: 'feature' })
+    // An orphan commit made with commit plumbing: a root commit that shares no history.
+    const tree = await git.writeTree({ fs, dir: '/', tree: [] })
+    const orphan = await git.writeCommit({
+      fs,
+      dir: '/',
+      commit: { message: 'orphan', tree, parent: [], author: { ...author, timestamp: 1, timezoneOffset: 0 }, committer: { ...author, timestamp: 1, timezoneOffset: 0 } },
+    })
+    void disk
+    const res = await svc.branchChanges(orphan)
+    expect(res).toEqual({ kind: 'error', message: 'No common ancestor with base' })
+  })
+
+  it('classes blobs as text, binary or large', async () => {
+    const { svc, commit } = await branched()
+    await commit('big', { 'big.txt': 'x'.repeat(1024 * 1024 + 1) })
+    const res = await svc.branchChanges((await svc.resolveBase('base'))!)
+    if (res.kind !== 'ok') throw new Error('expected ok')
+    const byPath = Object.fromEntries(res.files.map((f) => [f.path, f]))
+    expect(await svc.readBlobAt(byPath['a.txt']!.headOid!)).toEqual({ kind: 'text', text: 'one\nTWO\nthree\n' })
+    expect((await svc.readBlobAt(byPath['img.bin']!.headOid!)).kind).toBe('binary')
+    expect((await svc.readBlobAt(byPath['big.txt']!.headOid!)).kind).toBe('large')
   })
 })

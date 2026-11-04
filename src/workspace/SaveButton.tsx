@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { activeBufferAtom } from '../state/editorAtoms'
 import { activePathAtom, openBuffersAtom } from '../state/workspaceAtoms'
 import { IconButton } from '../ui'
+import { MOD_KEY_LABEL } from '../lib/platform'
 import { useController } from './useWorkspace'
 
 /** Header action: immediately saves the active file. */
@@ -23,11 +24,18 @@ export default function SaveButton() {
     }
   }
 
+  // Autosave covers the idle case, so the button only appears when it has something to do.
+  if (!activePath || (!buffer.dirty && !saving && !saveError)) return null
+
   return (
     <IconButton
       label={saving ? 'Saving' : saveError ? 'Save failed' : 'Save'}
       title={
-        saving ? 'Saving…' : saveError ? 'Save failed — retry (Ctrl+S)' : 'Save (Ctrl+S)'
+        saving
+          ? 'Saving…'
+          : saveError
+            ? `Save failed — retry (${MOD_KEY_LABEL}+S)`
+            : `Save (${MOD_KEY_LABEL}+S)`
       }
       icon={saving ? undefined : 'save'}
       disabled={!activePath || !buffer.dirty || saving}

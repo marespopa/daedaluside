@@ -132,6 +132,7 @@ export default function CommandPalette() {
     }))
     return [
       { id: 'save', label: 'File: Save', run: () => void controller.saveActive() },
+      { id: 'copy-text', label: 'File: Copy Contents', run: () => void controller.copyActiveText() },
       {
         id: 'close',
         label: 'File: Close Buffer',
@@ -231,6 +232,11 @@ export default function CommandPalette() {
           store.set(grepQueryAtom, '')
           store.set(grepOpenAtom, true)
         },
+      },
+      {
+        id: 'branch-review',
+        label: 'Branch Review: Open against main (Ctrl-Shift-B)',
+        run: () => void controller.openBranchReview(),
       },
       {
         id: 'diff-unified',

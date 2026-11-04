@@ -1,0 +1,538 @@
+import { Compartment, EditorState, Prec } from '@codemirror/state'
+import { EditorView, lineNumbers } from '@codemirror/view'
+import { getCM } from '@replit/codemirror-vim'
+import { useAtomValue, useStore } from 'jotai'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { loadLanguage } from '../../editor/languages'
+import { editorTheme } from '../../editor/theme'
+import { openExPrompt, vimExtension } from '../../editor/vimMode'
+import { vimEnabledAtom } from '../../state/editorAtoms'
+import { treeProgressAtom, treeStatusAtom } from '../../state/workspaceAtoms'
+import {
+  branchApprovedAtom,
+  branchConfirmAtom,
+  branchMarksAtom,
+  branchReviewAtom,
+} from '../../state/branchReviewAtoms'
+import type { BranchFile } from '../../workspace/gitService'
+import { useController } from '../../workspace/useWorkspace'
+import { computeHunks, splitLines, type Hunk } from '../diff'
+import { hunkAt, paneMode, reviewField, reviewTheme, setReviewHunks } from '../diffView'
+import { getReviewPane, hunkAnchors, setReviewPane, stepHunk } from '../reviewPane'
+import { isReviewed } from './marks'
+
+/** The patch of the branch against its merge base, one file at a time. */
+export default function BranchReview() {
+  const open = useAtomValue(branchReviewAtom) !== null
+  return open ? <Surface /> : null
+}
+
+/** True while Vim is mid-command (a count, an operator, a visual selection, a `:` line). */
+function vimBusy(view: EditorView): boolean {
+  const cm = getCM(view)
+  const vs = cm?.state.vim
+  return (
+    !!cm?.state.dialog ||
+    !!vs?.visualMode ||
+    !!vs?.insertMode ||
+    !!vs?.inputState?.operator ||
+    (vs?.inputState?.keyBuffer?.length ?? 0) > 0
+  )
+}
+
+interface Row {
+  kind: 'dir' | 'file'
+  depth: number
+  name: string
+  index: number
+  file?: BranchFile
+}
+
+/** Directory headings and file rows, in path order (the files arrive sorted). */
+function buildRows(files: readonly BranchFile[]): Row[] {
+  const rows: Row[] = []
+  let shown: string[] = []
+  files.forEach((file, index) => {
+    const parts = file.path.split('/')
+    const dirs = parts.slice(0, -1)
+    let common = 0
+    while (common < shown.length && common < dirs.length && shown[common] === dirs[common]) common++
+    for (let d = common; d < dirs.length; d++) {
+      rows.push({ kind: 'dir', depth: d, name: `${dirs[d]}/`, index: -1 })
+    }
+    shown = dirs
+    rows.push({ kind: 'file', depth: dirs.length, name: parts[parts.length - 1]!, index, file })
+  })
+  return rows
+}
+
+function Surface() {
+  const store = useStore()
+  const controller = useController()
+  const s = useAtomValue(branchReviewAtom)!
+  const marks = useAtomValue(branchMarksAtom)
+  const confirm = useAtomValue(branchConfirmAtom)
+  const approved = useAtomValue(branchApprovedAtom)
+  const treeLoading = useAtomValue(treeStatusAtom).state === 'loading'
+  const progress = useAtomValue(treeProgressAtom)
+  const host = useRef<HTMLDivElement>(null)
+  const list = useRef<HTMLDivElement>(null)
+  const viewRef = useRef<EditorView | null>(null)
+  const language = useRef(new Compartment())
+  const pendingS = useRef(0)
+  const pendingHunk = useRef<Hunk | null>(null)
+  const pendingBracket = useRef<{ dir: 1 | -1; at: number } | null>(null)
+  const [placeholder, setPlaceholder] = useState<{ text: string; meta: string | null } | null>(null)
+
+  const file: BranchFile | undefined = s.files[s.index]
+  const rows = useMemo(() => buildRows(s.files), [s.files])
+  const reviewedCount = s.files.filter((f) => isReviewed(marks, f)).length
+  const totals = useMemo(() => {
+    let add = 0
+    let del = 0
+    for (const st of Object.values(s.stats)) {
+      add += st.add
+      del += st.del
+    }
+    return { add, del }
+  }, [s.stats])
+
+  const hunkUnderCursor = useCallback((): Hunk | null => {
+    const view = viewRef.current
+    if (!view) return null
+    const { hunks } = view.state.field(reviewField)
+    const anchors = hunkAnchors(hunks, view.state.doc.lines)
+    const line = view.state.doc.lineAt(view.state.selection.main.head).number
+    const i = hunkAt(anchors, hunks, line, true)
+    return i === -1 ? null : hunks[i]!
+  }, [])
+
+  /** Runs one review key; returns false when the key is not the review's. */
+  const press = useCallback(
+    (key: string, from: 'index' | 'canvas'): boolean => {
+      const cur = store.get(branchReviewAtom)
+      if (!cur) return false
+      const f = cur.files[cur.index]
+      const pending = store.get(branchConfirmAtom)
+      if (pending) {
+        if (key === 'y' || key === 'Enter') {
+          store.set(branchConfirmAtom, null)
+          const target = cur.files.find((x) => x.path === pending.path)
+          if (target && pending.kind === 'file') void controller.revertBranchFile(target)
+          else if (target && pendingHunk.current)
+            void controller.revertBranchHunk(target, pendingHunk.current)
+        } else store.set(branchConfirmAtom, null)
+        return true
+      }
+      if (pendingS.current && Date.now() - pendingS.current < 1000) {
+        pendingS.current = 0
+        const h = hunkUnderCursor()
+        if (key === 'a' || key === 'r') {
+          if (!h || !f) controller.notifyInfo('Move the cursor onto a changed hunk first.')
+          else if (key === 'a') controller.approveBranchHunk(`${f.path}#${h.baseRange.start}:${h.newRange.start}`)
+          else {
+            pendingHunk.current = h
+            store.set(branchConfirmAtom, { kind: 'hunk', path: f.path })
+          }
+          return true
+        }
+        // Not a prefix of ours: fall through and treat the key normally.
+      }
+      pendingS.current = 0
+      // `]c` / `[c` step hunks. With Vim on, the canvas leaves them to Vim's own mappings.
+      if (pendingBracket.current && Date.now() - pendingBracket.current.at < 1000) {
+        const dir = pendingBracket.current.dir
+        pendingBracket.current = null
+        if (key === 'c') {
+          if (from === 'index') controller.setBranchFocus('canvas')
+          getReviewPane()?.jump(dir)
+          return true
+        }
+      }
+      pendingBracket.current = null
+      if ((key === ']' || key === '[') && !(from === 'canvas' && store.get(vimEnabledAtom))) {
+        pendingBracket.current = { dir: key === ']' ? 1 : -1, at: Date.now() }
+        return true
+      }
+      switch (key) {
+        case 'q':
+        case 'Escape':
+          controller.closeBranchReview()
+          return true
+        case 'n':
+        case 'L':
+        case 'ArrowRight':
+          if (from === 'canvas' && store.get(vimEnabledAtom) && key === 'ArrowRight') return false
+          controller.branchStep(1)
+          return true
+        case 'p':
+        case 'H':
+        case 'ArrowLeft':
+          if (from === 'canvas' && store.get(vimEnabledAtom) && key === 'ArrowLeft') return false
+          controller.branchStep(-1)
+          return true
+        case 'c':
+        case 'C':
+        case 'Enter':
+          if (from === 'canvas' && store.get(vimEnabledAtom) && key === 'Enter') return false
+          // Toggle: approving moves on to the next file; on a reviewed file it takes the approval back.
+          controller.toggleBranchReviewed()
+          return true
+        case 'a':
+        case ' ':
+          controller.toggleBranchReviewed()
+          return true
+        case 'r':
+        case 'X':
+          if (f) store.set(branchConfirmAtom, { kind: 'file', path: f.path })
+          return true
+        case 'w':
+        case 'W':
+          controller.toggleBranchMode()
+          return true
+        case 'e':
+          if (f) void controller.editBranchFile(f.path)
+          return true
+        case 's':
+          if (from !== 'canvas') return false
+          pendingS.current = Date.now()
+          return true
+        case 'j':
+        case 'ArrowDown':
+          if (from !== 'index') return false
+          controller.branchStep(1)
+          return true
+        case 'k':
+        case 'ArrowUp':
+          if (from !== 'index') return false
+          controller.branchStep(-1)
+          return true
+        case ':':
+          if (from !== 'index' || !viewRef.current) return false
+          return openExPrompt(viewRef.current)
+        default:
+          return false
+      }
+    },
+    [controller, store, hunkUnderCursor],
+  )
+  const pressRef = useRef(press)
+  useEffect(() => {
+    pressRef.current = press
+  }, [press])
+
+  // One read-only unified view, created with the surface; its document follows the selected file.
+  useEffect(() => {
+    const el = host.current
+    if (!el) return
+    const view = new EditorView({
+      parent: el,
+      state: EditorState.create({
+        doc: '',
+        extensions: [
+          reviewField,
+          paneMode.of('unified'),
+          reviewTheme,
+          lineNumbers(),
+          editorTheme,
+          language.current.of([]),
+          EditorState.readOnly.of(true),
+          EditorView.lineWrapping,
+          EditorView.contentAttributes.of({ 'aria-label': 'Branch patch' }),
+          Prec.highest(
+            EditorView.domEventHandlers({
+              keydown(e, v) {
+                if (e.ctrlKey || e.metaKey || e.altKey) return false
+                if (vimBusy(v)) return false
+                const handled = pressRef.current(e.key, 'canvas')
+                if (handled) e.preventDefault()
+                return handled
+              },
+            }),
+          ),
+          ...(store.get(vimEnabledAtom) ? [vimExtension] : []),
+        ],
+      }),
+    })
+    viewRef.current = view
+    const hunksAndAnchors = () => {
+      const { hunks } = view.state.field(reviewField)
+      return { hunks, anchors: hunkAnchors(hunks, view.state.doc.lines) }
+    }
+    setReviewPane({
+      view,
+      act(action) {
+        // dp approves the hunk; the other git actions have no meaning against a base branch.
+        if (action !== 'put') return
+        const h = hunkUnderCursor()
+        const f = store.get(branchReviewAtom)
+        const cur = f?.files[f.index]
+        if (h && cur) controller.approveBranchHunk(`${cur.path}#${h.baseRange.start}:${h.newRange.start}`)
+      },
+      jump(delta) {
+        const { anchors } = hunksAndAnchors()
+        const line = view.state.doc.lineAt(view.state.selection.main.head).number
+        const i = stepHunk(anchors, line, delta)
+        if (i === -1) return
+        const pos = view.state.doc.line(anchors[i]!).from
+        view.dispatch({
+          selection: { anchor: pos },
+          effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+        })
+      },
+      edge(which) {
+        const { anchors } = hunksAndAnchors()
+        if (anchors.length === 0) return null
+        return anchors[which === 'first' ? 0 : anchors.length - 1]! - 1
+      },
+    })
+    return () => {
+      setReviewPane(null)
+      viewRef.current = null
+      view.destroy()
+      el.replaceChildren()
+    }
+  }, [store, controller, hunkUnderCursor])
+
+  // Show the selected file's patch.
+  const path = file?.path
+  const mbOid = file?.mbOid
+  const headOid = file?.headOid
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view || !file) return
+    let stale = false
+    void controller.branchFileContent(file).then(async (c) => {
+      if (stale || viewRef.current !== view) return
+      const replace = (doc: string, hunks: Hunk[], base: string[]) =>
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: doc },
+          selection: { anchor: 0 },
+          effects: setReviewHunks.of({ hunks, base }),
+        })
+      if ('placeholder' in c) {
+        setPlaceholder({ text: c.placeholder, meta: null })
+        replace('', [], [])
+        return
+      }
+      setPlaceholder(null)
+      replace(c.current, computeHunks(c.base, c.current), splitLines(c.base))
+    }).catch(() => {
+      if (!stale) setPlaceholder({ text: '[Could not read this file]', meta: null })
+    })
+    void loadLanguage(file.path).then((l) => {
+      if (!stale && viewRef.current === view) {
+        view.dispatch({ effects: language.current.reconfigure(l?.extension ?? []) })
+      }
+    })
+    return () => {
+      stale = true
+    }
+    // The oids name the content; `file` itself changes identity with every stats update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controller, path, mbOid, headOid])
+
+  // Focus follows the index/canvas choice (Ctrl-W w flips it).
+  useEffect(() => {
+    if (s.status !== 'ready') return
+    if (s.focus === 'canvas') viewRef.current?.focus()
+    else list.current?.focus()
+  }, [s.focus, s.status])
+
+  // Keep the selected row in view.
+  useEffect(() => {
+    list.current
+      ?.querySelector('[aria-current="true"]')
+      ?.scrollIntoView?.({ block: 'nearest' })
+  }, [s.index])
+
+  const inspect = async () => {
+    if (!file) return
+    setPlaceholder((p) => (p ? { ...p, meta: 'Reading…' } : p))
+    const meta = await controller.branchFileMeta(file)
+    setPlaceholder((p) => (p ? { ...p, meta } : p))
+  }
+
+  const body =
+    s.status === 'loading' ? (
+      <div role="status" aria-label="Reading branch" className="animate-pulse p-3 font-mono text-xs">
+        <p className="mb-3 text-muted">
+          {treeLoading ? 'Opening workspace… ' : 'Reading changes… '}
+          {treeLoading && progress ? `${progress.done}${progress.total ? ` / ${progress.total}` : ''} files` : ''}
+        </p>
+        {[60, 85, 45, 70, 55, 80].map((w, i) => (
+          <div key={i} className="mb-2 h-3 rounded bg-surface" style={{ width: `${w}%` }} />
+        ))}
+      </div>
+    ) : s.status === 'error' ? (
+      <p role="alert" className="p-4 font-sans text-sm text-muted">
+        {s.message}
+      </p>
+    ) : s.files.length === 0 ? (
+      <p role="status" className="p-4 font-sans text-sm text-muted">
+        {s.mode === 'working'
+          ? 'Working tree is clean: no uncommitted changes.'
+          : `No differences from ${s.base}, committed or uncommitted.`}
+      </p>
+    ) : null
+
+  const stat = file ? s.stats[file.path] : undefined
+  const confirming = confirm
+    ? confirm.kind === 'file'
+      ? `Revert ${confirm.path} to base? y / n`
+      : `Revert this hunk in ${confirm.path} to base? y / n`
+    : null
+
+  return (
+    <div
+      className="absolute inset-0 z-20 flex flex-col bg-canvas"
+      data-testid="branch-review"
+    >
+      <header className="flex h-9 shrink-0 items-center gap-3 border-b border-line px-3 font-mono text-xs text-muted">
+        <span className="truncate text-text">
+          {s.mode === 'working' ? 'WORKING TREE' : 'BRANCH REVIEW'} [ {s.base}...
+          {s.mode === 'working' ? 'working tree' : s.branch} ]
+        </span>
+        <button
+          type="button"
+          onClick={() => controller.toggleBranchMode()}
+          className="shrink-0 rounded border border-line px-2 py-0.5 hover:bg-surface"
+          title="Toggle working-tree diff / diff with base (w)"
+        >
+          {s.mode === 'working' ? 'Working tree' : `vs ${s.base}`} ⇄
+        </button>
+        <span className="ml-auto shrink-0" data-testid="branch-totals">
+          {s.files.length} files •{' '}
+          {s.statsDone ? `+${totals.add} -${totals.del}` : '…'}
+          {(s.partial || !s.statsDone) && s.status === 'ready' && ' • Reading changes…'}
+        </span>
+      </header>
+      {body && <div className="min-h-0 flex-1 overflow-auto">{body}</div>}
+      {
+        // Always mounted, so the patch view exists before the branch has loaded.
+        <div className={`min-h-0 flex-1 flex-col md:flex-row ${body ? 'hidden' : 'flex'}`}>
+          <div
+            ref={list}
+            tabIndex={0}
+            role="listbox"
+            aria-label="Branch files"
+            className="max-h-[35%] w-full shrink-0 overflow-auto border-b border-line py-1 font-mono text-xs outline-none md:max-h-none md:w-[260px] md:border-b-0 md:border-r"
+            onKeyDown={(e) => {
+              if (e.ctrlKey || e.metaKey || e.altKey) return
+              if (pressRef.current(e.key, 'index')) {
+                e.preventDefault()
+                e.stopPropagation()
+              }
+            }}
+            onFocus={() =>
+              store.get(branchReviewAtom)?.focus !== 'index' && controller.setBranchFocus('index')
+            }
+          >
+            <div className="px-3 py-1 text-muted">
+              FILES ({Math.min(s.index + 1, s.files.length)}/{s.files.length})
+            </div>
+            {rows.map((r, i) =>
+              r.kind === 'dir' ? (
+                <div
+                  key={`d${i}`}
+                  className="truncate py-0.5 text-muted"
+                  style={{ paddingLeft: `${0.75 + r.depth}rem` }}
+                >
+                  {r.name}
+                </div>
+              ) : (
+                <FileRow
+                  key={r.file!.path}
+                  row={r}
+                  active={r.index === s.index}
+                  reviewed={isReviewed(marks, r.file!)}
+                  onSelect={() => {
+                    controller.branchSelect(r.index)
+                    controller.setBranchFocus('index')
+                    list.current?.focus()
+                  }}
+                />
+              ),
+            )}
+          </div>
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="flex h-8 shrink-0 items-center gap-3 border-b border-line px-3 font-mono text-xs text-muted">
+              <span className="truncate text-text">{file?.path}</span>
+              <span className="ml-auto shrink-0">
+                {stat ? `+${stat.add} -${stat.del}` : ''}
+                {file && approved.size > 0 && [...approved].some((k) => k.startsWith(`${file.path}#`))
+                  ? ' · approved hunks'
+                  : ''}
+              </span>
+            </div>
+            {placeholder && (
+              <div className="p-4 font-sans text-sm text-muted">
+                <button type="button" className="text-left underline-offset-2 hover:underline" onClick={inspect}>
+                  {placeholder.text}
+                </button>
+                {placeholder.meta && <p className="mt-2 font-mono text-xs">{placeholder.meta}</p>}
+              </div>
+            )}
+            <div
+              className={`min-h-0 flex-1 overflow-hidden ${placeholder ? 'hidden' : ''}`}
+            >
+              <div
+                ref={host}
+                className="h-full w-full"
+                onFocusCapture={() =>
+                  store.get(branchReviewAtom)?.focus !== 'canvas' && controller.setBranchFocus('canvas')
+                }
+              />
+            </div>
+          </section>
+        </div>
+      }
+      <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line px-3 font-mono text-xs text-muted">
+        {confirming ? (
+          <span role="alert" className="text-text">
+            {confirming}
+          </span>
+        ) : (
+          <span className="truncate">n / ← → next · c / Enter approve or undo · r revert · e edit · q quit</span>
+        )}
+        <span className="ml-auto shrink-0" data-testid="branch-progress">
+          Reviewed {reviewedCount} / {s.files.length} files
+        </span>
+      </footer>
+    </div>
+  )
+}
+
+function FileRow({
+  row,
+  active,
+  reviewed,
+  onSelect,
+}: {
+  row: Row
+  active: boolean
+  reviewed: boolean
+  onSelect: () => void
+}) {
+  const f = row.file!
+  return (
+    <div
+      role="option"
+      aria-selected={active}
+      aria-current={active}
+      data-reviewed={reviewed}
+      onClick={onSelect}
+      className={`relative flex cursor-pointer items-center gap-2 truncate py-0.5 pr-3 ${
+        active ? 'bg-surface' : ''
+      } ${reviewed ? 'text-muted' : 'text-text'}`}
+      style={{ paddingLeft: `${0.75 + row.depth}rem` }}
+    >
+      {active && <span className="absolute inset-y-0 left-0 w-0.5 bg-accent" aria-hidden="true" />}
+      <span className="truncate">{row.name}</span>
+      <span className="ml-auto shrink-0">
+        {f.status !== 'M' ? `${f.status} ` : ''}
+        {reviewed ? '[✓]' : '[•]'}
+      </span>
+    </div>
+  )
+}

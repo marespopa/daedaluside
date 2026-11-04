@@ -3,6 +3,7 @@ import { useEffect, useMemo } from 'react'
 import { bindVimHost } from '../editor/vimMode'
 import { matchFiles } from '../editor/paletteSearch'
 import { getReviewPane } from '../review/reviewPane'
+import { branchReviewAtom } from '../state/branchReviewAtoms'
 import { gitHeadAtom, reviewLayoutAtom, reviewOpenAtom } from '../state/gitAtoms'
 import {
   editorHandleAtom,
@@ -64,7 +65,15 @@ export function useWorkspaceLifecycle() {
       },
       diffOpen: (layout) => openReview(store, layout),
       diffClose: () => closeReview(store),
+      branchOpen: (base) => void controller.openBranchReview(base),
+      branchStep: (delta) => {
+        if (!store.get(branchReviewAtom)) return notify('No branch review is open')
+        controller.branchStep(delta, delta > 0)
+      },
+      branchMark: () => controller.markBranchReviewed(),
+      branchReset: () => controller.resetBranchReviewed(),
       diffFile: (delta) => {
+        if (store.get(branchReviewAtom)) return controller.branchStep(delta, delta > 0)
         const paths = reviewFiles(store)
         if (paths.length === 0) return notify('No modified files')
         const at = paths.indexOf(store.get(activePathAtom) ?? '')
@@ -90,7 +99,9 @@ export function useWorkspaceLifecycle() {
       if (secondW && Date.now() - windowPrefixAt < 1000) {
         e.preventDefault()
         e.stopPropagation()
-        toggleFileTreeFocus(store)
+        const br = store.get(branchReviewAtom)
+        if (br) controller.setBranchFocus(br.focus === 'index' ? 'canvas' : 'index')
+        else toggleFileTreeFocus(store)
       }
       windowPrefixAt = 0
     }
@@ -100,6 +111,11 @@ export function useWorkspaceLifecycle() {
         e.preventDefault()
         const active = store.get(activePathAtom)
         if (active) void controller.closeBuffer(active)
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.code === 'KeyB') {
+        e.preventDefault() // Chrome binds Ctrl-Shift-B to the bookmarks bar
+        void controller.openBranchReview()
         return
       }
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
@@ -145,6 +161,7 @@ export function useWorkspaceLifecycle() {
 
 /** Focuses the review pane while it is open, otherwise the editor. */
 export function focusEditor(store: ReturnType<typeof useStore>) {
+  if (store.get(branchReviewAtom)) return void getReviewPane()?.view.focus()
   const view = store.get(reviewOpenAtom)
     ? getReviewPane()?.view
     : store.get(editorHandleAtom)?.view

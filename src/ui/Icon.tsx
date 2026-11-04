@@ -9,6 +9,7 @@ export type IconName =
   | 'file-plus'
   | 'folder-plus'
   | 'save'
+  | 'copy'
   | 'pencil'
   | 'trash'
   | 'x'
@@ -24,6 +25,12 @@ export type IconName =
   | 'collapse-all'
 
 const paths: Record<IconName, ReactNode> = {
+  copy: (
+    <>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+    </>
+  ),
   save: (
     <>
       <path d="M4 3h13l4 4v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />

@@ -1,9 +1,11 @@
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect } from 'react'
 import { MOD_KEY_LABEL } from '../lib/platform'
+import { COMMAND_PREFIX } from '../editor/paletteSearch'
 import { openExPrompt } from '../editor/vimMode'
 import {
   editorHandleAtom,
+  grepOpenAtom,
   paletteOpenAtom,
   paletteQueryAtom,
   vimEnabledAtom,
@@ -12,24 +14,16 @@ import {
   currentWorkspaceIdAtom,
   noticeAtom,
   settingsOpenAtom,
+  treeAtom,
+  treeProgressAtom,
+  treeStatusAtom,
   workspacesAtom,
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
-import { Icon } from '../ui'
 import { useFolderPicker } from './useFolderPicker'
 import { useFilePicker } from './useFilePicker'
+import { useLoadEta } from './loadEstimate'
 import { useController } from './useWorkspace'
-
-const KEYMAP: { keys: string; label: string }[] = [
-  { keys: `${MOD_KEY_LABEL}+K`, label: 'Command Palette' },
-  { keys: `${MOD_KEY_LABEL}+P`, label: 'Search Files' },
-  { keys: `${MOD_KEY_LABEL}+N`, label: 'New Scratch Buffer' },
-  { keys: `${MOD_KEY_LABEL}+O`, label: 'Switch Workspace' },
-]
-
-/** Quiet dashed-border styling shared by the opener's actions. */
-const ACTION_CLASS =
-  'rounded-xl border border-dashed border-line px-6 py-4 text-sm text-muted transition-colors hover:border-accent hover:text-text'
 
 /**
  * The blank page, shown when no file is open. A single quiet column on the canvas: no
@@ -45,10 +39,17 @@ export default function WorkspaceOpener() {
   const workspaces = useAtomValue(workspacesAtom)
   const currentId = useAtomValue(currentWorkspaceIdAtom)
   const setNotice = useSetAtom(noticeAtom)
+  const treeStatus = useAtomValue(treeStatusAtom)
+  const progress = useAtomValue(treeProgressAtom)
+  const fileCount = useAtomValue(treeAtom).filter((e) => e.kind === 'file').length
+  const { eta, elapsed } = useLoadEta(progress)
 
   const ready = status.state === 'ready'
   const current = workspaces.find((w) => w.id === currentId)
   const hasWorkspace = currentId != null
+  // Folder actions wait for the tree to finish loading; switching workspaces never needs it.
+  const folderReady = ready && hasWorkspace && treeStatus.state === 'ready'
+  const loadingTree = hasWorkspace && treeStatus.state === 'loading'
   const title = current?.name ?? 'daedalus'
 
   // A printable key on the blank page starts an untitled file, and the key goes into it.
@@ -103,73 +104,89 @@ export default function WorkspaceOpener() {
     store.set(paletteOpenAtom, true)
   }
 
+  const showPalette = (q: string) => () => {
+    store.set(paletteQueryAtom, q)
+    store.set(paletteOpenAtom, true)
+  }
+
+  const paletteAction = { keys: `${MOD_KEY_LABEL}+K`, label: 'Command Palette', enabled: ready, run: showPalette('') }
+  const switchAction = {
+    keys: `${MOD_KEY_LABEL}+O`,
+    label: 'Switch Workspace',
+    enabled: ready,
+    run: showPalette(`${COMMAND_PREFIX}Workspace: `),
+  }
+  const actions: { keys?: string; label: string; enabled: boolean; run: () => void }[] = hasWorkspace
+    ? [
+        { keys: `${MOD_KEY_LABEL}+P`, label: 'Search Files', enabled: folderReady, run: searchFiles },
+        { keys: `${MOD_KEY_LABEL}+Shift+F`, label: 'Find in Files', enabled: folderReady, run: () => store.set(grepOpenAtom, true) },
+        { keys: `${MOD_KEY_LABEL}+N`, label: 'New Scratch Buffer', enabled: folderReady, run: () => void controller.startUntitled('') },
+        { keys: `${MOD_KEY_LABEL}+Shift+B`, label: 'Branch Review', enabled: folderReady, run: () => void controller.openBranchReview() },
+        paletteAction,
+        switchAction,
+      ]
+    : [
+        { label: 'Open folder', enabled: ready, run: () => void openFolder() },
+        { label: 'Open file', enabled: ready, run: () => void openFile() },
+        paletteAction,
+        switchAction,
+      ]
+
   return (
     <section
       aria-label="Workspace opener"
       className="absolute inset-x-0 top-0 bottom-10 flex items-center justify-center overflow-y-auto bg-canvas px-6 font-sans text-text"
     >
-      <div className="flex w-full max-w-[480px] flex-col items-center gap-8 py-12 text-center">
+      <div className="flex w-full max-w-[420px] flex-col items-center gap-8 py-12 text-center">
         <header className="space-y-2">
           <h2 className="text-sm font-medium text-text">{title}</h2>
-          <p className="text-xs text-muted">
-            {hasWorkspace
-              ? `Select a file or press ${MOD_KEY_LABEL}+K to begin.`
-              : 'Open a folder to start editing.'}
-          </p>
+          {treeStatus.state === 'error' && hasWorkspace ? (
+            <p role="alert" className="text-xs text-diff-remove-fg">
+              Could not read this folder: {treeStatus.message}
+            </p>
+          ) : treeStatus.state === 'permission' && hasWorkspace ? (
+            <p role="alert" className="text-xs text-diff-remove-fg">
+              Access to this folder expired. Reconnect it from the sidebar.
+            </p>
+          ) : (
+            <p className="text-xs text-muted" role={loadingTree || folderReady ? 'status' : undefined}>
+              {loadingTree
+                ? `Loading workspace…${progress ? ` ${progress.done}${progress.total ? ` / ${progress.total}` : ''} files` : ''}${eta ? ` · ${eta}` : elapsed ? ` · ${elapsed}` : ''}`
+                : folderReady
+                  ? `Workspace ready · ${fileCount} ${fileCount === 1 ? 'file' : 'files'}`
+                  : 'Open a folder to start editing.'}
+            </p>
+          )}
         </header>
 
-        {hasWorkspace ? (
-          <label className="flex h-9 w-full items-center gap-2 rounded-md bg-surface px-3 text-muted focus-within:text-text focus-within:ring-1 focus-within:ring-accent/50">
-            <Icon name="search" className="size-3.5 shrink-0" />
-            <input
-              type="text"
-              readOnly
-              aria-label="Search files"
-              aria-haspopup="dialog"
-              placeholder="Search files"
-              spellCheck={false}
-              autoComplete="off"
-              onClick={searchFiles}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  searchFiles()
-                }
-              }}
-              className="min-w-0 flex-1 cursor-pointer bg-transparent text-sm text-text outline-none placeholder:text-muted"
-            />
-          </label>
-        ) : (
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => void openFolder()}
-              className={ACTION_CLASS}
-            >
-              Open folder
-            </button>
-            <button
-              type="button"
-              onClick={() => void openFile()}
-              className={ACTION_CLASS}
-            >
-              Open file
-            </button>
+        {loadingTree && (
+          <div aria-hidden className="h-0.5 w-full overflow-hidden rounded bg-line">
+            {progress?.total ? (
+              <div
+                className="h-full bg-accent transition-[width] duration-150 motion-reduce:transition-none"
+                style={{ width: `${Math.min(100, Math.round((progress.done / progress.total) * 100))}%` }}
+              />
+            ) : (
+              <div className="h-full w-1/3 animate-pulse bg-accent motion-reduce:animate-none" />
+            )}
           </div>
         )}
 
-        <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-5 gap-y-2 text-left text-xs text-muted">
-          {KEYMAP.map((row) => (
-            <div key={row.keys} className="contents">
-              <dt>
-                <kbd className="rounded bg-line/50 px-1.5 py-0.5 font-mono text-[11px] text-muted">
-                  {row.keys}
-                </kbd>
-              </dt>
-              <dd>{row.label}</dd>
-            </div>
+        <ul className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3">
+          {actions.map((a) => (
+            <li key={a.label}>
+              <button
+                type="button"
+                disabled={!a.enabled}
+                onClick={a.run}
+                className="flex h-16 w-full flex-col items-center justify-center gap-1 rounded-lg border border-line px-2 text-xs text-text transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40"
+              >
+                <span>{a.label}</span>
+                {a.keys && <kbd className="font-mono text-[11px] text-muted">{a.keys}</kbd>}
+              </button>
+            </li>
           ))}
-        </dl>
+        </ul>
 
         {status.state === 'loading' && (
           <p className="text-xs text-muted">Starting local storage…</p>

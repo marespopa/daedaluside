@@ -51,7 +51,7 @@ export const treeStatusAtom = atom<TreeStatus>({ state: 'no-folder' })
  * Progress of a full folder read: entries found so far and, when a previous read of
  * the same workspace knew it, the expected total. Null unless the tree is loading.
  */
-export const treeProgressAtom = atom<{ done: number; total: number | null } | null>(null)
+export const treeProgressAtom = atom<{ done: number; total: number | null; startedAt?: number } | null>(null)
 /** Paths currently being deleted from the workspace. Tree actions stay disabled while non-empty. */
 export const deletingPathsAtom = atom<ReadonlySet<string>>(new Set<string>())
 export const openBuffersAtom = atom<OpenBuffer[]>([])

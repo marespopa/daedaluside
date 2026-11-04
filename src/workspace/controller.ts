@@ -3,6 +3,7 @@ import { EditorView, type ViewUpdate } from '@codemirror/view'
 import type { createStore } from 'jotai'
 import { setHunks } from '../editor/diffGutter'
 import type { EditorHandle } from '../editor/createEditor'
+import type { BranchMode } from '../state/branchReviewAtoms'
 import {
   activeBufferAtom,
   activeImageAtom,
@@ -12,7 +13,24 @@ import {
   initialBuffer,
   paletteOpenAtom,
 } from '../state/editorAtoms'
-import { computeHunks, type Hunk } from '../review/diff'
+import { computeHunks, diffTexts, type Hunk } from '../review/diff'
+import {
+  isReviewed,
+  loadMarks,
+  markFile,
+  marksKey,
+  pruneMarks,
+  saveMarks,
+  type Marks,
+} from '../review/branch/marks'
+import {
+  branchApprovedAtom,
+  branchConfirmAtom,
+  branchMarksAtom,
+  branchReviewAtom,
+  type BranchFocus,
+  type BranchReviewState,
+} from '../state/branchReviewAtoms'
 import type { ReviewAction } from '../review/reviewPane'
 import {
   minimalChange,
@@ -22,7 +40,7 @@ import {
   unstageHunkText,
 } from '../review/stage'
 import { DiffService } from '../review/diffService'
-import { fileDiffMapAtom, gitHeadAtom } from '../state/gitAtoms'
+import { fileDiffMapAtom, gitHeadAtom, reviewOpenAtom } from '../state/gitAtoms'
 import {
   activePathAtom,
   currentWorkspaceIdAtom,
@@ -58,7 +76,9 @@ import { downloadBytes, exportZip, walkTree } from './archive'
 import { openDB } from './db'
 import { startSnapshotSync } from './snapshot'
 import { FolderFS } from './folderFs'
-import { GitService } from './gitService'
+import { loadKnownCount, saveKnownCount } from './loadEstimate'
+import { BranchPrefetchService } from './branchPrefetchService'
+import { GitService, mapLimit, type BranchFile } from './gitService'
 import { GrepService } from './grepService'
 import type { GrepHit } from './grep'
 import { SingleFileFS } from './singleFileFs'
@@ -154,6 +174,7 @@ export class WorkspaceController {
   /** The file system `gitSvc` was built for, to notice a workspace switch or reconnect. */
   private gitFor: WorkspaceFS | null = null
   private diffSvc: DiffService | null = null
+  private prefetchSvc: BranchPrefetchService | null = null
   private gitTimer: ReturnType<typeof setTimeout> | undefined
   /** Orders diff requests: only the newest may touch the editor. */
   private diffSeq = 0
@@ -258,7 +279,15 @@ export class WorkspaceController {
    * `permission` state (reading may still be re-granted from a click), anything
    * else the `error` state, so no caller is left with an unhandled promise.
    */
-  async refreshTree() {
+  private lastTreeRefresh = 0
+
+  /**
+   * `silent` walks in the background without the loading state, for a tree that is already
+   * shown (a focus revalidation must not look like a reload).
+   */
+  async refreshTree(opts: { silent?: boolean } = {}) {
+    this.lastTreeRefresh = Date.now()
+    const silent = opts.silent === true && this.store.get(treeStatusAtom).state === 'ready'
     const fs = this.fs
     if (!fs) {
       this.store.set(treeAtom, [])
@@ -266,21 +295,29 @@ export class WorkspaceController {
       this.syncGit()
       return
     }
-    this.store.set(treeStatusAtom, { state: 'loading' })
+    if (!silent) this.store.set(treeStatusAtom, { state: 'loading' })
+    // Git does not need the tree: scan status while the tree is still being walked.
+    this.gitSvc?.invalidateStatus()
+    this.syncGit()
     // The last full read of this workspace is the best guess at the total.
-    const total = this.knownCounts.get(this.wsId ?? '') ?? null
-    this.store.set(treeProgressAtom, { done: 0, total })
+    const total =
+      this.knownCounts.get(this.wsId ?? '') ?? (this.wsId ? loadKnownCount(this.wsId) : null)
+    const startedAt = Date.now()
+    if (!silent) this.store.set(treeProgressAtom, { done: 0, total, startedAt })
     try {
       const entries = await walkTree(fs, (done) => {
-        if (this.fs === fs) this.store.set(treeProgressAtom, { done, total })
+        if (this.fs === fs && !silent) this.store.set(treeProgressAtom, { done, total, startedAt })
       })
       if (this.fs !== fs) return // another workspace (or a reconnect took over)
-      if (this.wsId) this.knownCounts.set(this.wsId, entries.length)
+      if (this.wsId) {
+        this.knownCounts.set(this.wsId, entries.length)
+        saveKnownCount(this.wsId, entries.length)
+      }
       this.store.set(treeAtom, entries)
       this.store.set(treeProgressAtom, null)
       this.store.set(treeStatusAtom, { state: 'ready' })
       this.syncGrep(entries)
-      this.syncGit()
+      if (!this.gitSvc) this.syncGit()
     } catch (e) {
       if (this.fs !== fs) return
       this.store.set(treeProgressAtom, null)
@@ -333,6 +370,8 @@ export class WorkspaceController {
       this.gitFor = null
       this.diffSvc?.dispose()
       this.diffSvc = null
+      this.prefetchSvc?.dispose()
+      this.prefetchSvc = null
       clearTimeout(this.gitTimer)
       this.diffSeq++
       this.store.set(gitHeadAtom, (g) => ({ version: g.version + 1, status: new Map() }))
@@ -343,6 +382,7 @@ export class WorkspaceController {
       this.gitSvc = new GitService(handle as FileSystemDirectoryHandle)
       this.gitFor = fs
       this.diffSvc = new DiffService()
+      this.startBranchPrefetch(handle as FileSystemDirectoryHandle)
     }
     void this.refreshGitStatus()
   }
@@ -364,6 +404,7 @@ export class WorkspaceController {
   /** Status changes after a save or a commit; coalesce bursts of saves. */
   private scheduleGitRefresh() {
     if (!this.gitSvc) return
+    this.gitSvc.invalidateStatus()
     clearTimeout(this.gitTimer)
     this.gitTimer = setTimeout(() => void this.refreshGitStatus(), 500)
   }
@@ -439,6 +480,385 @@ export class WorkspaceController {
     view.dispatch({ changes: minimalChange(live, revertHunkText(head, live, hunk)) })
     this.notify('info', 'Reverted the hunk to HEAD. Undo with Ctrl-Z in the editor.')
     await this.refreshGitStatus()
+  }
+
+  // ---- branch review (merge-base(base, HEAD)..HEAD) ----------------------
+
+  private branchSignal: { cancelled: boolean } | null = null
+
+  private branchPatch(patch: Partial<BranchReviewState>) {
+    this.store.set(branchReviewAtom, (s) => (s ? { ...s, ...patch } : s))
+  }
+
+  private branchMarksKey(): string | null {
+    const s = this.store.get(branchReviewAtom)
+    return this.wsId && s ? marksKey(this.wsId, s.base, s.branch) : null
+  }
+
+  private setBranchMarks(marks: Marks) {
+    this.store.set(branchMarksAtom, marks)
+    const key = this.branchMarksKey()
+    if (key) saveMarks(key, marks)
+  }
+
+  notifyInfo(text: string) {
+    this.notify('info', text)
+  }
+
+  private lastBranchBase: string | undefined
+
+  /** Flips between "diff with main" and "working tree vs HEAD". */
+  toggleBranchMode() {
+    const s = this.store.get(branchReviewAtom)
+    if (!s) return
+    if (s.mode === 'base') {
+      this.lastBranchBase = s.base
+      void this.openBranchReview(undefined, 'working')
+    } else void this.openBranchReview(this.lastBranchBase, 'base')
+  }
+
+  /** Last finished review per workspace/mode/base: shown at once, then revalidated. */
+  private branchCache = new Map<
+    string,
+    Pick<BranchReviewState, 'base' | 'branch' | 'mergeBase' | 'head' | 'files' | 'stats' | 'statsDone'>
+  >()
+
+  /** Reads the default-base review in a worker so opening it finds the result waiting. */
+  private startBranchPrefetch(handle: FileSystemDirectoryHandle) {
+    const svc = (this.prefetchSvc ??= new BranchPrefetchService())
+    const ws = this.wsId
+    const key = `${ws ?? ''}|base|`
+    svc.start(
+      handle,
+      (r, done) => {
+        if (this.prefetchSvc !== svc || this.wsId !== ws) return
+        const entry = {
+          base: r.base,
+          branch: r.branch,
+          mergeBase: r.mergeBase,
+          head: r.head,
+          files: r.files,
+          stats: r.stats,
+          statsDone: done,
+        }
+        // Never replace a result the review itself has produced since.
+        if (!this.branchCache.get(key)?.statsDone) this.branchCache.set(key, entry)
+        // The review was opened while the worker was still reading: fill it in now.
+        const cur = this.store.get(branchReviewAtom)
+        if (cur && cur.status === 'loading' && cur.mode === 'base' && cur.base === '…' && cur.files.length === 0) {
+          this.branchPatch({ ...entry, status: 'ready' })
+        }
+      },
+      () => {},
+    )
+  }
+
+  async openBranchReview(baseArg?: string, mode: BranchMode = 'base') {
+    const cacheKey = `${this.wsId ?? ''}|${mode}|${baseArg?.trim() ?? ''}`
+    const cached = this.branchCache.get(cacheKey)
+    if (this.branchSignal) this.branchSignal.cancelled = true
+    const signal = { cancelled: false }
+    this.branchSignal = signal
+    // Open at once in a loading state; the workspace may still be reading its tree.
+    this.store.set(reviewOpenAtom, false)
+    this.store.set(branchConfirmAtom, null)
+    this.store.set(branchApprovedAtom, new Set())
+    this.store.set(branchMarksAtom, {})
+    this.store.set(branchReviewAtom, {
+      mode,
+      base: mode === 'working' ? 'HEAD' : baseArg?.trim() || '…',
+      branch: '…',
+      status: 'loading',
+      message: null,
+      mergeBase: null,
+      head: null,
+      files: [],
+      index: 0,
+      focus: 'index',
+      stats: {},
+      statsDone: false,
+      // Optimistic: the previous result, until the fresh one replaces it.
+      ...(cached ? { ...cached, status: 'ready' as const } : {}),
+    })
+    if (cached) {
+      const key = this.branchMarksKey()
+      this.setBranchMarks(pruneMarks(key ? loadMarks(key) : {}, cached.files))
+    }
+    const fail = (message: string) => {
+      if (!signal.cancelled && !cached) this.branchPatch({ status: 'error', message })
+    }
+    // Git attaches when the tree walk ends; wait for it rather than refusing.
+    for (let i = 0; i < 600 && !this.gitSvc && !signal.cancelled; i++) {
+      if (this.store.get(treeStatusAtom).state !== 'loading') break
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    if (signal.cancelled) return
+    const svc = this.gitSvc
+    if (!svc || !(await svc.hasHead())) {
+      return fail('This folder is not a git repository with a commit.')
+    }
+    let base = 'HEAD'
+    let baseOid: string | null = null
+    if (mode === 'base') {
+      const named = baseArg?.trim() || (await svc.defaultBase())
+      if (!named) {
+        return fail('No main or master branch found; name a base, for example :BranchReview origin/dev')
+      }
+      base = named
+      baseOid = await svc.resolveBase(base)
+      if (!baseOid) return fail(`Unknown base: ${base}`)
+    }
+    const branch = await svc.currentBranch()
+    if (signal.cancelled) return
+    this.branchPatch({ base, branch })
+    // Edits made outside the app are picked up here; saves already invalidate the scan.
+    svc.invalidateStatusIfOlder(5000)
+    const res = await svc.branchChanges(baseOid, signal, (files, mergeBase, head) => {
+      // Show the committed files at once; the working-tree overlay lands in the final patch.
+      if (signal.cancelled || this.gitSvc !== svc) return
+      const cur = this.store.get(branchReviewAtom)
+      if (!cur || cur.status === 'ready') return
+      this.branchPatch({ status: 'ready', mergeBase, head, files, index: 0, partial: true })
+    })
+    if (signal.cancelled) return
+    if (this.gitSvc !== svc) return fail('Workspace changed while reading the branch.')
+    if (res.kind === 'error') {
+      return this.branchPatch({ status: 'error', message: res.message })
+    }
+    // Keep the cursor on the same file, and keep totals of files that did not change.
+    const prev = this.store.get(branchReviewAtom)
+    const prevPath = prev?.files[prev.index]?.path
+    const sameOids = new Map((prev?.files ?? []).map((f) => [f.path, `${f.mbOid}|${f.headOid}`]))
+    const keptStats: Record<string, { add: number; del: number }> = {}
+    for (const f of res.files) {
+      const st = prev?.stats[f.path]
+      if (st && sameOids.get(f.path) === `${f.mbOid}|${f.headOid}`) keptStats[f.path] = st
+    }
+    const at = prevPath ? res.files.findIndex((f) => f.path === prevPath) : -1
+    const complete = res.files.every((f) => keptStats[f.path])
+    this.branchPatch({
+      status: 'ready',
+      mergeBase: res.mergeBase,
+      head: res.head,
+      files: res.files,
+      index: at === -1 ? 0 : at,
+      stats: keptStats,
+      message: res.multipleBases ? 'Several merge bases; using the first.' : null,
+      partial: false,
+      statsDone: res.files.length === 0 || complete,
+    })
+    const key = this.branchMarksKey()
+    const marks = pruneMarks(key ? loadMarks(key) : {}, res.files)
+    this.setBranchMarks(marks)
+    const remember = () => {
+      const cur = this.store.get(branchReviewAtom)
+      if (cur && cur.status === 'ready' && !signal.cancelled) {
+        this.branchCache.set(cacheKey, {
+          base: cur.base,
+          branch: cur.branch,
+          mergeBase: cur.mergeBase,
+          head: cur.head,
+          files: cur.files,
+          stats: cur.stats,
+          statsDone: cur.statsDone,
+        })
+      }
+    }
+    remember()
+    void this.computeBranchStats(svc, res.files, keptStats, signal).then(remember)
+  }
+
+  /** Line totals per file, computed in the background (selected file first, a few at a time). */
+  private async computeBranchStats(
+    svc: GitService,
+    files: readonly BranchFile[],
+    known: Record<string, { add: number; del: number }>,
+    signal: { cancelled: boolean },
+  ) {
+    const stats = { ...known }
+    const todo = files.filter((f) => !stats[f.path])
+    if (todo.length === 0) return
+    const first = this.store.get(branchReviewAtom)?.files[this.store.get(branchReviewAtom)?.index ?? 0]
+    todo.sort((x, y) => Number(y.path === first?.path) - Number(x.path === first?.path))
+    let n = 0
+    await mapLimit(todo, 4, async (f) => {
+      if (signal.cancelled) return
+      try {
+        await this.statOne(svc, f, stats)
+      } catch {
+        // an unreadable blob just has no totals
+      }
+      if (++n % 10 === 0 && !signal.cancelled) this.branchPatch({ stats: { ...stats } })
+    })
+    if (!signal.cancelled) this.branchPatch({ stats, statsDone: true })
+  }
+
+  private async statOne(
+    svc: GitService,
+    f: BranchFile,
+    stats: Record<string, { add: number; del: number }>,
+  ) {
+    const [a, b] = await Promise.all([
+      f.mbOid ? svc.readBlobAt(f.mbOid) : Promise.resolve({ kind: 'text', text: '' } as const),
+      f.headOid ? svc.readBlobAt(f.headOid) : Promise.resolve({ kind: 'text', text: '' } as const),
+    ])
+    if (a.kind === 'text' && b.kind === 'text') {
+      const { stats: st } = diffTexts(a.text, b.text)
+      stats[f.path] = { add: st.added, del: st.removed }
+    }
+  }
+
+  closeBranchReview() {
+    if (!this.store.get(branchReviewAtom)) return
+    if (this.branchSignal) this.branchSignal.cancelled = true
+    this.store.set(branchReviewAtom, null)
+    this.store.set(branchConfirmAtom, null)
+    this.handle?.view.focus()
+  }
+
+  /** Both sides of the open file's patch, or a placeholder reason. */
+  async branchFileContent(
+    file: BranchFile,
+  ): Promise<{ base: string; current: string } | { placeholder: string }> {
+    const svc = this.gitSvc
+    if (!svc) return { placeholder: 'No repository' }
+    const [a, b] = await Promise.all([
+      file.mbOid ? svc.readBlobAt(file.mbOid) : Promise.resolve({ kind: 'text', text: '' } as const),
+      file.headOid ? svc.readBlobAt(file.headOid) : Promise.resolve({ kind: 'text', text: '' } as const),
+    ])
+    for (const side of [a, b]) {
+      if (side.kind !== 'text') {
+        return {
+          placeholder: `[${side.kind === 'large' ? 'Large' : 'Binary'} file changed — Click to inspect metadata]`,
+        }
+      }
+    }
+    return { base: (a as { text: string }).text, current: (b as { text: string }).text }
+  }
+
+  /** Blob ids and sizes for the placeholder's metadata line. */
+  async branchFileMeta(file: BranchFile): Promise<string> {
+    const svc = this.gitSvc
+    if (!svc) return ''
+    const parts: string[] = []
+    for (const [label, oid] of [['base', file.mbOid], ['head', file.headOid]] as const) {
+      if (!oid) {
+        parts.push(`${label}: none`)
+        continue
+      }
+      const c = await svc.readBlobAt(oid)
+      const size = c.kind === 'text' ? new TextEncoder().encode(c.text).length : c.size
+      parts.push(`${label}: ${oid.slice(0, 7)}, ${size} bytes`)
+    }
+    return parts.join(' · ')
+  }
+
+  /** Moves the cursor in the file list; `autoMark` marks the file left behind as reviewed. */
+  branchStep(delta: number, autoMark = false) {
+    const s = this.store.get(branchReviewAtom)
+    if (!s || s.files.length === 0) return
+    if (autoMark) this.markBranchFile(s.index, true)
+    const n = s.files.length
+    this.branchPatch({ index: (((s.index + delta) % n) + n) % n })
+  }
+
+  branchSelect(index: number) {
+    const s = this.store.get(branchReviewAtom)
+    if (!s || index < 0 || index >= s.files.length) return
+    this.branchPatch({ index })
+  }
+
+  setBranchFocus(focus: BranchFocus) {
+    this.branchPatch({ focus })
+  }
+
+  private markBranchFile(index: number, reviewed: boolean) {
+    const s = this.store.get(branchReviewAtom)
+    const file = s?.files[index]
+    if (!file) return
+    this.setBranchMarks(markFile(this.store.get(branchMarksAtom), file, reviewed))
+  }
+
+  /** `a`/Space: flips the file's mark, and advances when it became reviewed. */
+  toggleBranchReviewed() {
+    const s = this.store.get(branchReviewAtom)
+    const file = s?.files[s.index]
+    if (!s || !file) return
+    const was = isReviewed(this.store.get(branchMarksAtom), file)
+    this.markBranchFile(s.index, !was)
+    if (!was && s.files.length > 1) this.branchStep(1)
+  }
+
+  /** :BRMarkReviewed: always marks, then advances. */
+  markBranchReviewed() {
+    const s = this.store.get(branchReviewAtom)
+    if (!s || s.files.length === 0) return this.notify('info', 'No branch review is open.')
+    this.markBranchFile(s.index, true)
+    if (s.files.length > 1) this.branchStep(1)
+  }
+
+  resetBranchReviewed() {
+    if (!this.store.get(branchReviewAtom)) return this.notify('info', 'No branch review is open.')
+    this.setBranchMarks({})
+    this.store.set(branchApprovedAtom, new Set())
+  }
+
+  approveBranchHunk(key: string) {
+    this.store.set(branchApprovedAtom, (set) => new Set(set).add(key))
+    this.notify('info', 'Approved the hunk for this session.')
+  }
+
+  /** `e`: leaves the review and opens the file in the editor. */
+  async editBranchFile(path: string) {
+    this.closeBranchReview()
+    await this.openFile(path)
+  }
+
+  /** Writes the merge base's text of a file into the working tree (undoable in the buffer). */
+  async revertBranchFile(file: BranchFile) {
+    const svc = this.gitSvc
+    if (!svc) return
+    try {
+      if (file.status === 'A') {
+        await this.deletePath(file.path)
+        this.notify('info', `Removed ${file.path} (added on this branch).`)
+        return void this.refreshGitStatus()
+      }
+      const mb = await svc.readBlobAt(file.mbOid!)
+      if (mb.kind !== 'text') return this.notify('error', 'Cannot revert a binary or large file here.')
+      if (file.status === 'D') await this.createFile(file.path)
+      else await this.openFile(file.path)
+      const view = this.handle?.view
+      if (!view || this.active !== file.path) return
+      view.dispatch({ changes: minimalChange(view.state.doc.toString(), mb.text) })
+      await this.saveActive()
+      this.notify('info', `Reverted ${file.path} to the base branch.`)
+      void this.refreshGitStatus()
+    } catch (e) {
+      this.fail(e)
+    }
+  }
+
+  /** Reverts one hunk of the branch patch in the working tree, matched against the live text. */
+  async revertBranchHunk(file: BranchFile, hunk: Hunk) {
+    const svc = this.gitSvc
+    if (!svc || !file.mbOid || !file.headOid) {
+      return this.notify('info', 'Use r to revert an added or deleted file.')
+    }
+    try {
+      const mb = await svc.readBlobAt(file.mbOid)
+      if (mb.kind !== 'text') return
+      await this.openFile(file.path)
+      const view = this.handle?.view
+      if (!view || this.active !== file.path) return
+      const live = view.state.doc.toString()
+      const match = computeHunks(mb.text, live).find((h) => sameHunk(h, hunk))
+      if (!match) return this.notify('info', 'The diff changed; try again.')
+      view.dispatch({ changes: minimalChange(live, revertHunkText(mb.text, live, match)) })
+      this.notify('info', 'Reverted the hunk to the base branch. Undo with Ctrl-Z in the editor.')
+    } catch (e) {
+      this.fail(e)
+    }
   }
 
   private async stageChange(
@@ -751,7 +1171,11 @@ export class WorkspaceController {
   async openFile(path: string) {
     try {
       const p = await this.load(path)
-      if (p) this.activate(p)
+      if (p) {
+        this.activate(p)
+        // Opening a file lands on its diff; `q` returns to the editor.
+        if (!this.store.get(branchReviewAtom)) this.store.set(reviewOpenAtom, true)
+      }
     } catch (e) {
       this.fail(e)
     }
@@ -852,6 +1276,18 @@ export class WorkspaceController {
 
   togglePin(path: string) {
     this.commit({ tabs: togglePin(this.tabs, path), active: this.active })
+  }
+
+  /** Copies the active file's live text (the editor's current doc, saved or not). */
+  async copyActiveText() {
+    const view = this.handle?.view
+    if (!view || !this.active) return this.notify('error', 'No file is open to copy.')
+    try {
+      await navigator.clipboard.writeText(view.state.doc.toString())
+      this.notify('info', 'Copied file contents')
+    } catch {
+      this.notify('error', 'Could not copy to the clipboard')
+    }
   }
 
   async copyPath(path: string) {
@@ -1435,8 +1871,8 @@ export class WorkspaceController {
         this.fs = this.fsFor(handle)
         this.setLinkPaused(false)
         await this.refreshTree()
-      } else if (granted) {
-        await this.refreshTree()
+      } else if (granted && Date.now() - this.lastTreeRefresh > 15_000) {
+        await this.refreshTree({ silent: true })
       }
     } finally {
       this.revalidating = false

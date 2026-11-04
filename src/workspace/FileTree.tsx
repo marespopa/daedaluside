@@ -1,3 +1,4 @@
+import { useLoadEta } from './loadEstimate'
 import { useAtom, useAtomValue, useStore } from 'jotai'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -95,6 +96,7 @@ function Sidebar({ open }: { open: boolean }) {
   const tree = useAtomValue(treeAtom)
   const treeStatus = useAtomValue(treeStatusAtom)
   const progress = useAtomValue(treeProgressAtom)
+  const { eta } = useLoadEta(progress)
   const deleting = useAtomValue(deletingPathsAtom)
   const treeBusy = deleting.size > 0
   const activePath = useAtomValue(activePathAtom)
@@ -112,7 +114,7 @@ function Sidebar({ open }: { open: boolean }) {
     : treeLoading
       ? progress && progress.done > 0
         ? progress.total
-          ? `Reading files… ${progress.done} / ${Math.max(progress.total, progress.done)}`
+          ? `Reading files… ${progress.done} / ${Math.max(progress.total, progress.done)}${eta ? ` · ${eta}` : ''}`
           : `Reading files… ${progress.done} files`
         : 'Loading files…'
       : null
@@ -297,6 +299,12 @@ function Sidebar({ open }: { open: boolean }) {
     setMenu({ parent, entry, x, y })
   }
 
+  /** Opens a file. On a narrow screen the drawer covers the editor, so it closes too. */
+  const openFile = (path: string) => {
+    void controller.openFile(path)
+    if (window.innerWidth < 1024) setOpen(false)
+  }
+
   const close = () => {
     setOpen(false)
     focusEditor(store)
@@ -374,7 +382,7 @@ function Sidebar({ open }: { open: boolean }) {
         e.preventDefault()
         if (entry.kind === 'dir') {
           if (!expanded.has(entry.path)) expand(entry.path, true)
-        } else void controller.openFile(entry.path)
+        } else openFile(entry.path)
         return
       case 'h':
       case 'ArrowLeft':
@@ -434,7 +442,7 @@ function Sidebar({ open }: { open: boolean }) {
     setSelected(entry.path)
     setCursor(entry.path)
     if (entry.kind === 'dir') expand(entry.path, !expanded.has(entry.path))
-    else void controller.openFile(entry.path)
+    else openFile(entry.path)
   }
 
   const renderRow = (row: TreeRow, index: number) => {
@@ -669,7 +677,7 @@ function Sidebar({ open }: { open: boolean }) {
         tree={tree}
         value={query}
         onChange={setQuery}
-        onOpen={(path) => void controller.openFile(path)}
+        onOpen={openFile}
         label="Find a file"
         disabled={!treeReady && tree.length === 0}
         className={searching ? 'min-h-0 flex-1' : 'shrink-0'}

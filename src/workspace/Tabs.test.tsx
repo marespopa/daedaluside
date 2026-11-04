@@ -194,10 +194,11 @@ describe('tab strip', () => {
     await scratchTab()
     await openTabs(a.store, 'a.ts')
 
-    const save = screen.getByRole('button', { name: 'Save' })
-    expect(save).toBeDisabled()
+    // Autosave covers the clean case, so the button only appears once there is something to save.
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
 
     type(a.store, 'draft')
+    const save = screen.getByRole('button', { name: 'Save' })
     expect(save).toBeEnabled()
 
     const fs = (ctl(a.store) as unknown as { fs: WorkspaceFS }).fs
@@ -218,7 +219,7 @@ describe('tab strip', () => {
 
     await waitFor(async () => {
       expect(await onDisk(a.store, 'a.ts')).toBe('draft')
-      expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+      expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
     })
   })
 

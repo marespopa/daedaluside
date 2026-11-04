@@ -1,5 +1,6 @@
 import { useAtomValue, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
+import BranchReview from '../review/branch/BranchReview'
 import DiffReview from '../review/DiffReview'
 import { editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
 import {
@@ -49,6 +50,7 @@ export default function Editor() {
       <div ref={host} className="h-full" data-testid="editor" />
       <ImageViewer />
       <DiffReview />
+      <BranchReview />
       {restoring && <EditorSkeleton />}
       {/* Not while storage is starting: the workspace is about to open a file. */}
       {activePath === null && status.state !== 'loading' && <WorkspaceOpener />}

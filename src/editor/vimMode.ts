@@ -23,6 +23,12 @@ export interface VimHost {
   diffClose(): void
   /** Opens the next (or previous) modified file from git status in the review. */
   diffFile(delta: number): void
+  /** Opens the branch review against `base` (empty: main or master). */
+  branchOpen(base: string): void
+  /** Steps through the branch review's files; marks the file left behind when `mark`. */
+  branchStep(delta: 1 | -1): void
+  branchMark(): void
+  branchReset(): void
   notify(text: string): void
   status(next: VimStatus): void
 }
@@ -153,6 +159,14 @@ function registerVimCommands() {
   Vim.defineEx('Gdiffsplit', 'Gdiffsplit', () => host?.diffOpen('split'))
   Vim.defineEx('DiffviewOpen', 'DiffviewOpen', () => host?.diffOpen('unified'))
   Vim.defineEx('DiffviewClose', 'DiffviewClose', () => host?.diffClose())
+  // defineEx throws unless the short name is a prefix of the name, so each command is
+  // registered under its full name. Matching is case-sensitive: :BRN is not a command.
+  Vim.defineEx('BranchReview', 'BranchReview', (_cm, p) => host?.branchOpen(argOf(p)))
+  Vim.defineEx('BR', 'BR', (_cm, p) => host?.branchOpen(argOf(p)))
+  Vim.defineEx('BRNext', 'BRNext', () => host?.branchStep(1))
+  Vim.defineEx('BRPrev', 'BRPrev', () => host?.branchStep(-1))
+  Vim.defineEx('BRMarkReviewed', 'BRMarkReviewed', () => host?.branchMark())
+  Vim.defineEx('BRReset', 'BRReset', () => host?.branchReset())
   registerReviewKeys()
   // Escape from insert mode without reaching for the Esc key.
   Vim.map('jk', '<Esc>', 'insert')

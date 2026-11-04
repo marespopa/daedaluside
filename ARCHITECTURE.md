@@ -125,6 +125,26 @@ Ex commands are wired to workspace actions:
 | `:bnext` / `:bprev` | Cycle to the next or previous tab |
 | `:Explore` / `:Ex` / `:E` / `:Sexplore` / `:Vexplore` | Open and focus the file tree |
 | `:grep [text]` / `:gr` | Open live grep, optionally with a starting query |
+| `:Gdiffsplit` / `:DiffviewOpen` / `:DiffviewClose` | Open the file diff review (split or unified) or close it |
+| `:BranchReview [base]` / `:BR [base]` | Open the branch review against `base` (default `main`, then `master`) |
+| `:BRNext` / `:BRPrev` | Next or previous file of the branch review |
+| `:BRMarkReviewed` | Mark the current branch-review file reviewed and advance |
+| `:BRReset` | Clear all reviewed marks of the open branch review |
+
+Each Ex command is registered under its full name, because `Vim.defineEx` throws unless the short name is a prefix of the name. Matching is case-sensitive, so `:BRN` is not a command.
+
+### Diff Review
+
+`DiffReview` (`src/review/DiffReview.tsx`) is an overlay that replaces the editor and shows the active file against HEAD, unified or split. Git is read with isomorphic-git (`GitService`, `src/workspace/gitService.ts`) through the linked folder; hunks come from `computeHunks` (`src/review/diff.ts`). Keys: `]c` / `[c` hunks, `]f` / `[f` files, `s` / Space stage, `X` / `u` revert, `dp` / `do` put / obtain, `q` / Esc close. The shared decorations and theme live in `src/review/diffView.ts`.
+
+### Branch Review
+
+`:BranchReview` (or `Mod-Shift-B`) opens `BranchReview` (`src/review/branch/BranchReview.tsx`): a file index on the left and the patch of one file on the right, for the cumulative changeset `merge-base(base, HEAD)..HEAD`. Uncommitted work is not included.
+
+- **Git.** `GitService.resolveBase` (branch, remote ref, short oid, annotated tag), `branchChanges` (tree walk that skips equal subtrees and submodules; renames show as A plus D) and `readBlobAt` (text, binary, or over 1 MB). Line totals are computed in the background with `computeHunks`.
+- **Reviewed marks** are stored in localStorage under `daedalus.branchReview.<workspaceId>.<base>.<branch>`, per path with the base and HEAD blob oids. A mark counts only while both oids still match, so a changed file shows as unreviewed again. `:BRReset` clears them.
+- **Keys.** Index: `j` / `k` select, `n` / `L` next (marks the file left behind), `p` / `H` previous, `a` / Space toggle reviewed and advance, `r` / `X` revert the file, `e` edit, `q` / Esc close, `Ctrl-W w` swap focus with the patch. Patch: `]c` / `[c` hunks, `sa` approve the hunk (this session only), `sr` revert the hunk. Reverts ask for `y` first, write to the working tree through the editor buffer (undoable), and match the hunk against the live text before editing.
+- Binary files and files over 1 MB show a placeholder; clicking it shows blob ids and sizes.
 
 ### Live Grep
 

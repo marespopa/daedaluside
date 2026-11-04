@@ -5,6 +5,7 @@ import { createStore, Provider } from 'jotai'
 import { vi } from 'vitest'
 import App from '../App'
 import { editorHandleAtom, paletteOpenAtom } from '../state/editorAtoms'
+import { reviewOpenAtom } from '../state/gitAtoms'
 import { runEx } from '../editor/testing/runEx'
 import {
   activePathAtom,
@@ -153,6 +154,7 @@ describe('workspace in the app', () => {
     const a = mount()
     await openFolder(a.store, disk)
     await scratchTab()
+    act(() => a.store.set(reviewOpenAtom, false)) // opening a file lands on its diff
     const view = a.store.get(editorHandleAtom)!.view
     act(() => view.focus())
 
@@ -227,7 +229,7 @@ describe('workspace in the app', () => {
   it('opens settings with storage details', async () => {
     const user = userEvent.setup()
     mount()
-    await waitFor(() => expect(screen.queryByText(/Open folder/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.queryAllByText(/Open folder/).length).toBeGreaterThan(0))
     await user.keyboard('{Control>},{/Control}')
     const dlg = await screen.findByRole('dialog', { name: 'Settings' })
     expect(await within(dlg).findByText(/Persistent storage/)).toBeInTheDocument()
@@ -257,9 +259,9 @@ describe('workspace opener (editor empty state)', () => {
     const o = await opener()
     expect(o).toBeInTheDocument()
     for (const label of [
+      'Open folder',
+      'Open file',
       'Command Palette',
-      'Search Files',
-      'New Scratch Buffer',
       'Switch Workspace',
     ])
       expect(within(o).getByText(label)).toBeInTheDocument()
@@ -687,7 +689,7 @@ describe('double Shift', () => {
   it('opens the command palette in command mode', async () => {
     const user = userEvent.setup()
     mount()
-    await waitFor(() => expect(screen.queryByText(/Open folder/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.queryAllByText(/Open folder/).length).toBeGreaterThan(0))
     await user.keyboard('{Shift}{/Shift}{Shift}{/Shift}')
     expect((await screen.findByRole('combobox')) as HTMLInputElement).toHaveValue('>')
     await user.keyboard('{Escape}')
@@ -857,11 +859,20 @@ describe('link revalidation on focus', () => {
     const refresh = vi.spyOn(getController(a.store), 'refreshTree')
     disk.setFile('z.md', new TextEncoder().encode('z')) // an external change to pick up
 
+    // Within the throttle window a focus does not walk the folder again.
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    expect(refresh).not.toHaveBeenCalled()
+
+    const realNow = Date.now
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 20_000)
     await act(async () => {
       window.dispatchEvent(new Event('focus'))
       document.dispatchEvent(new Event('visibilitychange'))
       window.dispatchEvent(new Event('focus'))
     })
+    now.mockRestore()
 
     expect(refresh).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(treePaths(a.store)).toContain('z.md'))
@@ -888,7 +899,7 @@ describe('link revalidation on focus', () => {
       await getController(a.store).refreshTree()
     })
     // The previous read of this workspace supplies the expected total.
-    expect(seen).toEqual([{ done: 1, total: 2 }])
+    expect(seen).toEqual([{ done: 1, total: 2, startedAt: expect.any(Number) }])
     expect(a.store.get(treeProgressAtom)).toBeNull()
     expect(a.store.get(treeStatusAtom)).toEqual({ state: 'ready' })
   })

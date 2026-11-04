@@ -6,20 +6,21 @@ import DiffStat from './editor/DiffStat'
 import Editor from './editor/Editor'
 import VimStatus from './editor/VimStatus'
 import { activeBufferAtom, editorWidthAtom } from './state/editorAtoms'
-import { sidebarOpenAtom } from './state/workspaceAtoms'
+import { activePathAtom, sidebarOpenAtom } from './state/workspaceAtoms'
 import { IconButton } from './ui'
 import FileTree from './workspace/FileTree'
 import HomeButton from './workspace/HomeButton'
 import Notice from './workspace/Notice'
-import OpenFolderButton from './workspace/OpenFolderButton'
 import ReconnectDialog from './workspace/ReconnectDialog'
 import SaveButton from './workspace/SaveButton'
 import SettingsDialog from './workspace/SettingsDialog'
 import Tabs from './workspace/Tabs'
-import { useWorkspaceLifecycle } from './workspace/useWorkspace'
+import { useController, useWorkspaceLifecycle } from './workspace/useWorkspace'
 
 export default function App() {
   useWorkspaceLifecycle()
+  const controller = useController()
+  const activePath = useAtomValue(activePathAtom)
   const buffer = useAtomValue(activeBufferAtom)
   const [width, setWidth] = useAtom(editorWidthAtom)
   const setSidebarOpen = useSetAtom(sidebarOpenAtom)
@@ -57,6 +58,13 @@ export default function App() {
               : ''}
           </span>
           <div className="ml-auto flex shrink-0 items-center gap-0.5">
+            {activePath && (
+              <IconButton
+                label="Copy contents"
+                icon="copy"
+                onClick={() => void controller.copyActiveText()}
+              />
+            )}
             <SaveButton />
             <IconButton
               label="Full width"
@@ -65,7 +73,6 @@ export default function App() {
               className="aria-pressed:bg-surface aria-pressed:text-text"
               onClick={() => setWidth(width === 'full' ? 'measured' : 'full')}
             />
-            <OpenFolderButton />
           </div>
         </header>
         <main

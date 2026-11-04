@@ -84,10 +84,23 @@ export interface GitFs {
 export function createGitFs(root: FileSystemDirectoryHandle): GitFs {
   const segs = (p: string) => splitPath(p.split('/').filter((s) => s !== '' && s !== '.').join('/'))
 
+  /** Directory handles by path, so deep paths are not re-walked from the root on every call. */
+  const dirs = new Map<string, FileSystemDirectoryHandle>()
+
   async function dirOf(parts: string[], path: string, create = false) {
     let cur = root
+    let key = ''
     try {
-      for (const s of parts) cur = await cur.getDirectoryHandle(s, { create })
+      for (const s of parts) {
+        key = `${key}/${s}`
+        const hit = dirs.get(key)
+        if (hit) {
+          cur = hit
+          continue
+        }
+        cur = await cur.getDirectoryHandle(s, { create })
+        dirs.set(key, cur)
+      }
     } catch (e) {
       mapError(e, path)
     }
@@ -149,6 +162,7 @@ export function createGitFs(root: FileSystemDirectoryHandle): GitFs {
         try {
           await parent.getFileHandle(parts[parts.length - 1]!)
           await parent.removeEntry(parts[parts.length - 1]!)
+          dirs.clear()
         } catch (e) {
           mapError(e, path)
         }
@@ -184,6 +198,7 @@ export function createGitFs(root: FileSystemDirectoryHandle): GitFs {
         const parent = await dirOf(parts.slice(0, -1), path)
         try {
           await parent.removeEntry(parts[parts.length - 1]!)
+          dirs.clear()
         } catch (e) {
           mapError(e, path)
         }
