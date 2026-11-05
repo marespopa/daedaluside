@@ -28,6 +28,7 @@ import {
 } from '../diffView'
 import { streamDiff } from '../diffService'
 import { getReviewPane, hunkAnchors, setReviewPane, stepHunk } from '../reviewPane'
+import { Icon } from '../../ui'
 import { isReviewed } from './marks'
 
 /** The patch of the branch against its merge base, one file at a time. */
@@ -533,6 +534,9 @@ function Surface() {
                   row={r}
                   active={r.index === s.index}
                   reviewed={isReviewed(marks, r.file!)}
+                  onToggle={() =>
+                    controller.setBranchFileReviewed(r.index, !isReviewed(marks, r.file!))
+                  }
                   onSelect={() => {
                     controller.branchSelect(r.index)
                     controller.setBranchFocus('index')
@@ -586,11 +590,13 @@ function FileRow({
   active,
   reviewed,
   onSelect,
+  onToggle,
 }: {
   row: Row
   active: boolean
   reviewed: boolean
   onSelect: () => void
+  onToggle: () => void
 }) {
   const f = row.file!
   return (
@@ -605,6 +611,24 @@ function FileRow({
       } ${reviewed ? 'text-muted' : 'text-text'}`}
       style={{ paddingLeft: `${0.75 + row.depth}rem` }}
     >
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={reviewed}
+        aria-label={`Reviewed: ${f.path}`}
+        tabIndex={-1}
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggle()
+        }}
+        className={`flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
+          reviewed
+            ? 'border-muted text-muted'
+            : 'border-muted text-transparent hover:text-muted/50'
+        }`}
+      >
+        <Icon name="check" className="size-2.5" />
+      </button>
       <span
         className={`truncate ${
           reviewed
@@ -618,13 +642,6 @@ function FileRow({
       >
         {row.name}
       </span>
-      {!reviewed && (
-        <span
-          aria-label="Not reviewed"
-          role="img"
-          className="ml-auto size-1 shrink-0 rounded-full bg-accent"
-        />
-      )}
     </div>
   )
 }

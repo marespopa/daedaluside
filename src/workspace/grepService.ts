@@ -270,7 +270,23 @@ export class GrepService {
     } finally {
       this.pumping = false
       this.publish(true)
+      if (this.queue.length === 0) this.wakeIdle()
     }
+  }
+
+  private idleWaiters: (() => void)[] = []
+
+  private wakeIdle() {
+    const waiters = this.idleWaiters
+    this.idleWaiters = []
+    for (const w of waiters) w()
+  }
+
+  /** Resolves once every queued file is indexed (at once if nothing is pending). */
+  idle(): Promise<void> {
+    if (this.disposed || (!this.pumping && this.queue.length === 0))
+      return Promise.resolve()
+    return new Promise((r) => this.idleWaiters.push(r))
   }
 
   private async drain() {
@@ -391,6 +407,7 @@ export class GrepService {
 
   dispose() {
     this.disposed = true
+    this.wakeIdle()
     clearTimeout(this.statusTimer)
     this.queue = []
     this.queued.clear()

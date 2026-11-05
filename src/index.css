@@ -8,9 +8,10 @@
 
 @theme {
   --font-mono:
-    'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     'Liberation Mono', 'Courier New', monospace;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif;
+  --font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-code: var(--font-mono);
 
   /* Spec type scale: 14px base, 13px UI, 11px status line. */
   --text-xs: 0.6875rem;
@@ -64,6 +65,15 @@
 /* Full width toggle (View: Toggle Full Width): drop the measure, keep the gutters. */
 [data-editor-width='full'] {
   --editor-max-width: none;
+  --editor-gutter: 0.75rem;
+}
+/* Explicit (and more specific than CodeMirror's injected theme) so the toggle never depends on cascade order. */
+[data-editor-width='full'] .cm-editor .cm-content {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
 }
 
 html,
@@ -79,6 +89,27 @@ body {
   font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: var(--text-base--line-height);
+}
+
+/* Micro-interactions: short and subtle, and off when the user prefers reduced motion. */
+@keyframes anim-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes anim-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .anim-fade {
+    animation: anim-fade 140ms ease-out;
+  }
+  .anim-pop {
+    animation: anim-pop 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
 }
 
 /* Glass surfaces: opaque fallback first, blur where supported. */

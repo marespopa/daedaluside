@@ -21,8 +21,15 @@ export default function EditorSkeleton() {
         }}
       >
         {LINES.map((width, i) => (
-          // 14 px font at leading 1.65, the same row height as the editor.
-          <div key={i} className="flex h-[23px] items-center">
+          // Same row height as the editor: font size times line height.
+          <div
+            key={i}
+            className="flex items-center"
+            style={{
+              height:
+                'calc(var(--editor-font-size, 14px) * var(--editor-line-height, 1.5))',
+            }}
+          >
             {width > 0 && <Skeleton className="h-2.5" style={{ width: `${width}%` }} />}
           </div>
         ))}

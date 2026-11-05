@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { GlassPopover } from './GlassPopover'
 
@@ -6,6 +13,12 @@ export interface ContextMenuItem {
   id: string
   label: string
   disabled?: boolean
+  /** Right-aligned hint, e.g. "F12". */
+  shortcut?: string
+  /** Text shown beside a disabled item (never color alone). */
+  note?: string
+  /** Draw a divider above this item. */
+  separator?: boolean
   run: () => Promise<void> | void
 }
 
@@ -99,16 +112,23 @@ export function ContextMenu({
       className="fixed z-50 min-w-44 p-1 font-sans text-sm"
     >
       {items.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          role="menuitem"
-          disabled={item.disabled}
-          onClick={() => choose(item)}
-          className="block w-full whitespace-nowrap rounded-md px-3 py-2 text-left hover:bg-accent/10 focus:bg-accent/10 focus:outline-none disabled:opacity-40"
-        >
-          <span>{item.label}</span>
-        </button>
+        <Fragment key={item.id}>
+          {item.separator && (
+            <div role="separator" className="mx-2 my-1 border-t border-line" />
+          )}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={item.disabled}
+            onClick={() => choose(item)}
+            className="flex w-full items-center justify-between gap-6 whitespace-nowrap rounded-md px-3 py-2 text-left hover:bg-accent/10 focus:bg-accent/10 focus:outline-none disabled:opacity-40"
+          >
+            <span>{item.label}</span>
+            {(item.note ?? item.shortcut) && (
+              <span className="text-xs text-muted">{item.note ?? item.shortcut}</span>
+            )}
+          </button>
+        </Fragment>
       ))}
     </GlassPopover>,
     document.body,

@@ -47,12 +47,13 @@ const base = EditorView.theme({
     height: '100%',
     color: 'var(--text)',
     backgroundColor: 'transparent',
-    fontSize: 'var(--text-base)',
+    fontSize: 'var(--editor-font-size, 14px)',
   },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
-    fontFamily: 'var(--font-mono)',
-    lineHeight: '1.65',
+    fontFamily: 'var(--font-code, var(--font-mono))',
+    fontVariantLigatures: 'var(--editor-ligatures, normal)',
+    lineHeight: 'var(--editor-line-height, 1.5)',
     overflow: 'auto',
   },
   // Centered column whose width and gutters come from the breakpoints in index.css.
@@ -61,7 +62,7 @@ const base = EditorView.theme({
     boxSizing: 'border-box',
     maxWidth: 'var(--editor-max-width)',
     margin: '0 auto',
-    padding: '3rem var(--editor-gutter)',
+    padding: '0.75rem var(--editor-gutter) 3rem',
   },
   // Faint, low-contrast gutter. Hidden in focus mode (see focusMode.ts, Phase 4).
   '.cm-gutters': {

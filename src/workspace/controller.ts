@@ -56,6 +56,7 @@ import {
   reconnectPromptAtom,
   noticeAtom,
   openBuffersAtom,
+  openingPathAtom,
   settingsOpenAtom,
   sidebarOpenAtom,
   treeAtom,
@@ -91,7 +92,9 @@ import { BranchPrefetchService } from './branchPrefetchService'
 import { GitService, mapLimit, type BranchFile } from './gitService'
 import { GrepService } from './grepService'
 import type { GrepHit } from './grep'
+import { pathCandidates } from '../editor/pathLinks'
 import { SingleFileFS } from './singleFileFs'
+import { refRegex } from '../editor/symbols'
 import { sourceKey, WorkspaceManager, type RemoteChange } from './manager'
 import {
   addEntry,
@@ -1072,13 +1075,20 @@ export class WorkspaceController {
 
   closeBranchReview() {
     if (!this.store.get(branchReviewAtom)) return
+    this.dropBranchReview()
+    this.handle?.view.focus()
+  }
+
+  /** Cancels any read in flight and clears the review, its marks and its session approvals. */
+  private dropBranchReview() {
     if (this.branchSignal) this.branchSignal.cancelled = true
     this.reviewWorker?.dispose()
     this.reviewWorker = null
     this.store.set(branchReviewAtom, null)
     this.store.set(branchTabActiveAtom, false)
     this.store.set(branchConfirmAtom, null)
-    this.handle?.view.focus()
+    this.store.set(branchMarksAtom, {})
+    this.store.set(branchApprovedAtom, new Set())
   }
 
   /** Both sides of the open file's patch, or a placeholder reason. */
@@ -1149,6 +1159,11 @@ export class WorkspaceController {
     const file = s?.files[index]
     if (!file) return
     this.setBranchMarks(markFile(this.store.get(branchMarksAtom), file, reviewed))
+  }
+
+  /** The sidebar checkbox: sets one file's mark without moving the selection. */
+  setBranchFileReviewed(index: number, reviewed: boolean) {
+    this.markBranchFile(index, reviewed)
   }
 
   /** `a`/Space: flips the file's mark, and advances when it became reviewed. */
@@ -1347,6 +1362,29 @@ export class WorkspaceController {
       ]
       stop = svc.search(query, priority, onBatch, onDone)
     })
+    return () => {
+      cancelled = true
+      stop()
+    }
+  }
+
+  /**
+   * Like `grep`, but starts only once the whole tree is indexed, so a miss means the
+   * symbol is absent, not that its file was not read yet.
+   */
+  grepComplete(
+    query: string,
+    onBatch: (hits: GrepHit[]) => void,
+    onDone: (truncated: boolean) => void,
+  ): () => void {
+    let stop = () => {}
+    let cancelled = false
+    void this.ensureFullTree()
+      .then(() => this.grepSvc?.idle())
+      .then(() => {
+        if (cancelled) return
+        stop = this.grep(query, onBatch, onDone)
+      })
     return () => {
       cancelled = true
       stop()
@@ -1567,16 +1605,79 @@ export class WorkspaceController {
 
   /** Opens a file. */
   async openFile(path: string) {
+    const target = normalizePath(path)
+    const pending = !this.buffers.has(target)
+    // Optimistic: mark it opening at once so the tree and editor can react while it reads.
+    if (pending) this.store.set(openingPathAtom, target)
     try {
       const p = await this.load(path)
       if (p) {
         this.activate(p)
-        // Opening a file lands on its diff; `q` returns to the editor.
-        this.store.set(reviewOpenAtom, true)
       }
     } catch (e) {
       this.fail(e)
+    } finally {
+      if (pending && this.store.get(openingPathAtom) === target)
+        this.store.set(openingPathAtom, null)
     }
+  }
+
+  /**
+   * Whether `ref`, mentioned in the active file, may be a workspace file: true when it
+   * matches the loaded tree, or when the tree is still partial and could hold it.
+   */
+  mayOpenReference(ref: string): boolean {
+    const from = this.active
+    if (!this.fs || from === null) return false
+    const cands = pathCandidates(ref, from)
+    if (!this.complete) return cands.length > 0
+    const tree = this.store.get(treeAtom)
+    return cands.some((p) => tree.some((e) => e.kind === 'file' && e.path === p))
+  }
+
+  /**
+   * Opens the file a path mentioned in the active file refers to (relative to its folder,
+   * then to the workspace root). Does nothing when no such file exists. Responds at once:
+   * a file already in the loaded tree opens without waiting, and otherwise the likeliest
+   * target shows as opening while the candidates are checked directly on disk (no full
+   * tree walk).
+   */
+  async openReference(ref: string): Promise<boolean> {
+    const from = this.active
+    const fs = this.fs
+    if (!fs || from === null) return false
+    const cands = pathCandidates(ref, from)
+    // Nothing to look up (e.g. a bare package name in code).
+    if (cands.length === 0) return false
+    const known = new Set(
+      this.store
+        .get(treeAtom)
+        .filter((e) => e.kind === 'file')
+        .map((e) => e.path),
+    )
+    let hit = cands.find((p) => known.has(p))
+    if (!hit && this.complete) return false
+    if (!hit) {
+      const guess = cands[0]!
+      this.store.set(openingPathAtom, guess)
+      try {
+        const found = await Promise.all(
+          cands.map((p) =>
+            fs.stat(p).then(
+              (e) => e?.kind === 'file',
+              () => false,
+            ),
+          ),
+        )
+        hit = cands.find((_, i) => found[i])
+      } finally {
+        if (this.fs === fs && this.store.get(openingPathAtom) === guess)
+          this.store.set(openingPathAtom, null)
+      }
+      if (!hit || this.fs !== fs) return false
+    }
+    await this.openFile(hit)
+    return true
   }
 
   /** Focuses a tab, even if it is already active (clicking a tab returns focus to the editor). */
@@ -1826,6 +1927,53 @@ export class WorkspaceController {
   }
 
   /**
+   * Replaces every whole-word `oldName` with `newName` in the given files (text-based, so
+   * strings and comments change too). Open buffers are edited like typing and autosave;
+   * closed files are read, changed and written. Returns how many files changed.
+   */
+  async renameSymbol(paths: readonly string[], oldName: string, newName: string) {
+    const re = refRegex(oldName)
+    const fs = this.requireFS()
+    let changed = 0
+    for (const raw of paths) {
+      const path = normalizePath(raw)
+      const b = this.buffers.get(path)
+      if (b?.image) continue
+      if (!b) {
+        // Not open: read, change and write the file without opening a tab for it.
+        try {
+          const text = new TextDecoder().decode(await fs.readBytes(path))
+          const out = text.replace(re, () => newName)
+          if (out === text) continue
+          await fs.write(path, out)
+          this.grepSvc?.touch(path)
+          changed++
+        } catch (e) {
+          this.fail(e)
+        }
+        continue
+      }
+      const doc = this.liveDoc(b, path)
+      const changes: { from: number; to: number; insert: string }[] = []
+      for (const m of doc.toString().matchAll(re))
+        changes.push({ from: m.index, to: m.index + m[0].length, insert: newName })
+      if (changes.length === 0) continue
+      changed++
+      if (this.handle && this.active === path) {
+        this.handle.view.dispatch({ changes })
+      } else {
+        b.state = b.state.update({ changes }).state
+        b.dirty = !b.state.doc.eq(b.saved)
+      }
+      clearTimeout(b.timer)
+      b.timer = setTimeout(() => void this.save(path), AUTOSAVE_MS)
+    }
+    this.scheduleGitRefresh()
+    this.publishBuffers()
+    return changed
+  }
+
+  /**
    * Shows the blank page (the opener) without closing any tab. The open tabs stay in the
    * strip; clicking one brings its file back.
    */
@@ -2006,6 +2154,13 @@ export class WorkspaceController {
       await this.saveSessionNow()
     }
     const epoch = ++this.epoch
+    // An open branch review belongs to the workspace it was read from: drop it now and
+    // read the same kind of review again once the new workspace is ready.
+    const review = this.store.get(branchReviewAtom)
+    const reopen = review
+      ? { mode: review.mode, visible: this.store.get(branchTabActiveAtom) }
+      : null
+    if (review) this.dropBranchReview()
     for (const b of this.buffers.values()) clearTimeout(b.timer)
     this.buffers = new Map()
     this.tabs = []
@@ -2074,12 +2229,30 @@ export class WorkspaceController {
     this.commit({ tabs, active }, { force: true })
     // Tabs are on screen already; the tree may still be filling in.
     await treeDone
+    // Git attaches when the tree is read, so the review waits for it: opened earlier it
+    // would read the previous workspace's repository.
+    if (reopen && this.fs && epoch === this.epoch) {
+      void this.openBranchReview(undefined, reopen.mode)
+      if (!reopen.visible) this.store.set(branchTabActiveAtom, false)
+    }
   }
 
   async renameWorkspace(id: string, name: string) {
     try {
       await this.requireManager().rename(id, name)
       await this.refreshWorkspaces()
+    } catch (e) {
+      this.fail(e)
+    }
+  }
+
+  async togglePinWorkspace(id: string) {
+    try {
+      const manager = this.requireManager()
+      const meta = await manager.get(id)
+      if (!meta) return
+      await manager.setPinned(id, !meta.pinned)
+      this.store.set(workspacesAtom, await manager.list())
     } catch (e) {
       this.fail(e)
     }

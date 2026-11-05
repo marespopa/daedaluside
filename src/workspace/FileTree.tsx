@@ -3,6 +3,7 @@ import { useAtom, useAtomValue, useStore } from 'jotai'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   activePathAtom,
+  openingPathAtom,
   deletingPathsAtom,
   fileTreeFocusAtom,
   linkedFolderAtom,
@@ -66,7 +67,7 @@ function treeMenuItems(
 
 /**
  * File tree: a flush, borderless drawer on the left of the editor. :Explore or Mod-B opens
- * it; q closes it. The editor keeps its width. Only the rows on screen are rendered.
+ * it; q closes it. It pushes the editor aside instead of covering it. Only the rows on screen are rendered.
  */
 /** Marker colors by git status; full class names so Tailwind sees them. */
 const GIT_DOT: Record<GitStatus, string> = {
@@ -79,7 +80,11 @@ const GIT_DOT: Record<GitStatus, string> = {
 export default function FileTree() {
   const open = useAtomValue(sidebarOpenAtom)
   return (
-    <div className="relative h-full w-0 shrink-0">
+    <div
+      className={`relative h-full shrink-0 transition-[width] duration-200 ease-out motion-reduce:transition-none ${
+        open ? 'w-sidebar-compact max-w-[100vw] min-[1280px]:w-sidebar' : 'w-0'
+      }`}
+    >
       <Sidebar open={open} />
     </div>
   )
@@ -101,6 +106,7 @@ function Sidebar({ open }: { open: boolean }) {
   const deleting = useAtomValue(deletingPathsAtom)
   const treeBusy = deleting.size > 0
   const activePath = useAtomValue(activePathAtom)
+  const openingPath = useAtomValue(openingPathAtom)
   const buffers = useAtomValue(openBuffersAtom)
   const git = useAtomValue(gitHeadAtom)
   const diffs = useAtomValue(fileDiffMapAtom)
@@ -510,7 +516,8 @@ function Sidebar({ open }: { open: boolean }) {
 
     const { entry } = row
     const isDir = entry.kind === 'dir'
-    const isActive = entry.path === activePath
+    const isOpening = entry.path === openingPath
+    const isActive = entry.path === activePath || isOpening
     const renaming = editing?.kind === 'rename' && editing.path === entry.path
     const confirming = confirm === entry.path
     // Inline editors can be taller than a row, so they stack above their neighbours.
@@ -533,7 +540,7 @@ function Sidebar({ open }: { open: boolean }) {
       >
         <div
           style={{ paddingLeft: row.depth * INDENT + 8 }}
-          className={`group/row relative flex h-full items-center gap-1 pr-3 ${isActive ? 'bg-surface font-medium text-text' : 'hover:bg-surface/60'}`}
+          className={`group/row relative flex h-full items-center gap-1 pr-3 ${isOpening ? 'motion-safe:animate-pulse' : ''} ${isActive ? 'bg-surface font-medium text-text' : 'hover:bg-surface/60'}`}
         >
           {Array.from({ length: row.depth }, (_, i) => (
             <span

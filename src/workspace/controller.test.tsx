@@ -155,7 +155,6 @@ describe('workspace in the app', () => {
     const a = mount()
     await openFolder(a.store, disk)
     await scratchTab()
-    act(() => a.store.set(reviewOpenAtom, false)) // opening a file lands on its diff
     const view = a.store.get(editorHandleAtom)!.view
     act(() => view.focus())
 
@@ -227,7 +226,7 @@ describe('workspace in the app', () => {
     await waitFor(() => expect(a.store.get(activePathAtom)).toBe('scratch.ts'))
   })
 
-  it('opens settings with storage details', async () => {
+  it('opens settings and closes them with Escape', async () => {
     const user = userEvent.setup()
     mount()
     await waitFor(() =>
@@ -235,8 +234,8 @@ describe('workspace in the app', () => {
     )
     await user.keyboard('{Control>},{/Control}')
     const dlg = await screen.findByRole('dialog', { name: 'Settings' })
-    expect(await within(dlg).findByText(/Persistent storage/)).toBeInTheDocument()
-    expect(within(dlg).queryByText(/OPFS/)).not.toBeInTheDocument()
+    expect(within(dlg).getByText('Typography')).toBeInTheDocument()
+    expect(within(dlg).queryByText(/Keep data when space is low/)).not.toBeInTheDocument()
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
@@ -506,6 +505,19 @@ describe('command palette modes', () => {
       await c.openFile('README.md')
     })
     expect(input).toHaveFocus()
+  })
+
+  it('opens a file mentioned in markdown, and ignores one that is missing', async () => {
+    const a = mount()
+    const c = await withFiles(a.store)
+    await act(async () => {
+      await c.openFile('README.md')
+    })
+    await act(async () => {
+      expect(await c.openReference('src/missing.ts')).toBe(false)
+      expect(await c.openReference('src/app.ts')).toBe(true)
+    })
+    expect(a.store.get(activePathAtom)).toBe('src/app.ts')
   })
 })
 

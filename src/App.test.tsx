@@ -57,7 +57,10 @@ describe('App', () => {
       expect(document.documentElement.dataset.theme).toBe('github-dark'),
     )
     expect(document.documentElement).toHaveClass('dark')
-    expect(localStorage.getItem('daedalus:theme')).toBe('github-dark')
+    expect(JSON.parse(localStorage.getItem('daedalus:theme')!)).toMatchObject({
+      mode: 'dark',
+      dark: 'github-dark',
+    })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     await user.keyboard('{Control>}k{/Control}')
     await user.type(screen.getByRole('combobox'), '>github light{Enter}')

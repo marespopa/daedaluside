@@ -4,7 +4,6 @@ import { IDBFactory } from 'fake-indexeddb'
 import { createStore, Provider } from 'jotai'
 import App from '../App'
 import { editorHandleAtom } from '../state/editorAtoms'
-import { reviewLayoutAtom, reviewOpenAtom } from '../state/gitAtoms'
 import { getController } from '../workspace/controller'
 import { MemDisk } from '../workspace/testing/memoryDisk'
 import {
@@ -132,41 +131,6 @@ describe('command palette: no folder open', () => {
     expect(screen.queryByRole('option')).toBeNull()
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull()
-  })
-})
-
-describe('command palette: diff review', () => {
-  beforeEach(() => {
-    globalThis.indexedDB = new IDBFactory()
-  })
-
-  it('opens the review in either layout and closes it again', async () => {
-    const user = userEvent.setup()
-    const store = mount()
-    await openFolder(store)
-
-    let input = await openCommands(user)
-    await user.type(input, 'diff')
-    expect(
-      screen.getByRole('option', { name: 'Diff: Open (unified)' }),
-    ).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Diff: Open (split)' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Diff: Close' })).toBeInTheDocument()
-    await user.click(screen.getByRole('option', { name: 'Diff: Open (split)' }))
-    expect(store.get(reviewOpenAtom)).toBe(true)
-    expect(store.get(reviewLayoutAtom)).toBe('split')
-    // The review view is a lazy chunk: let it mount before reopening the palette.
-    await screen.findByTestId('diff-review')
-
-    input = await openCommands(user)
-    await user.type(input, 'diff open (unified')
-    await user.keyboard('{Enter}')
-    expect(store.get(reviewLayoutAtom)).toBe('unified')
-
-    input = await openCommands(user)
-    await user.type(input, 'diff close')
-    await user.keyboard('{Enter}')
-    expect(store.get(reviewOpenAtom)).toBe(false)
   })
 })
 

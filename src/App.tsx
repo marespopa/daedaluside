@@ -27,6 +27,7 @@ export default function App() {
   const [width, setWidth] = useAtom(editorWidthAtom)
   const setSidebarOpen = useSetAtom(sidebarOpenAtom)
   const settingsOpen = useAtomValue(settingsOpenAtom)
+
   useEffect(() => {
     let wasNarrow = window.innerWidth < 1024
     if (wasNarrow) setSidebarOpen(false)
@@ -40,12 +41,12 @@ export default function App() {
     window.addEventListener('resize', collapseOnNarrowViewport)
     return () => window.removeEventListener('resize', collapseOnNarrowViewport)
   }, [setSidebarOpen])
+
   return (
     <div className="flex h-full bg-canvas text-text">
       <FileTree />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-header min-w-0 shrink-0 items-center gap-1 px-3 font-sans text-sm text-muted">
-          <HomeButton />
           <IconButton
             label="Toggle file tree"
             icon="sidebar"
@@ -54,6 +55,7 @@ export default function App() {
               setSidebarOpen((open) => !open)
             }}
           />
+          <HomeButton />
           <Tabs />
           <span className="sr-only">
             {buffer.name

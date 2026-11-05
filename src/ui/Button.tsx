@@ -9,11 +9,11 @@ export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'quiet' | 'dange
 export type ButtonSize = 'xs' | 'sm' | 'md'
 
 const base =
-  'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap rounded-md font-sans font-medium transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40'
+  'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap rounded-md font-sans font-medium transition-[color,background-color,opacity,transform] duration-150 ease-out motion-safe:active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40'
 
 const variants: Record<ButtonVariant, string> = {
   primary: 'bg-text text-canvas hover:opacity-90',
-  secondary: 'border border-line bg-canvas text-text hover:bg-surface',
+  secondary: 'border border-muted bg-canvas text-text hover:bg-surface',
   ghost: 'text-muted hover:bg-surface hover:text-text',
   quiet: 'text-muted hover:text-text',
   danger: 'text-diff-remove-fg hover:bg-diff-remove',

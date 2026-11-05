@@ -25,6 +25,8 @@ export interface WorkspaceMeta {
   source?: string | undefined
   /** `file` for a single-file workspace; absent means a folder workspace. */
   kind?: 'file' | undefined
+  /** Listed on the homepage for quick switching. */
+  pinned?: boolean
   /** Set once the placeholder scratch.ts check has run for legacy blank workspaces. */
   scratchChecked?: boolean
 }
@@ -161,6 +163,13 @@ export class WorkspaceManager {
 
   markScratchChecked(id: string): Promise<WorkspaceMeta> {
     return this.update(id, { scratchChecked: true })
+  }
+
+  /** Pinned workspaces are listed on the homepage for one-tap switching. */
+  async setPinned(id: string, pinned: boolean): Promise<WorkspaceMeta> {
+    const meta = await this.update(id, { pinned })
+    announce({ ws: null })
+    return meta
   }
 
   async rename(id: string, name: string): Promise<WorkspaceMeta> {

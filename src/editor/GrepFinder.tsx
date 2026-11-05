@@ -188,7 +188,7 @@ function GrepDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-canvas/60 px-4 pt-[10vh]"
+      className="anim-fade fixed inset-0 z-50 flex items-start justify-center bg-canvas/60 px-4 pt-[10vh]"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <GlassPopover

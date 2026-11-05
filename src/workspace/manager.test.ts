@@ -59,6 +59,16 @@ describe('WorkspaceManager', () => {
     expect(post).not.toHaveBeenCalled()
   })
 
+  it('pins and unpins a workspace', async () => {
+    const m = await makeManager()
+    const ws = await m.create('Alpha')
+    expect(ws.pinned).toBeUndefined()
+    await m.setPinned(ws.id, true)
+    expect((await m.get(ws.id))?.pinned).toBe(true)
+    await m.setPinned(ws.id, false)
+    expect((await m.get(ws.id))?.pinned).toBe(false)
+  })
+
   it('creates, renames, saves sessions and deletes records without touching disk', async () => {
     const disk = new MemDisk()
     disk.setFile('x/y.txt', new TextEncoder().encode('data'))

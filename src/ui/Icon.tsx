@@ -19,6 +19,8 @@ export type IconName =
   | 'pin'
   | 'chevron-left'
   | 'chevron-right'
+  | 'chevron-down'
+  | 'check'
   | 'width'
   | 'expand-all'
   | 'search'
@@ -70,6 +72,8 @@ const paths: Record<IconName, ReactNode> = {
   ),
   'chevron-left': <path d="M15 6l-6 6 6 6" />,
   'chevron-right': <path d="M9 6l6 6-6 6" />,
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  'chevron-down': <path d="M6 9l6 6 6-6" />,
   pin: (
     <>
       <path d="M8.5 3.5h7l-1 5.5 2.5 3v1.5h-10V12l2.5-3z" />

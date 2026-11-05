@@ -42,6 +42,7 @@ const pairs: [string, string, number][] = [
   ['text', 'surface', 4.5],
   ['muted', 'canvas', 4.5],
   ['muted', 'surface', 4.5],
+  ['text', 'line', 4.5],
   ['diff-add-fg', 'canvas', 4.5],
   ['diff-remove-fg', 'canvas', 4.5],
   ['accent', 'canvas', 3],

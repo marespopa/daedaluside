@@ -1,6 +1,7 @@
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useState } from 'react'
 import { MOD_KEY_LABEL } from '../lib/platform'
+import { COMMAND_PREFIX } from '../editor/paletteSearch'
 import { openExPrompt } from '../editor/vimMode'
 import {
   editorHandleAtom,
@@ -20,6 +21,7 @@ import {
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
 import { gitBranchAtom } from '../state/gitAtoms'
+import { Button, Icon, IconButton } from '../ui'
 import { useFolderPicker } from './useFolderPicker'
 import { useFilePicker } from './useFilePicker'
 import TicTacToe from './TicTacToe'
@@ -70,6 +72,7 @@ export default function WorkspaceOpener() {
   const workspaces = useAtomValue(workspacesAtom)
   const currentId = useAtomValue(currentWorkspaceIdAtom)
   const setNotice = useSetAtom(noticeAtom)
+  const setSettings = useSetAtom(settingsOpenAtom)
   const treeStatus = useAtomValue(treeStatusAtom)
   const progress = useAtomValue(treeProgressAtom)
   const treeComplete = useAtomValue(treeCompleteAtom)
@@ -152,17 +155,36 @@ export default function WorkspaceOpener() {
         .slice(0, 3)
     : []
 
+  /** Opens the palette on the workspace commands, as Mod-O does. */
+  const switchWorkspace = () => {
+    store.set(paletteQueryAtom, `${COMMAND_PREFIX}Workspace: `)
+    store.set(paletteOpenAtom, true)
+  }
+  const pinned = workspaces.filter((w) => w.pinned)
+
   const quietBtn =
     'rounded px-2 py-1 text-xs text-muted transition-colors hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50'
 
   return (
     <section
       aria-label="Workspace opener"
-      className="absolute inset-x-0 top-0 bottom-10 flex items-center justify-center overflow-y-auto bg-canvas px-6 font-sans text-text"
+      className="anim-fade absolute inset-x-0 top-0 bottom-10 flex items-center justify-center overflow-y-auto bg-canvas px-6 font-sans text-text"
     >
-      <div className="flex w-full max-w-[420px] flex-col items-center gap-8 py-12 text-center">
-        <header className="space-y-2">
-          <h2 className="text-sm font-medium text-text">{title}</h2>
+      <div className="flex w-full max-w-[420px] flex-col items-center gap-10 py-16 text-center">
+        <header className="space-y-1">
+          <h2 className="flex items-center justify-center gap-1 text-sm font-medium text-text">
+            {current && (
+              <IconButton
+                label="Pin workspace"
+                icon="pin"
+                size="sm"
+                aria-pressed={!!current.pinned}
+                onClick={() => void controller.togglePinWorkspace(current.id)}
+                className={current.pinned ? '[&_svg]:fill-current' : ''}
+              />
+            )}
+            {title}
+          </h2>
           {treeStatus.state === 'error' && hasWorkspace ? (
             <p role="alert" className="text-xs text-diff-remove-fg">
               Could not read this folder: {treeStatus.message}
@@ -220,10 +242,18 @@ export default function WorkspaceOpener() {
                 <span>Search Files</span>
                 <kbd className="font-mono text-[11px]">{MOD_KEY_LABEL}+P</kbd>
               </button>
+              <button
+                type="button"
+                onClick={() => void controller.openBranchReview()}
+                className="-mt-4 flex h-10 w-full items-center justify-between rounded-lg border border-muted/40 px-3 text-sm text-muted transition-colors hover:border-muted/60 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              >
+                <span>Branch Review</span>
+                <Icon name="check" className="size-3.5" />
+              </button>
               {entryPoints.length > 0 && (
                 <nav
                   aria-label="Entry points"
-                  className="flex flex-wrap justify-center gap-1"
+                  className="-mt-4 flex flex-wrap justify-center gap-x-2"
                 >
                   {entryPoints.map((e) => (
                     <button
@@ -237,31 +267,79 @@ export default function WorkspaceOpener() {
                   ))}
                 </nav>
               )}
-              <p className="text-xs text-muted">
-                <kbd className="font-mono">{MOD_KEY_LABEL}+K</kbd> commands ·{' '}
-                <kbd className="font-mono">{MOD_KEY_LABEL}+Shift+F</kbd> find in files
-              </p>
             </>
           )
         ) : (
           <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={!ready}
-              onClick={() => void openFolder()}
-              className={quietBtn}
-            >
+            <Button size="sm" disabled={!ready} onClick={() => void openFolder()}>
               Open folder
-            </button>
-            <button
-              type="button"
-              disabled={!ready}
-              onClick={() => void openFile()}
-              className={quietBtn}
-            >
+            </Button>
+            <Button size="sm" disabled={!ready} onClick={() => void openFile()}>
               Open file
-            </button>
+            </Button>
+            <Button size="sm" onClick={() => setSettings(true)}>
+              Settings
+            </Button>
           </div>
+        )}
+
+        {workspaceReady && <hr aria-hidden className="w-full border-line/60" />}
+
+        {hasWorkspace && ready && (
+          <nav
+            aria-label="Workspaces"
+            className="flex w-full flex-col items-center gap-5"
+          >
+            <div className="flex flex-wrap justify-center gap-2">
+              {workspaces.length > 1 && (
+                <Button size="sm" onClick={switchWorkspace}>
+                  Switch Workspace
+                </Button>
+              )}
+              <Button size="sm" onClick={() => void openFolder()}>
+                Open a Workspace
+              </Button>
+              <Button size="sm" onClick={() => setSettings(true)}>
+                Settings
+              </Button>
+            </div>
+            {pinned.length > 0 && (
+              <ul
+                aria-label="Pinned workspaces"
+                className="flex flex-wrap justify-center gap-2"
+              >
+                {pinned.map((w) => (
+                  <li
+                    key={w.id}
+                    className="flex items-center rounded-full bg-accent/10 pl-2.5 pr-1 text-accent transition-colors hover:bg-accent/15"
+                  >
+                    <button
+                      type="button"
+                      aria-current={w.id === currentId ? 'true' : undefined}
+                      onClick={() => w.id !== currentId && void controller.switchTo(w.id)}
+                      className="flex items-center gap-1 rounded-full py-0.5 text-xs transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    >
+                      <Icon
+                        name={w.id === currentId ? 'check' : 'pin'}
+                        className="size-3"
+                      />
+                      <span className={w.id === currentId ? 'font-semibold' : ''}>
+                        {w.name}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Unpin ${w.name}`}
+                      onClick={() => void controller.togglePinWorkspace(w.id)}
+                      className="ml-0.5 rounded-full p-1 opacity-60 transition-opacity hover:opacity-100 focus-visible:outline-2 focus-visible:outline-accent"
+                    >
+                      <Icon name="x" className="size-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </nav>
         )}
 
         {status.state === 'loading' && (

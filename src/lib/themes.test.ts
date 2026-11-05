@@ -1,7 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { applyTheme, loadTheme } from './theme'
-import { normalizePreference, resolveTheme, THEME_STORAGE_KEY, THEMES } from './themes'
+import {
+  DEFAULT_THEME_SETTING,
+  parseThemeSetting,
+  resolveTheme,
+  THEME_STORAGE_KEY,
+  THEMES,
+  type ThemeId,
+  type ThemeSetting,
+} from './themes'
 
 function setSystemDark(dark: boolean) {
   vi.stubGlobal('matchMedia', () => ({
@@ -40,78 +48,100 @@ describe('theme registry', () => {
   })
 })
 
-describe('preference handling', () => {
-  it('maps old two-theme values to their new equivalents', () => {
-    expect(normalizePreference('light')).toBe('paper')
-    expect(normalizePreference('dark')).toBe('deep-slate')
+const setting = (
+  mode: ThemeSetting['mode'],
+  light: ThemeId = 'paper',
+  dark: ThemeId = 'deep-slate',
+) => ({ mode, light, dark }) as const
+
+describe('setting handling', () => {
+  it('maps old single-value preferences to a setting', () => {
+    expect(parseThemeSetting('light')).toEqual(setting('light'))
+    expect(parseThemeSetting('dark')).toEqual(setting('dark'))
+    expect(parseThemeSetting('dracula')).toEqual(setting('dark', 'paper', 'dracula'))
+    expect(parseThemeSetting('one-light')).toEqual(setting('light', 'one-light'))
+    expect(parseThemeSetting('system')).toEqual(setting('system'))
   })
 
-  it('keeps known ids and treats anything else as system', () => {
-    expect(normalizePreference('dracula')).toBe('dracula')
-    expect(normalizePreference('system')).toBe('system')
-    expect(normalizePreference('nope')).toBe('system')
-    expect(normalizePreference(null)).toBe('system')
+  it('falls back to defaults for unreadable or mismatched values', () => {
+    expect(parseThemeSetting(null)).toEqual(DEFAULT_THEME_SETTING)
+    expect(parseThemeSetting('nope')).toEqual(DEFAULT_THEME_SETTING)
+    expect(parseThemeSetting('{"mode":"x","light":"dracula","dark":"paper"}')).toEqual(
+      DEFAULT_THEME_SETTING,
+    )
   })
 
-  it('resolves system from the OS setting', () => {
-    expect(resolveTheme('system', true)).toBe('deep-slate')
-    expect(resolveTheme('system', false)).toBe('paper')
-    expect(resolveTheme('one-dark', false)).toBe('one-dark')
+  it('resolves system from the OS setting, using the chosen theme per side', () => {
+    const s = setting('system', 'one-light', 'dracula')
+    expect(resolveTheme(s, true)).toBe('dracula')
+    expect(resolveTheme(s, false)).toBe('one-light')
+    expect(resolveTheme({ ...s, mode: 'dark' }, false)).toBe('dracula')
   })
 })
 
 describe('applying and remembering the theme', () => {
-  it('sets data-theme and the light/dark class, and saves the choice', () => {
-    applyTheme('github-dark')
+  it('sets data-theme and the light/dark class, and saves the setting', () => {
+    const s = setting('dark', 'paper', 'github-dark')
+    applyTheme(s)
     const root = document.documentElement
     expect(root.dataset.theme).toBe('github-dark')
     expect(root).toHaveClass('dark')
     expect(root).not.toHaveClass('light')
-    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('github-dark')
+    expect(loadTheme()).toEqual(s)
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe(JSON.stringify(s))
   })
 
-  it('a reload restores the saved theme', () => {
-    applyTheme('solarized-light')
-    expect(loadTheme()).toBe('solarized-light')
-  })
-
-  it('migrates a legacy "dark" preference on load', () => {
+  it('migrates a legacy "dark" value on load', () => {
     localStorage.setItem(THEME_STORAGE_KEY, 'dark')
-    expect(loadTheme()).toBe('deep-slate')
+    expect(loadTheme()).toEqual(setting('dark'))
   })
 
   it('system follows the OS setting', () => {
+    const s = setting('system', 'one-light', 'dracula')
     setSystemDark(true)
-    applyTheme('system')
-    expect(document.documentElement.dataset.theme).toBe('deep-slate')
+    applyTheme(s)
+    expect(document.documentElement.dataset.theme).toBe('dracula')
     setSystemDark(false)
-    applyTheme('system')
-    expect(document.documentElement.dataset.theme).toBe('paper')
+    applyTheme(s)
+    expect(document.documentElement.dataset.theme).toBe('one-light')
   })
 })
 
 describe('public/theme-init.js (runs before first paint)', () => {
   const src = readFileSync(resolve(process.cwd(), 'public/theme-init.js'), 'utf8')
   const run = () => new Function(src)()
+  const save = (v: unknown) =>
+    localStorage.setItem(THEME_STORAGE_KEY, typeof v === 'string' ? v : JSON.stringify(v))
 
-  it('applies the saved theme without waiting for the app', () => {
-    localStorage.setItem(THEME_STORAGE_KEY, 'dracula')
+  it('applies the saved setting without waiting for the app', () => {
+    save(setting('dark', 'paper', 'dracula'))
     run()
     expect(document.documentElement.dataset.theme).toBe('dracula')
     expect(document.documentElement).toHaveClass('dark')
   })
 
+  it('in system mode picks the chosen theme for the OS side', () => {
+    save(setting('system', 'one-light', 'dracula'))
+    setSystemDark(false)
+    run()
+    expect(document.documentElement.dataset.theme).toBe('one-light')
+  })
+
   it('falls back to the system setting for unknown values', () => {
     setSystemDark(true)
-    localStorage.setItem(THEME_STORAGE_KEY, 'garbage')
+    save('garbage')
     run()
     expect(document.documentElement.dataset.theme).toBe('deep-slate')
   })
 
   it('maps legacy values', () => {
-    localStorage.setItem(THEME_STORAGE_KEY, 'light')
+    save('light')
     run()
     expect(document.documentElement.dataset.theme).toBe('paper')
     expect(document.documentElement).toHaveClass('light')
+    document.documentElement.className = ''
+    save('dracula')
+    run()
+    expect(document.documentElement.dataset.theme).toBe('dracula')
   })
 })

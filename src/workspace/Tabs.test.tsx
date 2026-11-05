@@ -4,7 +4,12 @@ import { IDBFactory } from 'fake-indexeddb'
 import { createStore, Provider } from 'jotai'
 import App from '../App'
 import { editorHandleAtom } from '../state/editorAtoms'
-import { activePathAtom, treeAtom, workspaceStatusAtom } from '../state/workspaceAtoms'
+import {
+  activePathAtom,
+  openingPathAtom,
+  treeAtom,
+  workspaceStatusAtom,
+} from '../state/workspaceAtoms'
 import { getController } from './controller'
 import { openDB } from './db'
 import { WorkspaceManager } from './manager'
@@ -337,5 +342,21 @@ describe('tab strip', () => {
     await openFolder(b.store, disk)
     await screen.findByRole('tab', { name: 'a.ts' })
     expect(tabPaths()).toEqual(['a.ts', 'scratch.ts'])
+  })
+
+  it('shows a placeholder tab for a file that is still opening', async () => {
+    const disk = new MemDisk()
+    const a = mount()
+    await openFolder(a.store, disk)
+    await scratchTab()
+    act(() => a.store.set(openingPathAtom, 'src/pending.ts'))
+    const pending = await screen.findByTitle('src/pending.ts')
+    expect(pending).toHaveTextContent('pending.ts')
+    expect(pending).toHaveAttribute('aria-busy', 'true')
+    // The old tab stops looking selected while the new one loads.
+    expect(tabEl('scratch.ts')).toHaveAttribute('aria-selected', 'false')
+    act(() => a.store.set(openingPathAtom, null))
+    expect(screen.queryByTitle('src/pending.ts')).toBeNull()
+    expect(tabEl('scratch.ts')).toHaveAttribute('aria-selected', 'true')
   })
 })

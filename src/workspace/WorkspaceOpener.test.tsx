@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { IDBFactory } from 'fake-indexeddb'
 import { createStore, Provider } from 'jotai'
 import App from '../App'
+import { branchReviewAtom, branchTabActiveAtom } from '../state/branchReviewAtoms'
 import { paletteOpenAtom } from '../state/editorAtoms'
 import { activePathAtom, treeAtom, workspaceStatusAtom } from '../state/workspaceAtoms'
 import { getController } from './controller'
@@ -23,9 +24,10 @@ async function openFolder(
   store: ReturnType<typeof createStore>,
   disk: MemDisk,
   firstFile?: string,
+  name?: string,
 ) {
   await waitFor(() => expect(store.get(workspaceStatusAtom).state).toBe('ready'))
-  const handle = disk.handle()
+  const handle = disk.handle(name)
   await act(async () => {
     await getController(store).importFolderHandle(handle as never)
   })
@@ -39,6 +41,21 @@ const opener = () => screen.findByRole('region', { name: 'Workspace opener' })
 describe('workspace opener', () => {
   beforeEach(() => {
     globalThis.indexedDB = new IDBFactory()
+  })
+
+  it('opens the branch review from the home page', async () => {
+    const user = userEvent.setup()
+    const disk = new MemDisk()
+    disk.setFile('README.md', new TextEncoder().encode('# r'))
+    const store = mount()
+    await openFolder(store, disk, 'README.md')
+    await act(async () => {
+      getController(store).showHome()
+    })
+    const o = await opener()
+    await user.click(within(o).getByRole('button', { name: /Branch Review/ }))
+    expect(store.get(branchTabActiveAtom)).toBe(true)
+    expect(store.get(branchReviewAtom)).not.toBeNull()
   })
 
   it('offers Open folder, not file search, when no workspace is open', async () => {
@@ -95,5 +112,54 @@ describe('workspace opener', () => {
     await waitFor(() => expect(store.get(activePathAtom)).toBe('src/app.ts'))
     expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull()
     expect(screen.queryByRole('region', { name: 'Workspace opener' })).toBeNull()
+  })
+
+  it('pins workspaces and lists the others for one-tap switching', async () => {
+    const user = userEvent.setup()
+    const a = new MemDisk()
+    a.setFile('a.txt', new TextEncoder().encode('a'))
+    const b = new MemDisk()
+    b.setFile('b.txt', new TextEncoder().encode('b'))
+    const store = mount()
+    await openFolder(store, a, 'a.txt')
+    await act(async () => getController(store).showHome())
+    const o = await opener()
+    expect(
+      await within(o).findByRole('button', { name: 'Open a Workspace' }),
+    ).toBeInTheDocument()
+    expect(within(o).queryByRole('button', { name: 'Switch Workspace' })).toBeNull()
+
+    // Pin the first workspace, then open a second one.
+    const pin = await within(o).findByRole('button', { name: 'Pin workspace' })
+    expect(pin).toHaveAttribute('aria-pressed', 'false')
+    await user.click(pin)
+    await waitFor(() => expect(pin).toHaveAttribute('aria-pressed', 'true'))
+    await openFolder(store, b, 'b.txt', 'second')
+    await act(async () => getController(store).showHome())
+
+    const home = await opener()
+    expect(
+      await within(home).findByRole('button', { name: 'Switch Workspace' }),
+    ).toBeInTheDocument()
+    const pinned = await within(home).findByRole('list', { name: 'Pinned workspaces' })
+    await user.click(within(pinned).getAllByRole('button')[0]!)
+    await waitFor(() =>
+      expect(store.get(treeAtom).some((e) => e.path === 'a.txt')).toBe(true),
+    )
+  })
+
+  it('Switch Workspace opens the palette on the workspace commands', async () => {
+    const user = userEvent.setup()
+    const a = new MemDisk()
+    a.setFile('a.txt', new TextEncoder().encode('a'))
+    const b = new MemDisk()
+    b.setFile('b.txt', new TextEncoder().encode('b'))
+    const store = mount()
+    await openFolder(store, a, 'a.txt')
+    await openFolder(store, b, 'b.txt', 'second')
+    await act(async () => getController(store).showHome())
+    const o = await opener()
+    await user.click(await within(o).findByRole('button', { name: 'Switch Workspace' }))
+    expect(store.get(paletteOpenAtom)).toBe(true)
   })
 })

@@ -13,6 +13,7 @@ import {
 } from '../../state/branchReviewAtoms'
 import { workspaceStatusAtom } from '../../state/workspaceAtoms'
 import { getController } from '../../workspace/controller'
+import { MemDisk } from '../../workspace/testing/memoryDisk'
 import type { BranchFile } from '../../workspace/gitService'
 import { getReviewPane } from '../reviewPane'
 import { isReviewed, markFile, marksKey, loadMarks, pruneMarks, saveMarks } from './marks'
@@ -101,6 +102,36 @@ describe('branch review surface', () => {
     await waitFor(() =>
       expect(document.querySelectorAll('.cm-diff-line-change').length).toBeGreaterThan(0),
     )
+  })
+
+  it('each file has a checkbox that shows and sets its reviewed mark', async () => {
+    const { store, user } = await setup()
+    const boxes = screen.getAllByRole('checkbox')
+    expect(boxes).toHaveLength(3)
+    boxes.forEach((b) => expect(b).toHaveAttribute('aria-checked', 'false'))
+    const before = selected(store)
+    await user.click(boxes[1]!)
+    expect(boxes[1]).toHaveAttribute('aria-checked', 'true')
+    expect(selected(store)).toBe(before)
+    expect(screen.getByTestId('branch-progress')).toHaveTextContent('1 / 3 reviewed')
+    await user.click(boxes[1]!)
+    expect(boxes[1]).toHaveAttribute('aria-checked', 'false')
+    expect(store.get(branchMarksAtom)).toEqual({})
+  })
+
+  it('switching workspace drops the old review and its marks, then reads the new one', async () => {
+    const { store, controller } = await setup()
+    act(() => store.set(branchMarksAtom, markFile({}, files[0]!, true)))
+    const first = new MemDisk()
+    const second = new MemDisk()
+    await act(async () => {
+      await controller.importFolderHandle(first.handle('one') as never)
+      await controller.importFolderHandle(second.handle('two') as never)
+    })
+    const s = store.get(branchReviewAtom)
+    // The stale review (src/a.ts, src/b.ts, logo.png) is gone; a fresh read replaced it.
+    expect(s?.files.map((f) => f.path) ?? []).not.toContain('src/a.ts')
+    expect(store.get(branchMarksAtom)).toEqual({})
   })
 
   it('moves the selection with j and k', async () => {

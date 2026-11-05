@@ -9,7 +9,7 @@ export function GlassPopover({
   return (
     <div
       ref={ref}
-      className={`glass rounded-xl border border-line text-text shadow-lg ${className}`}
+      className={`glass anim-pop rounded-xl border border-line text-text shadow-lg ${className}`}
       {...props}
     />
   )

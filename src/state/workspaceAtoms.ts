@@ -67,6 +67,8 @@ export const treeProgressAtom = atom<{
 export const deletingPathsAtom = atom<ReadonlySet<string>>(new Set<string>())
 export const openBuffersAtom = atom<OpenBuffer[]>([])
 export const activePathAtom = atom<string | null>(null)
+/** A file that was just clicked and is still being read: the UI shows it as opening. */
+export const openingPathAtom = atom<string | null>(null)
 /**
  * The folder the current workspace reads and writes through. `paused` means the browser
  * no longer grants readwrite access (after a reload, or the user revoked it); the tree

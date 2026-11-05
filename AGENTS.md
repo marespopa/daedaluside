@@ -1,5 +1,23 @@
 # Agent Instructions
 
+## UX
+
+- Always respond instantly to user actions. A click, key press or double-click must change the UI in the same frame: open the tab, move the selection, or show a busy state. Never leave the screen unchanged while work runs.
+- Do not block a response on slow work (a full tree walk, a worker, a network or disk read) when a cheap check or the data already loaded can answer. Prefer loaded state first, then a direct lookup, and show progress for anything left.
+
+## Motion
+
+- Every surface that appears gets a short entrance, so the UI feels responsive and never snaps. Use the shared classes in `src/index.css`: `anim-fade` (backdrops, tabs, pages, a file coming into view) and `anim-pop` (dialogs, the command palette, dropdown lists, menus; `GlassPopover` already applies it).
+- Buttons use the shared `Button`, which gives hover/press feedback (`active:scale`). Do not write one-off transitions or keyframes in feature code.
+- Keep it subtle: 140-160ms, ease-out, opacity plus a few pixels of movement. Motion must never delay input or a state change.
+- All motion must be off under `prefers-reduced-motion` (the shared classes already do this; use `motion-safe:` for anything else).
+
+## Color
+
+- Follow WCAG 2.2 AA for every color. Text needs 4.5:1 (3:1 for large text), and meaningful UI parts such as control borders and icons need 3:1. Disabled controls are exempt.
+- Never use color alone to show state (selected, pinned, current, error). Pair it with a shape, icon, weight or text.
+- Add new text/background pairs to `src/styles/tokens.test.ts`.
+
 ## Testing
 
 - Use `@testing-library/user-event` for keyboard and pointer interactions.

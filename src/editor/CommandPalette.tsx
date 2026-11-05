@@ -3,7 +3,7 @@ import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDoubleShift } from '../lib/doubleShift'
 import { themeAtom } from '../lib/theme'
-import { THEMES, type ThemePreference } from '../lib/themes'
+import { THEMES, type ThemeId, type ThemeMode } from '../lib/themes'
 import {
   activeBufferAtom,
   editorHandleAtom,
@@ -27,12 +27,7 @@ import {
 import { fileDiffEnabledAtom } from '../state/gitAtoms'
 import { GlassPopover, Input } from '../ui'
 import { joinPath } from '../workspace/path'
-import {
-  closeReview,
-  focusEditor,
-  openReview,
-  useController,
-} from '../workspace/useWorkspace'
+import { focusEditor, useController } from '../workspace/useWorkspace'
 import type { Entry } from '../workspace/types'
 import { languageList } from './languages'
 import {
@@ -55,7 +50,7 @@ export default function CommandPalette() {
   const [open, setOpen] = useAtom(paletteOpenAtom)
   const [query, setQuery] = useAtom(paletteQueryAtom)
   const handle = useAtomValue(editorHandleAtom)
-  const setTheme = useSetAtom(themeAtom)
+  const [themeSetting, setTheme] = useAtom(themeAtom)
   const setBuffer = useSetAtom(activeBufferAtom)
   const controller = useController()
   const setSettings = useSetAtom(settingsOpenAtom)
@@ -124,10 +119,11 @@ export default function CommandPalette() {
   )
 
   const commands = useMemo<PaletteItem[]>(() => {
-    const theme = (pref: ThemePreference, label: string): PaletteItem => ({
-      id: `theme-${pref}`,
+    // Picking a theme pins its light/dark mode so the change is visible at once.
+    const theme = (id: ThemeId, label: string, kind: ThemeMode): PaletteItem => ({
+      id: `theme-${id}`,
       label: `Theme: ${label}`,
-      run: () => setTheme(pref),
+      run: () => setTheme({ ...themeSetting, mode: kind, [kind]: id }),
     })
     const langs: PaletteItem[] = languageList.map((l) => ({
       id: `lang-${l.name}`,
@@ -204,7 +200,7 @@ export default function CommandPalette() {
         label: 'Tab: Copy Relative Path',
         run: () => activePath && void controller.copyPath(activePath),
       },
-      { id: 'settings', label: 'Settings: Storage', run: () => setSettings(true) },
+      { id: 'settings', label: 'Settings', run: () => setSettings(true) },
       { id: 'new-file', label: 'File: New File', enter: { kind: 'file' } },
       { id: 'new-folder', label: 'File: New Folder', enter: { kind: 'folder' } },
       {
@@ -216,6 +212,13 @@ export default function CommandPalette() {
         id: 'ws-new',
         label: 'Workspace: New',
         run: () => void controller.newWorkspace(),
+      },
+      {
+        id: 'ws-pin',
+        label: 'Workspace: Pin/Unpin Current',
+        run: () => {
+          if (currentId) void controller.togglePinWorkspace(currentId)
+        },
       },
       {
         id: 'ws-delete',
@@ -239,8 +242,12 @@ export default function CommandPalette() {
           run: () => void controller.switchTo(w.id),
         })),
       // Label carries the kind, so typing "dark" or "light" finds the matching group.
-      ...THEMES.map((t) => theme(t.id, `${t.name} (${t.kind})`)),
-      theme('system', 'System'),
+      ...THEMES.map((t) => theme(t.id, `${t.name} (${t.kind})`, t.kind)),
+      {
+        id: 'theme-system',
+        label: 'Theme: Follow System',
+        run: () => setTheme({ ...themeSetting, mode: 'system' }),
+      },
       {
         id: 'grep',
         label: 'Search: Live Grep in Files (Ctrl-Shift-F)',
@@ -253,21 +260,6 @@ export default function CommandPalette() {
         id: 'branch-review',
         label: 'Branch Review: Open against main (Ctrl-Shift-B)',
         run: () => void controller.openBranchReview(),
-      },
-      {
-        id: 'diff-unified',
-        label: 'Diff: Open (unified)',
-        run: () => openReview(store, 'unified'),
-      },
-      {
-        id: 'diff-split',
-        label: 'Diff: Open (split)',
-        run: () => openReview(store, 'split'),
-      },
-      {
-        id: 'diff-close',
-        label: 'Diff: Close',
-        run: () => closeReview(store),
       },
       {
         id: 'find',
@@ -287,6 +279,7 @@ export default function CommandPalette() {
   }, [
     handle,
     setTheme,
+    themeSetting,
     setBuffer,
     controller,
     activePath,
@@ -509,7 +502,7 @@ function PaletteDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-canvas/60 px-4 pt-[15vh]"
+      className="anim-fade fixed inset-0 z-50 flex items-start justify-center bg-canvas/60 px-4 pt-[15vh]"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <GlassPopover

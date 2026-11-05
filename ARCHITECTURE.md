@@ -4,7 +4,7 @@ project: Daedalus IDE
 type: technical-architecture
 ---
 
-Daedalus IDE is a static, browser-only code editor with an integrated Bring-Your-Own-Key (BYOK) AI engine operating on a three-stage pipeline: **Plan → Review → Execute**.
+Daedalus IDE is a static, browser-only code editor with an integrated Bring-Your-Own-Key (BYOK) AI engine operating on a three-stage pipeline: **Plan → Review→ Execute**.
 
 All compute, file storage, key handling, and LLM calls run in the client. Hosting is static asset delivery via CDN, supplemented by an optional stateless edge proxy for endpoints requiring CORS bypass.
 

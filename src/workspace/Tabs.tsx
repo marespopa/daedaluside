@@ -23,6 +23,7 @@ import {
 import {
   activePathAtom,
   openBuffersAtom,
+  openingPathAtom,
   snapshotAtom,
   workspaceStatusAtom,
   type OpenBuffer,
@@ -44,6 +45,10 @@ export default function Tabs() {
   const snapshot = useAtomValue(snapshotAtom)
   const review = useAtomValue(branchReviewAtom) !== null
   const reviewActive = useAtomValue(branchTabActiveAtom)
+  const opening = useAtomValue(openingPathAtom)
+  // The file is known before it is read: show its tab at once, in the place the real one will take.
+  const pending =
+    opening !== null && !buffers.some((b) => b.path === opening) ? opening : null
   if (status.state === 'loading') {
     // Last session's tabs as static names until the buffers are open.
     if (!snapshot || snapshot.openFiles.length === 0) return null
@@ -65,11 +70,12 @@ export default function Tabs() {
       </nav>
     )
   }
-  if (buffers.length === 0 && !review) return null
+  if (buffers.length === 0 && !review && !pending) return null
   return (
     <TabStrip
       buffers={buffers}
-      active={review && reviewActive ? null : active}
+      pending={pending}
+      active={pending || (review && reviewActive) ? null : active}
       review={review}
       reviewActive={review && reviewActive}
     />
@@ -81,11 +87,14 @@ type Menu = { path: string; x: number; y: number }
 
 function TabStrip({
   buffers,
+  pending,
   active,
   review,
   reviewActive,
 }: {
   buffers: OpenBuffer[]
+  /** A file being read: shown as a placeholder tab until its real tab replaces it. */
+  pending: string | null
   active: string | null
   review: boolean
   reviewActive: boolean
@@ -240,7 +249,7 @@ function TabStrip({
                   setMenu({ path: b.path, x: e.clientX, y: e.clientY })
                 }}
                 className={[
-                  'group relative flex h-7 shrink-0 items-center rounded-md transition-[background-color,opacity] duration-150 ease-out',
+                  'anim-fade group relative flex h-7 shrink-0 items-center rounded-md transition-[background-color,opacity] duration-150 ease-out',
                   isActive ? 'bg-surface' : 'hover:bg-surface/60',
                   dragging ? 'opacity-50' : '',
                 ].join(' ')}
@@ -303,6 +312,17 @@ function TabStrip({
               </div>
             )
           })}
+          {pending && (
+            <div
+              data-tab="pending"
+              role="presentation"
+              aria-busy="true"
+              title={pending}
+              className="flex h-7 max-w-[12rem] shrink-0 items-center rounded-md bg-surface px-3 pr-7 font-medium whitespace-nowrap text-text motion-safe:animate-pulse"
+            >
+              <span className="truncate">{basename(pending)}</span>
+            </div>
+          )}
         </div>
         {review && (
           <div
