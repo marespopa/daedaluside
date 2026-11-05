@@ -14,19 +14,27 @@ const WORK = 'a\nB\nc\nd\ne\ng\nh\ni\n'
 
 describe('replaceLines', () => {
   it('swaps a range, inserts at a gap and deletes', () => {
-    expect(replaceLines('a\nb\nc\n', { start: 1, count: 1 }, 'X\nY\n', { start: 0, count: 2 })).toBe(
-      'a\nX\nY\nc\n',
-    )
-    expect(replaceLines('a\nc\n', { start: 1, count: 0 }, 'b\n', { start: 0, count: 1 })).toBe('a\nb\nc\n')
-    expect(replaceLines('a\nb\nc\n', { start: 1, count: 1 }, '', { start: 0, count: 0 })).toBe('a\nc\n')
+    expect(
+      replaceLines('a\nb\nc\n', { start: 1, count: 1 }, 'X\nY\n', { start: 0, count: 2 }),
+    ).toBe('a\nX\nY\nc\n')
+    expect(
+      replaceLines('a\nc\n', { start: 1, count: 0 }, 'b\n', { start: 0, count: 1 }),
+    ).toBe('a\nb\nc\n')
+    expect(
+      replaceLines('a\nb\nc\n', { start: 1, count: 1 }, '', { start: 0, count: 0 }),
+    ).toBe('a\nc\n')
   })
 
   it('terminates an unterminated last line when appending after it', () => {
-    expect(replaceLines('a\nb', { start: 2, count: 0 }, 'c\n', { start: 0, count: 1 })).toBe('a\nb\nc\n')
+    expect(
+      replaceLines('a\nb', { start: 2, count: 0 }, 'c\n', { start: 0, count: 1 }),
+    ).toBe('a\nb\nc\n')
   })
 
   it('keeps CRLF endings of untouched lines', () => {
-    expect(replaceLines('a\r\nb\r\n', { start: 1, count: 1 }, 'B\n', { start: 0, count: 1 })).toBe('a\r\nB\n')
+    expect(
+      replaceLines('a\r\nb\r\n', { start: 1, count: 1 }, 'B\n', { start: 0, count: 1 }),
+    ).toBe('a\r\nB\n')
   })
 })
 

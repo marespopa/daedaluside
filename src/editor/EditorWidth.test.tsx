@@ -4,6 +4,7 @@ import { IDBFactory } from 'fake-indexeddb'
 import { createStore, Provider } from 'jotai'
 import App from '../App'
 import { EDITOR_WIDTH_KEY } from '../state/editorAtoms'
+import { activePathAtom } from '../state/workspaceAtoms'
 
 describe('full width toggle', () => {
   beforeEach(() => {
@@ -11,8 +12,9 @@ describe('full width toggle', () => {
     localStorage.clear()
   })
 
-  function mount() {
+  function mount(withFile = true) {
     const store = createStore()
+    if (withFile) store.set(activePathAtom, 'a.md')
     render(
       <Provider store={store}>
         <App />
@@ -39,6 +41,12 @@ describe('full width toggle', () => {
     await user.click(button)
     expect(pane()).toHaveAttribute('data-editor-width', 'measured')
     expect(localStorage.getItem(EDITOR_WIDTH_KEY)).toBe('measured')
+  })
+
+  it('is hidden when no file is open', async () => {
+    mount(false)
+    await screen.findByRole('button', { name: 'Save' }).catch(() => null)
+    expect(screen.queryByRole('button', { name: 'Full width' })).toBeNull()
   })
 
   it('is also a command in the palette', async () => {

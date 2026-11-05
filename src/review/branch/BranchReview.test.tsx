@@ -9,6 +9,7 @@ import {
   branchMarksAtom,
   branchReviewAtom,
   type BranchReviewState,
+  branchTabActiveAtom,
 } from '../../state/branchReviewAtoms'
 import { workspaceStatusAtom } from '../../state/workspaceAtoms'
 import { getController } from '../../workspace/controller'
@@ -53,16 +54,20 @@ async function setup(over: Partial<BranchReviewState> = {}) {
       ? { placeholder: '[Binary file changed — Click to inspect metadata]' }
       : { base: 'one\ntwo\n', current: 'one\nTWO\nthree\n' },
   )
-  vi.spyOn(controller, 'branchFileMeta').mockResolvedValue('base: p1, 3 bytes · head: p2, 4 bytes')
+  vi.spyOn(controller, 'branchFileMeta').mockResolvedValue(
+    'base: p1, 3 bytes · head: p2, 4 bytes',
+  )
   act(() => {
     store.set(branchReviewAtom, state(over))
+    store.set(branchTabActiveAtom, true)
   })
   await screen.findByTestId('branch-review')
   return { store, controller, user: userEvent.setup() }
 }
 
 const index = () => screen.getByRole('listbox', { name: 'Branch files' })
-const selected = (store: ReturnType<typeof createStore>) => store.get(branchReviewAtom)!.index
+const selected = (store: ReturnType<typeof createStore>) =>
+  store.get(branchReviewAtom)!.index
 
 describe('marks', () => {
   it('counts a mark only while both blob oids still match, and prunes the rest', () => {
@@ -87,13 +92,15 @@ describe('marks', () => {
 describe('branch review surface', () => {
   it('shows the header, the file tree with markers, and the progress', async () => {
     await setup()
-    expect(screen.getByText(/BRANCH REVIEW \[ main\.\.\.feature \]/)).toBeInTheDocument()
-    expect(screen.getByTestId('branch-totals')).toHaveTextContent('3 files • +5 -1')
+    expect(screen.getByRole('button', { name: /vs main/ })).toBeInTheDocument()
+    expect(screen.getByTestId('branch-totals')).toHaveTextContent('+5 -1')
     expect(screen.getByText('src/')).toBeInTheDocument()
     expect(screen.getAllByRole('option')).toHaveLength(3)
     expect(document.querySelectorAll('[data-reviewed="false"]')).toHaveLength(3)
-    expect(screen.getByTestId('branch-progress')).toHaveTextContent('Reviewed 0 / 3 files')
-    await waitFor(() => expect(document.querySelectorAll('.cm-diff-line-change').length).toBeGreaterThan(0))
+    expect(screen.getByTestId('branch-progress')).toHaveTextContent('0 / 3 reviewed')
+    await waitFor(() =>
+      expect(document.querySelectorAll('.cm-diff-line-change').length).toBeGreaterThan(0),
+    )
   })
 
   it('moves the selection with j and k', async () => {
@@ -116,7 +123,7 @@ describe('branch review surface', () => {
     await user.keyboard('c')
     expect(selected(store)).toBe(1)
     expect(Object.keys(store.get(branchMarksAtom))).toEqual(['src/a.ts'])
-    expect(screen.getByTestId('branch-progress')).toHaveTextContent('Reviewed 1 / 3 files')
+    expect(screen.getByTestId('branch-progress')).toHaveTextContent('1 / 3 reviewed')
     await user.keyboard('p')
     expect(selected(store)).toBe(0)
     expect(Object.keys(store.get(branchMarksAtom))).toEqual(['src/a.ts'])
@@ -168,15 +175,26 @@ describe('branch review surface', () => {
     expect(revert).toHaveBeenCalledWith(files[0])
   })
 
-  it('e opens the file in the editor and leaves the review', async () => {
+  it('e opens the file in its own tab and keeps the review open', async () => {
     const { store, controller, user } = await setup()
-    const edit = vi.spyOn(controller, 'editBranchFile').mockImplementation(async () => {
-      controller.closeBranchReview()
-    })
+    const edit = vi.spyOn(controller, 'editBranchFile').mockResolvedValue()
     await waitFor(() => expect(index()).toHaveFocus())
     await user.keyboard('e')
     expect(edit).toHaveBeenCalledWith('src/a.ts')
-    expect(store.get(branchReviewAtom)).toBeNull()
+    expect(store.get(branchReviewAtom)).not.toBeNull()
+  })
+
+  it('shows a tab that switches between the review and a file without closing it', async () => {
+    const { store, user } = await setup()
+    expect(screen.getByRole('tab', { name: 'Branch Review' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    store.set(branchTabActiveAtom, false)
+    await waitFor(() => expect(screen.queryByTestId('branch-review')).toBeNull())
+    expect(store.get(branchReviewAtom)).not.toBeNull()
+    await user.click(screen.getByRole('tab', { name: 'Branch Review' }))
+    expect(await screen.findByTestId('branch-review')).toBeInTheDocument()
   })
 
   it('q closes the review', async () => {
@@ -199,7 +217,9 @@ describe('branch review surface', () => {
   it(']c jumps to hunks in the patch', async () => {
     const { user } = await setup({ focus: 'canvas' })
     await waitFor(() => expect(getReviewPane()!.view.hasFocus).toBe(true))
-    await waitFor(() => expect(document.querySelectorAll('.cm-diff-line-change').length).toBeGreaterThan(0))
+    await waitFor(() =>
+      expect(document.querySelectorAll('.cm-diff-line-change').length).toBeGreaterThan(0),
+    )
     await user.keyboard(']c')
     const v = getReviewPane()!.view
     expect(v.state.doc.lineAt(v.state.selection.main.head).number).toBe(2)
@@ -209,7 +229,9 @@ describe('branch review surface', () => {
     const { store, controller, user } = await setup({ focus: 'canvas' })
     const approve = vi.spyOn(controller, 'approveBranchHunk')
     await waitFor(() => expect(getReviewPane()!.view.hasFocus).toBe(true))
-    await waitFor(() => expect(document.querySelectorAll('.cm-diff-line-change').length).toBeGreaterThan(0))
+    await waitFor(() =>
+      expect(document.querySelectorAll('.cm-diff-line-change').length).toBeGreaterThan(0),
+    )
     await user.keyboard(']c')
     await user.keyboard('sa')
     expect(approve).toHaveBeenCalledTimes(1)
@@ -226,14 +248,19 @@ describe('branch review surface', () => {
 
   it('shows the empty state for a branch with no changes', async () => {
     await setup({ files: [], statsDone: true, stats: {} })
-    expect(screen.getByText('No differences from main, committed or uncommitted.')).toBeInTheDocument()
+    expect(
+      screen.getByText('No differences from main, committed or uncommitted.'),
+    ).toBeInTheDocument()
   })
 
   it('shows loading and error messages', async () => {
     const { store } = await setup({ status: 'loading', files: [] })
     expect(screen.getByRole('status', { name: 'Reading branch' })).toBeInTheDocument()
     act(() => {
-      store.set(branchReviewAtom, state({ status: 'error', message: 'No common ancestor with base', files: [] }))
+      store.set(
+        branchReviewAtom,
+        state({ status: 'error', message: 'No common ancestor with base', files: [] }),
+      )
     })
     expect(screen.getByRole('alert')).toHaveTextContent('No common ancestor with base')
   })

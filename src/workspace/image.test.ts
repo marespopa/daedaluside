@@ -26,7 +26,9 @@ describe('sniffImage', () => {
   it('accepts real signatures', () => {
     expect(sniffImage('png', PNG)).toBe(true)
     expect(sniffImage('jpeg', JPG)).toBe(true)
-    expect(sniffImage('svg', text('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBe(true)
+    expect(sniffImage('svg', text('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBe(
+      true,
+    )
     expect(sniffImage('svg', text('<?xml version="1.0"?>\n<!-- c -->\n<svg>'))).toBe(true)
   })
   it('rejects spoofed content', () => {

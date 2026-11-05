@@ -21,7 +21,9 @@ function sample() {
 describe('GrepIndex', () => {
   it('reports 1-based lines and columns', async () => {
     const { hits } = await run(sample(), 'three')
-    expect(hits).toEqual([{ path: 'a.ts', line: 3, col: 4, text: 'let three = 3', start: 0 }])
+    expect(hits).toEqual([
+      { path: 'a.ts', line: 3, col: 4, text: 'let three = 3', start: 0 },
+    ])
   })
 
   it('ignores case for lowercase queries and respects it otherwise', async () => {
@@ -59,7 +61,11 @@ describe('GrepIndex', () => {
     const i = new GrepIndex()
     for (let n = 0; n < 20; n++) i.set(`f${n}`, 'hit\n')
     const hits: GrepHit[] = []
-    const r = await i.search({ id: 1, query: 'hit', limit: 5, priority: [] }, (h) => hits.push(...h), never)
+    const r = await i.search(
+      { id: 1, query: 'hit', limit: 5, priority: [] },
+      (h) => hits.push(...h),
+      never,
+    )
     expect(hits).toHaveLength(5)
     expect(r.truncated).toBe(true)
   })

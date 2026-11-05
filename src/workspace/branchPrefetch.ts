@@ -30,7 +30,8 @@ export async function prefetchBranch(
   emit: (r: BranchPrefetch, done: boolean) => void,
   req: BranchRequest = { mode: 'base' },
 ): Promise<void> {
-  if (!(await svc.hasHead())) throw new ReviewError('This folder is not a git repository with a commit.')
+  if (!(await svc.hasHead()))
+    throw new ReviewError('This folder is not a git repository with a commit.')
   let base = 'HEAD'
   let baseOid: string | null = null
   if (req.mode === 'base') {

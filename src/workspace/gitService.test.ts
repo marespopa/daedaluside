@@ -127,7 +127,9 @@ describe('GitService staging', () => {
   it('fails with NotAllowedError on a read-only grant and leaves the index alone', async () => {
     const { svc, disk } = await fixture()
     disk.access = 'readonly'
-    await expect(svc.writeIndex('a.txt', 'x\n')).rejects.toMatchObject({ name: 'NotAllowedError' })
+    await expect(svc.writeIndex('a.txt', 'x\n')).rejects.toMatchObject({
+      name: 'NotAllowedError',
+    })
     expect(await svc.readIndex('a.txt')).toBe('one\ntwo\nthree\n')
   })
 })
@@ -166,7 +168,14 @@ describe('GitService branch review', () => {
     const { svc, fs, initial } = await branched()
     expect(await svc.resolveBase('base')).toBe(initial)
     expect(await svc.resolveBase(initial.slice(0, 8))).toBe(initial)
-    await git.annotatedTag({ fs, dir: '/', ref: 'v1', object: initial, message: 'v1', tagger: author })
+    await git.annotatedTag({
+      fs,
+      dir: '/',
+      ref: 'v1',
+      object: initial,
+      message: 'v1',
+      tagger: author,
+    })
     expect(await svc.resolveBase('v1')).toBe(initial)
     expect(await svc.resolveBase('nope')).toBeNull()
   })
@@ -221,7 +230,13 @@ describe('GitService branch review', () => {
     const orphan = await git.writeCommit({
       fs,
       dir: '/',
-      commit: { message: 'orphan', tree, parent: [], author: { ...author, timestamp: 1, timezoneOffset: 0 }, committer: { ...author, timestamp: 1, timezoneOffset: 0 } },
+      commit: {
+        message: 'orphan',
+        tree,
+        parent: [],
+        author: { ...author, timestamp: 1, timezoneOffset: 0 },
+        committer: { ...author, timestamp: 1, timezoneOffset: 0 },
+      },
     })
     void disk
     const res = await svc.branchChanges(orphan)
@@ -237,7 +252,10 @@ describe('GitService branch review', () => {
     const res = await svc.branchChanges((await svc.resolveBase('base'))!)
     if (res.kind !== 'ok') throw new Error('expected ok')
     const byPath = Object.fromEntries(res.files.map((f) => [f.path, f]))
-    expect(await svc.readBlobAt(byPath['a.txt']!.headOid!)).toEqual({ kind: 'text', text: 'one\nTWO\nthree\n' })
+    expect(await svc.readBlobAt(byPath['a.txt']!.headOid!)).toEqual({
+      kind: 'text',
+      text: 'one\nTWO\nthree\n',
+    })
     expect((await svc.readBlobAt(byPath['img.bin']!.headOid!)).kind).toBe('binary')
     expect((await svc.readBlobAt(byPath['big.txt']!.headOid!)).kind).toBe('large')
     // A multi-megabyte text file is still reviewable.

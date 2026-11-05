@@ -182,7 +182,8 @@ function Sidebar({ open }: { open: boolean }) {
     // A live diff knows about edits before the next status read does.
     for (const path of diffs.keys()) if (!map.has(path)) map.set(path, 'modified')
     for (const [path] of [...map]) {
-      for (let d = dirname(path); d !== '' && !map.has(d); d = dirname(d)) map.set(d, 'modified')
+      for (let d = dirname(path); d !== '' && !map.has(d); d = dirname(d))
+        map.set(d, 'modified')
     }
     return map
   }, [git, diffs])
@@ -586,7 +587,7 @@ function Sidebar({ open }: { open: boolean }) {
                 tabIndex={entry.path === tabStop ? 0 : -1}
                 onClick={() => activate(entry)}
                 onKeyDown={(e) => onRowKey(e, index)}
-                className={`flex h-full min-w-0 flex-1 items-center gap-1.5 text-left font-mono text-sm transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent ${isActive ? 'font-medium text-text' : 'text-muted/50 group-hover/row:text-text'}`}
+                className={`flex h-full min-w-0 flex-1 items-center gap-1.5 text-left font-mono text-sm transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent ${isActive ? 'font-medium text-text' : 'text-muted group-hover/row:text-text'}`}
               >
                 <span aria-hidden className="flex w-3 shrink-0 justify-center">
                   {isDir && (

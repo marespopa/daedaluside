@@ -368,10 +368,9 @@ describe('file tree states', () => {
     const store = mountState({ state: 'loading' })
     act(() => store.set(treeProgressAtom, { done: 120, total: 480 }))
     expect(screen.getByRole('status')).toHaveTextContent('Reading files… 120 / 480')
-    expect(screen.getByTestId('tree-progress').querySelector('[data-progress]')).toHaveAttribute(
-      'data-progress',
-      '25',
-    )
+    expect(
+      screen.getByTestId('tree-progress').querySelector('[data-progress]'),
+    ).toHaveAttribute('data-progress', '25')
   })
 
   it('shows an indeterminate bar and file count when the total is unknown', () => {

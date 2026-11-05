@@ -5,6 +5,7 @@ import { createStore, Provider } from 'jotai'
 import { vi } from 'vitest'
 import App from '../App'
 import { editorHandleAtom, paletteOpenAtom } from '../state/editorAtoms'
+import { branchTabActiveAtom } from '../state/branchReviewAtoms'
 import { reviewOpenAtom } from '../state/gitAtoms'
 import { runEx } from '../editor/testing/runEx'
 import {
@@ -229,7 +230,9 @@ describe('workspace in the app', () => {
   it('opens settings with storage details', async () => {
     const user = userEvent.setup()
     mount()
-    await waitFor(() => expect(screen.queryAllByText(/Open folder/).length).toBeGreaterThan(0))
+    await waitFor(() =>
+      expect(screen.queryAllByText(/Open folder/).length).toBeGreaterThan(0),
+    )
     await user.keyboard('{Control>},{/Control}')
     const dlg = await screen.findByRole('dialog', { name: 'Settings' })
     expect(await within(dlg).findByText(/Persistent storage/)).toBeInTheDocument()
@@ -258,12 +261,7 @@ describe('workspace opener (editor empty state)', () => {
     await emptyWorkspace(a.store)
     const o = await opener()
     expect(o).toBeInTheDocument()
-    for (const label of [
-      'Open folder',
-      'Open file',
-      'Command Palette',
-      'Switch Workspace',
-    ])
+    for (const label of ['Open folder', 'Open file'])
       expect(within(o).getByText(label)).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
@@ -390,7 +388,11 @@ describe('read-only linked folder', () => {
 
     expect(a.store.get(treeStatusAtom)).toEqual({ state: 'ready' })
     expect(a.store.get(treeAtom).map((e) => e.path)).toEqual(['a.ts'])
-    expect(a.store.get(linkedFolderAtom)).toEqual({ name: 'proj', paused: true, single: false })
+    expect(a.store.get(linkedFolderAtom)).toEqual({
+      name: 'proj',
+      paused: true,
+      single: false,
+    })
   })
 
   it('shows the permission state when the folder cannot be read at all', async () => {
@@ -402,7 +404,11 @@ describe('read-only linked folder', () => {
 
     expect(a.store.get(treeStatusAtom)).toEqual({ state: 'permission' })
     expect(a.store.get(treeAtom)).toEqual([])
-    expect(a.store.get(linkedFolderAtom)).toEqual({ name: 'proj', paused: true, single: false })
+    expect(a.store.get(linkedFolderAtom)).toEqual({
+      name: 'proj',
+      paused: true,
+      single: false,
+    })
   })
 
   it('a dismissed folder picker is not an error and does not import', async () => {
@@ -518,6 +524,30 @@ describe('blank install', () => {
     expect(screen.queryByRole('tab')).toBeNull()
     await waitFor(() => expect(a.store.get(workspaceStatusAtom).state).toBe('ready'))
     expect(treePaths(a.store)).toEqual([])
+  })
+
+  it('showHome drops the review overlays that would cover the opener', async () => {
+    const disk = new MemDisk()
+    const a = mount()
+    await openFolder(a.store, disk)
+    await scratchTab()
+    act(() => {
+      a.store.set(reviewOpenAtom, true)
+      a.store.set(branchTabActiveAtom, true)
+    })
+    await act(async () => {
+      getController(a.store).showHome()
+    })
+    expect(a.store.get(reviewOpenAtom)).toBe(false)
+    expect(a.store.get(branchTabActiveAtom)).toBe(false)
+
+    // Already home (no active file), with the branch tab focused: still clears it.
+    act(() => a.store.set(branchTabActiveAtom, true))
+    await act(async () => {
+      getController(a.store).showHome()
+    })
+    expect(a.store.get(branchTabActiveAtom)).toBe(false)
+    expect(await opener()).toBeInTheDocument()
   })
 
   it('opens :Explore from the blank page instead of starting an untitled file', async () => {
@@ -690,7 +720,9 @@ describe('double Shift', () => {
   it('opens the command palette in command mode', async () => {
     const user = userEvent.setup()
     mount()
-    await waitFor(() => expect(screen.queryAllByText(/Open folder/).length).toBeGreaterThan(0))
+    await waitFor(() =>
+      expect(screen.queryAllByText(/Open folder/).length).toBeGreaterThan(0),
+    )
     await user.keyboard('{Shift}{/Shift}{Shift}{/Shift}')
     expect((await screen.findByRole('combobox')) as HTMLInputElement).toHaveValue('>')
     await user.keyboard('{Escape}')
@@ -832,7 +864,11 @@ describe('link revalidation on focus', () => {
     disk.access = 'prompt' // the browser stopped granting readwrite while away
     await focus()
 
-    expect(a.store.get(linkedFolderAtom)).toEqual({ name: 'proj', paused: true, single: false })
+    expect(a.store.get(linkedFolderAtom)).toEqual({
+      name: 'proj',
+      paused: true,
+      single: false,
+    })
     expect(
       await screen.findByRole('dialog', { name: 'Reconnect proj?' }),
     ).toBeInTheDocument()
@@ -985,7 +1021,11 @@ describe('link revalidation on focus', () => {
       await getController(a.store).importFolderHandle(second.handle('other') as never)
     })
 
-    expect(a.store.get(linkedFolderAtom)).toEqual({ name: 'other', paused: false, single: false })
+    expect(a.store.get(linkedFolderAtom)).toEqual({
+      name: 'other',
+      paused: false,
+      single: false,
+    })
     expect(treePaths(a.store)).toEqual(['z.md'])
     expect(a.store.get(treeStatusAtom)).toEqual({ state: 'ready' })
   })

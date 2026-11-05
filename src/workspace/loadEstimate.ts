@@ -28,7 +28,11 @@ export function saveKnownCount(wsId: string, count: number) {
 }
 
 /** Milliseconds left at the average rate so far; null while the guess would be noise. */
-export function remainingMs(done: number, total: number | null, elapsedMs: number): number | null {
+export function remainingMs(
+  done: number,
+  total: number | null,
+  elapsedMs: number,
+): number | null {
   if (!total || done <= 0 || elapsedMs < 1000 || done >= total) return null
   return ((total - done) / done) * elapsedMs
 }
@@ -39,11 +43,16 @@ export function formatEta(ms: number): string {
   if (s < 60) return `about ${Math.round(s / 5) * 5}s left`
   const m = Math.floor(s / 60)
   const rest = Math.round((s % 60) / 10) * 10
-  return rest === 60 ? `about ${m + 1}m left` : `about ${m}m${rest ? ` ${rest}s` : ''} left`
+  return rest === 60
+    ? `about ${m + 1}m left`
+    : `about ${m}m${rest ? ` ${rest}s` : ''} left`
 }
 
 /** Elapsed seconds and an ETA string for a running read; both null when idle or too early. */
-export function useLoadEta(progress: LoadProgress | null): { eta: string | null; elapsed: string | null } {
+export function useLoadEta(progress: LoadProgress | null): {
+  eta: string | null
+  elapsed: string | null
+} {
   const [now, setNow] = useState(0)
   const running = progress !== null
   useEffect(() => {

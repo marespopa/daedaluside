@@ -4,10 +4,15 @@ import type { Hunk } from '../review/diff'
 export type GitStatus = 'modified' | 'added' | 'deleted' | 'untracked'
 
 /** Bumped whenever HEAD or the status map is re-read; `status` maps changed paths to how they differ from HEAD. */
-export const gitHeadAtom = atom<{ version: number; status: ReadonlyMap<string, GitStatus> }>({
+export const gitHeadAtom = atom<{
+  version: number
+  status: ReadonlyMap<string, GitStatus>
+}>({
   version: 0,
   status: new Map(),
 })
+/** Checked-out branch of the open folder ("HEAD" when detached); null when not a repo or unread. */
+export const gitBranchAtom = atom<string | null>(null)
 /** Hunks of each diffed file against HEAD, keyed by workspace path. */
 export const fileDiffMapAtom = atom<ReadonlyMap<string, readonly Hunk[]>>(new Map())
 /** Index of the hunk under review in the active file; -1 when none is selected. */

@@ -10,7 +10,8 @@ import { MemDisk } from '../workspace/testing/memoryDisk'
 import {
   activePathAtom,
   noticeAtom,
-  treeAtom, workspaceStatusAtom,
+  treeAtom,
+  workspaceStatusAtom,
 } from '../state/workspaceAtoms'
 
 function mount() {

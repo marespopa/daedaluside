@@ -17,7 +17,8 @@ class GitFsError extends Error {
   }
 }
 
-const enoent = (p: string) => new GitFsError('ENOENT', `no such file or directory, '${p}'`)
+const enoent = (p: string) =>
+  new GitFsError('ENOENT', `no such file or directory, '${p}'`)
 
 function mapError(e: unknown, path: string): never {
   if (e instanceof GitFsError) throw e
@@ -82,7 +83,13 @@ export interface GitFs {
 }
 
 export function createGitFs(root: FileSystemDirectoryHandle): GitFs {
-  const segs = (p: string) => splitPath(p.split('/').filter((s) => s !== '' && s !== '.').join('/'))
+  const segs = (p: string) =>
+    splitPath(
+      p
+        .split('/')
+        .filter((s) => s !== '' && s !== '.')
+        .join('/'),
+    )
 
   /** Directory handles by path, so deep paths are not re-walked from the root on every call. */
   const dirs = new Map<string, FileSystemDirectoryHandle>()
@@ -116,7 +123,8 @@ export function createGitFs(root: FileSystemDirectoryHandle): GitFs {
     try {
       return { kind: 'file' as const, file: await parent.getFileHandle(name) }
     } catch (e) {
-      if (!(e instanceof DOMException && e.name === 'TypeMismatchError')) mapError(e, path)
+      if (!(e instanceof DOMException && e.name === 'TypeMismatchError'))
+        mapError(e, path)
     }
     try {
       return { kind: 'dir' as const, dir: await parent.getDirectoryHandle(name) }
@@ -149,7 +157,9 @@ export function createGitFs(root: FileSystemDirectoryHandle): GitFs {
           const h = await parent.getFileHandle(parts[parts.length - 1]!, { create: true })
           const w = await h.createWritable()
           await w.write(
-            (typeof data === 'string' ? new TextEncoder().encode(data) : data) as BufferSource,
+            (typeof data === 'string'
+              ? new TextEncoder().encode(data)
+              : data) as BufferSource,
           )
           await w.close()
         } catch (e) {
@@ -185,7 +195,8 @@ export function createGitFs(root: FileSystemDirectoryHandle): GitFs {
           throw new GitFsError('EEXIST', path)
         } catch (e) {
           if (e instanceof GitFsError) throw e
-          if (!(e instanceof DOMException && e.name === 'NotFoundError')) mapError(e, path)
+          if (!(e instanceof DOMException && e.name === 'NotFoundError'))
+            mapError(e, path)
         }
         try {
           await parent.getDirectoryHandle(name, { create: true })

@@ -38,7 +38,10 @@ describe('prefetchBranch', () => {
     expect(d1).toBe(false)
     expect(first.base).toBe('main')
     expect(first.branch).toBe('feature')
-    expect(first.files.map((f: { path: string }) => f.path).sort()).toEqual(['a.txt', 'new.txt'])
+    expect(first.files.map((f: { path: string }) => f.path).sort()).toEqual([
+      'a.txt',
+      'new.txt',
+    ])
     expect(first.stats).toEqual({})
     expect(d2).toBe(true)
     expect(last.stats['new.txt']).toEqual({ add: 2, del: 0 })

@@ -86,7 +86,10 @@ export function setChildren(
       ? { ...c, size: keptSize.get(c.path)! }
       : c,
   )
-  return depthFirst([...entries.filter((e) => dirname(e.path) !== dir || e.path === ''), ...fresh])
+  return depthFirst([
+    ...entries.filter((e) => dirname(e.path) !== dir || e.path === ''),
+    ...fresh,
+  ])
 }
 
 /**

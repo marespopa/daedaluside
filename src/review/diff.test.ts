@@ -79,25 +79,51 @@ describe('hunkStats', () => {
 
 describe('chunked diff', () => {
   const lines = (n: number, tweak: (i: number) => string | null = (i) => `line ${i}`) =>
-    Array.from({ length: n }, (_, i) => tweak(i)).filter((l) => l !== null).join('\n') + '\n'
+    Array.from({ length: n }, (_, i) => tweak(i))
+      .filter((l) => l !== null)
+      .join('\n') + '\n'
 
   it('matches the plain diff on a big file with scattered edits', () => {
     const base = lines(6000)
     const current = lines(6000, (i) =>
-      i === 10 ? 'changed 10' : i === 3000 ? null : i === 5990 ? 'changed 5990' : `line ${i}`,
+      i === 10
+        ? 'changed 10'
+        : i === 3000
+          ? null
+          : i === 5990
+            ? 'changed 5990'
+            : `line ${i}`,
     )
     const hunks = computeHunks(base, current)
     expect(hunks).toEqual([
-      { kind: 'change', baseRange: { start: 10, count: 1 }, newRange: { start: 10, count: 1 } },
-      { kind: 'remove', baseRange: { start: 3000, count: 1 }, newRange: { start: 3000, count: 0 } },
-      { kind: 'change', baseRange: { start: 5990, count: 1 }, newRange: { start: 5989, count: 1 } },
+      {
+        kind: 'change',
+        baseRange: { start: 10, count: 1 },
+        newRange: { start: 10, count: 1 },
+      },
+      {
+        kind: 'remove',
+        baseRange: { start: 3000, count: 1 },
+        newRange: { start: 3000, count: 0 },
+      },
+      {
+        kind: 'change',
+        baseRange: { start: 5990, count: 1 },
+        newRange: { start: 5989, count: 1 },
+      },
     ])
   })
 
   it('handles inserts, repeated lines and an empty side', () => {
     const base = lines(5000, (i) => (i % 2 === 0 ? 'dup' : `u${i}`))
-    const current = lines(5000, (i) => (i % 2 === 0 ? 'dup' : i === 4001 ? 'new' : `u${i}`))
-    expect(hunkStats(computeHunks(base, current))).toEqual({ added: 1, removed: 1, hunks: 1 })
+    const current = lines(5000, (i) =>
+      i % 2 === 0 ? 'dup' : i === 4001 ? 'new' : `u${i}`,
+    )
+    expect(hunkStats(computeHunks(base, current))).toEqual({
+      added: 1,
+      removed: 1,
+      hunks: 1,
+    })
     expect(computeHunks('', lines(5000)).map((h) => h.kind)).toEqual(['add'])
     expect(computeHunks(lines(5000), '').map((h) => h.kind)).toEqual(['remove'])
   })
@@ -106,12 +132,24 @@ describe('chunked diff', () => {
     const base = lines(6000)
     const current = lines(6000, (i) => (i % 500 === 0 ? `edit ${i}` : `line ${i}`))
     const got: Hunk[] = []
-    const finished = await streamHunks(base, current, (h) => got.push(...h), () => false, 0)
+    const finished = await streamHunks(
+      base,
+      current,
+      (h) => got.push(...h),
+      () => false,
+      0,
+    )
     expect(finished).toBe(true)
     expect(got).toEqual(computeHunks(base, current))
 
     let calls = 0
-    const stopped = await streamHunks(base, current, () => calls++, () => calls >= 1, 0)
+    const stopped = await streamHunks(
+      base,
+      current,
+      () => calls++,
+      () => calls >= 1,
+      0,
+    )
     expect(stopped).toBe(false)
   })
 })

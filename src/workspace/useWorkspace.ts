@@ -3,7 +3,7 @@ import { useEffect, useMemo } from 'react'
 import { bindVimHost } from '../editor/vimMode'
 import { matchFiles } from '../editor/paletteSearch'
 import { getReviewPane } from '../review/reviewPane'
-import { branchReviewAtom } from '../state/branchReviewAtoms'
+import { branchReviewAtom, branchTabActiveAtom } from '../state/branchReviewAtoms'
 import { gitHeadAtom, reviewLayoutAtom, reviewOpenAtom } from '../state/gitAtoms'
 import {
   editorHandleAtom,
@@ -76,7 +76,8 @@ export function useWorkspaceLifecycle() {
       branchMark: () => controller.markBranchReviewed(),
       branchReset: () => controller.resetBranchReviewed(),
       diffFile: (delta) => {
-        if (store.get(branchReviewAtom)) return controller.branchStep(delta, delta > 0)
+        if (store.get(branchReviewAtom) && store.get(branchTabActiveAtom))
+          return controller.branchStep(delta, delta > 0)
         const paths = reviewFiles(store)
         if (paths.length === 0) return notify('No modified files')
         const at = paths.indexOf(store.get(activePathAtom) ?? '')
@@ -102,7 +103,7 @@ export function useWorkspaceLifecycle() {
       if (secondW && Date.now() - windowPrefixAt < 1000) {
         e.preventDefault()
         e.stopPropagation()
-        const br = store.get(branchReviewAtom)
+        const br = store.get(branchTabActiveAtom) ? store.get(branchReviewAtom) : null
         if (br) controller.setBranchFocus(br.focus === 'index' ? 'canvas' : 'index')
         else toggleFileTreeFocus(store)
       }
@@ -164,7 +165,8 @@ export function useWorkspaceLifecycle() {
 
 /** Focuses the review pane while it is open, otherwise the editor. */
 export function focusEditor(store: ReturnType<typeof useStore>) {
-  if (store.get(branchReviewAtom)) return void getReviewPane()?.view.focus()
+  if (store.get(branchReviewAtom) && store.get(branchTabActiveAtom))
+    return void getReviewPane()?.view.focus()
   const view = store.get(reviewOpenAtom)
     ? getReviewPane()?.view
     : store.get(editorHandleAtom)?.view

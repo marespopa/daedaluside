@@ -28,6 +28,7 @@ import {
   branchConfirmAtom,
   branchMarksAtom,
   branchReviewAtom,
+  branchTabActiveAtom,
   type BranchFocus,
   type BranchReviewState,
 } from '../state/branchReviewAtoms'
@@ -40,7 +41,7 @@ import {
   unstageHunkText,
 } from '../review/stage'
 import { DiffService } from '../review/diffService'
-import { fileDiffMapAtom, gitHeadAtom, reviewOpenAtom } from '../state/gitAtoms'
+import { fileDiffMapAtom, gitBranchAtom, gitHeadAtom, reviewOpenAtom } from '../state/gitAtoms'
 import {
   activePathAtom,
   currentWorkspaceIdAtom,
@@ -579,6 +580,7 @@ export class WorkspaceController {
       this.diffSeq++
       this.store.set(gitHeadAtom, (g) => ({ version: g.version + 1, status: new Map() }))
       this.store.set(fileDiffMapAtom, new Map())
+      this.store.set(gitBranchAtom, null)
     }
     if (!fs || !handle || handle.kind === 'file') return
     if (!this.gitSvc) {
@@ -598,6 +600,8 @@ export class WorkspaceController {
       const status = await svc.listChanged()
       if (this.gitSvc !== svc) return
       this.store.set(gitHeadAtom, (g) => ({ version: g.version + 1, status }))
+      const branch = await svc.currentBranch()
+      if (this.gitSvc === svc) this.store.set(gitBranchAtom, branch)
     } catch {
       return // a failed read just leaves the previous marks
     }
@@ -776,6 +780,7 @@ export class WorkspaceController {
     this.branchSignal = signal
     // Open at once in a loading state; the workspace may still be reading its tree.
     this.store.set(reviewOpenAtom, false)
+    this.store.set(branchTabActiveAtom, true)
     this.store.set(branchConfirmAtom, null)
     this.store.set(branchApprovedAtom, new Set())
     this.store.set(branchMarksAtom, {})
@@ -1039,12 +1044,20 @@ export class WorkspaceController {
     }
   }
 
+  /** Focuses the Branch Review tab, if a review is open. */
+  showBranchReview() {
+    if (!this.store.get(branchReviewAtom)) return
+    this.store.set(reviewOpenAtom, false)
+    this.store.set(branchTabActiveAtom, true)
+  }
+
   closeBranchReview() {
     if (!this.store.get(branchReviewAtom)) return
     if (this.branchSignal) this.branchSignal.cancelled = true
     this.reviewWorker?.dispose()
     this.reviewWorker = null
     this.store.set(branchReviewAtom, null)
+    this.store.set(branchTabActiveAtom, false)
     this.store.set(branchConfirmAtom, null)
     this.handle?.view.focus()
   }
@@ -1150,9 +1163,8 @@ export class WorkspaceController {
     this.notify('info', 'Approved the hunk for this session.')
   }
 
-  /** `e`: leaves the review and opens the file in the editor. */
+  /** `e`: opens the file in its own tab; the review stays open in its tab. */
   async editBranchFile(path: string) {
-    this.closeBranchReview()
     await this.openFile(path)
   }
 
@@ -1541,7 +1553,7 @@ export class WorkspaceController {
       if (p) {
         this.activate(p)
         // Opening a file lands on its diff; `q` returns to the editor.
-        if (!this.store.get(branchReviewAtom)) this.store.set(reviewOpenAtom, true)
+        this.store.set(reviewOpenAtom, true)
       }
     } catch (e) {
       this.fail(e)
@@ -1550,6 +1562,7 @@ export class WorkspaceController {
 
   /** Focuses a tab, even if it is already active (clicking a tab returns focus to the editor). */
   private activate(path: string) {
+    this.store.set(branchTabActiveAtom, false)
     this.commit(openTab(this.tabState(), path), { force: true })
   }
 
@@ -1798,6 +1811,9 @@ export class WorkspaceController {
    * strip; clicking one brings its file back.
    */
   showHome() {
+    // The review overlays cover the opener, so drop them too.
+    this.store.set(reviewOpenAtom, false)
+    this.store.set(branchTabActiveAtom, false)
     if (this.active === null) return
     this.commit({ tabs: this.tabs, active: null })
   }

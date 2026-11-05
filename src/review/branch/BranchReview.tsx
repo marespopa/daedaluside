@@ -9,7 +9,6 @@ import { openExPrompt, vimExtension } from '../../editor/vimMode'
 import { vimEnabledAtom } from '../../state/editorAtoms'
 import { treeProgressAtom, treeStatusAtom } from '../../state/workspaceAtoms'
 import {
-  branchApprovedAtom,
   branchConfirmAtom,
   branchMarksAtom,
   branchReviewAtom,
@@ -69,12 +68,23 @@ function buildRows(files: readonly BranchFile[]): Row[] {
     const parts = file.path.split('/')
     const dirs = parts.slice(0, -1)
     let common = 0
-    while (common < shown.length && common < dirs.length && shown[common] === dirs[common]) common++
+    while (
+      common < shown.length &&
+      common < dirs.length &&
+      shown[common] === dirs[common]
+    )
+      common++
     for (let d = common; d < dirs.length; d++) {
       rows.push({ kind: 'dir', depth: d, name: `${dirs[d]}/`, index: -1 })
     }
     shown = dirs
-    rows.push({ kind: 'file', depth: dirs.length, name: parts[parts.length - 1]!, index, file })
+    rows.push({
+      kind: 'file',
+      depth: dirs.length,
+      name: parts[parts.length - 1]!,
+      index,
+      file,
+    })
   })
   return rows
 }
@@ -85,7 +95,6 @@ function Surface() {
   const s = useAtomValue(branchReviewAtom)!
   const marks = useAtomValue(branchMarksAtom)
   const confirm = useAtomValue(branchConfirmAtom)
-  const approved = useAtomValue(branchApprovedAtom)
   const treeLoading = useAtomValue(treeStatusAtom).state === 'loading'
   const progress = useAtomValue(treeProgressAtom)
   const host = useRef<HTMLDivElement>(null)
@@ -96,7 +105,10 @@ function Surface() {
   const pendingHunk = useRef<Hunk | null>(null)
   const pendingBracket = useRef<{ dir: 1 | -1; at: number } | null>(null)
   const [diffing, setDiffing] = useState(false)
-  const [placeholder, setPlaceholder] = useState<{ text: string; meta: string | null } | null>(null)
+  const [placeholder, setPlaceholder] = useState<{
+    text: string
+    meta: string | null
+  } | null>(null)
 
   const file: BranchFile | undefined = s.files[s.index]
   const rows = useMemo(() => buildRows(s.files), [s.files])
@@ -142,8 +154,12 @@ function Surface() {
         pendingS.current = 0
         const h = hunkUnderCursor()
         if (key === 'a' || key === 'r') {
-          if (!h || !f) controller.notifyInfo('Move the cursor onto a changed hunk first.')
-          else if (key === 'a') controller.approveBranchHunk(`${f.path}#${h.baseRange.start}:${h.newRange.start}`)
+          if (!h || !f)
+            controller.notifyInfo('Move the cursor onto a changed hunk first.')
+          else if (key === 'a')
+            controller.approveBranchHunk(
+              `${f.path}#${h.baseRange.start}:${h.newRange.start}`,
+            )
           else {
             pendingHunk.current = h
             store.set(branchConfirmAtom, { kind: 'hunk', path: f.path })
@@ -164,7 +180,10 @@ function Surface() {
         }
       }
       pendingBracket.current = null
-      if ((key === ']' || key === '[') && !(from === 'canvas' && store.get(vimEnabledAtom))) {
+      if (
+        (key === ']' || key === '[') &&
+        !(from === 'canvas' && store.get(vimEnabledAtom))
+      ) {
         pendingBracket.current = { dir: key === ']' ? 1 : -1, at: Date.now() }
         return true
       }
@@ -176,19 +195,22 @@ function Surface() {
         case 'n':
         case 'L':
         case 'ArrowRight':
-          if (from === 'canvas' && store.get(vimEnabledAtom) && key === 'ArrowRight') return false
+          if (from === 'canvas' && store.get(vimEnabledAtom) && key === 'ArrowRight')
+            return false
           controller.branchStep(1)
           return true
         case 'p':
         case 'H':
         case 'ArrowLeft':
-          if (from === 'canvas' && store.get(vimEnabledAtom) && key === 'ArrowLeft') return false
+          if (from === 'canvas' && store.get(vimEnabledAtom) && key === 'ArrowLeft')
+            return false
           controller.branchStep(-1)
           return true
         case 'c':
         case 'C':
         case 'Enter':
-          if (from === 'canvas' && store.get(vimEnabledAtom) && key === 'Enter') return false
+          if (from === 'canvas' && store.get(vimEnabledAtom) && key === 'Enter')
+            return false
           // Toggle: approving moves on to the next file; on a reviewed file it takes the approval back.
           controller.toggleBranchReviewed()
           return true
@@ -282,7 +304,10 @@ function Surface() {
         const h = hunkUnderCursor()
         const f = store.get(branchReviewAtom)
         const cur = f?.files[f.index]
-        if (h && cur) controller.approveBranchHunk(`${cur.path}#${h.baseRange.start}:${h.newRange.start}`)
+        if (h && cur)
+          controller.approveBranchHunk(
+            `${cur.path}#${h.baseRange.start}:${h.newRange.start}`,
+          )
       },
       jump(delta) {
         const { anchors } = hunksAndAnchors()
@@ -319,46 +344,51 @@ function Surface() {
     let stale = false
     let stop: (() => void) | null = null
     setDiffing(false)
-    void controller.branchFileContent(file).then(async (c) => {
-      if (stale || viewRef.current !== view) return
-      const replace = (doc: string, hunks: Hunk[], base: string[]) =>
-        view.dispatch({
-          changes: { from: 0, to: view.state.doc.length, insert: doc },
-          selection: { anchor: 0 },
-          effects: setReviewHunks.of({ hunks, base }),
-        })
-      if ('placeholder' in c) {
-        setPlaceholder({ text: c.placeholder, meta: null })
-        replace('', [], [])
-        return
-      }
-      setPlaceholder(null)
-      const base = splitLines(c.base)
-      if (c.base.length + c.current.length <= STREAM_DIFF_CHARS) {
-        const hunks = computeHunks(c.base, c.current)
-        replace(c.current, hunks, base)
-        view.dispatch({ effects: foldUnchanged.of(hunks) })
-        return
-      }
-      // A big file: show it at once and let the hunks arrive from the worker.
-      replace(c.current, [], base)
-      setDiffing(true)
-      stop = streamDiff(
-        c.base,
-        c.current,
-        (hunks) => {
-          if (stale || viewRef.current !== view) return
-          view.dispatch({ effects: addReviewHunks.of({ hunks, base }) })
-        },
-        () => {
-          if (stale || viewRef.current !== view) return
-          setDiffing(false)
-          view.dispatch({ effects: foldUnchanged.of(view.state.field(reviewField).hunks) })
-        },
-      )
-    }).catch(() => {
-      if (!stale) setPlaceholder({ text: '[Could not read this file]', meta: null })
-    })
+    void controller
+      .branchFileContent(file)
+      .then(async (c) => {
+        if (stale || viewRef.current !== view) return
+        const replace = (doc: string, hunks: Hunk[], base: string[]) =>
+          view.dispatch({
+            changes: { from: 0, to: view.state.doc.length, insert: doc },
+            selection: { anchor: 0 },
+            effects: setReviewHunks.of({ hunks, base }),
+          })
+        if ('placeholder' in c) {
+          setPlaceholder({ text: c.placeholder, meta: null })
+          replace('', [], [])
+          return
+        }
+        setPlaceholder(null)
+        const base = splitLines(c.base)
+        if (c.base.length + c.current.length <= STREAM_DIFF_CHARS) {
+          const hunks = computeHunks(c.base, c.current)
+          replace(c.current, hunks, base)
+          view.dispatch({ effects: foldUnchanged.of(hunks) })
+          return
+        }
+        // A big file: show it at once and let the hunks arrive from the worker.
+        replace(c.current, [], base)
+        setDiffing(true)
+        stop = streamDiff(
+          c.base,
+          c.current,
+          (hunks) => {
+            if (stale || viewRef.current !== view) return
+            view.dispatch({ effects: addReviewHunks.of({ hunks, base }) })
+          },
+          () => {
+            if (stale || viewRef.current !== view) return
+            setDiffing(false)
+            view.dispatch({
+              effects: foldUnchanged.of(view.state.field(reviewField).hunks),
+            })
+          },
+        )
+      })
+      .catch(() => {
+        if (!stale) setPlaceholder({ text: '[Could not read this file]', meta: null })
+      })
     void loadLanguage(file.path).then((l) => {
       if (!stale && viewRef.current === view) {
         view.dispatch({ effects: language.current.reconfigure(l?.extension ?? []) })
@@ -396,13 +426,23 @@ function Surface() {
 
   const body =
     s.status === 'loading' ? (
-      <div role="status" aria-label="Reading branch" className="animate-pulse p-3 font-mono text-xs">
+      <div
+        role="status"
+        aria-label="Reading branch"
+        className="animate-pulse p-3 font-mono text-xs"
+      >
         <p className="mb-3 text-muted">
           {treeLoading ? 'Opening workspace… ' : 'Reading changes… '}
-          {treeLoading && progress ? `${progress.done}${progress.total ? ` / ${progress.total}` : ''} files` : ''}
+          {treeLoading && progress
+            ? `${progress.done}${progress.total ? ` / ${progress.total}` : ''} files`
+            : ''}
         </p>
         {[60, 85, 45, 70, 55, 80].map((w, i) => (
-          <div key={i} className="mb-2 h-3 rounded bg-surface" style={{ width: `${w}%` }} />
+          <div
+            key={i}
+            className="mb-2 h-3 rounded bg-surface"
+            style={{ width: `${w}%` }}
+          />
         ))}
       </div>
     ) : s.status === 'error' ? (
@@ -417,7 +457,6 @@ function Surface() {
       </p>
     ) : null
 
-  const stat = file ? s.stats[file.path] : undefined
   const confirming = confirm
     ? confirm.kind === 'file'
       ? `Revert ${confirm.path} to base? y / n`
@@ -426,38 +465,47 @@ function Surface() {
 
   return (
     <div
-      className="absolute inset-0 z-20 flex flex-col bg-canvas"
+      className="absolute inset-0 z-10 flex flex-col bg-canvas"
       data-testid="branch-review"
     >
-      <header className="flex h-9 shrink-0 items-center gap-3 border-b border-line px-3 font-mono text-xs text-muted">
-        <span className="truncate text-text">
-          {s.mode === 'working' ? 'WORKING TREE' : 'BRANCH REVIEW'} [ {s.base}...
-          {s.mode === 'working' ? 'working tree' : s.branch} ]
-        </span>
+      <header className="flex h-9 shrink-0 items-center gap-3 px-3 font-mono text-xs text-muted">
         <button
           type="button"
           onClick={() => controller.toggleBranchMode()}
-          className="shrink-0 rounded border border-line px-2 py-0.5 hover:bg-surface"
+          className="shrink-0 hover:text-text"
           title="Toggle working-tree diff / diff with base (w)"
         >
-          {s.mode === 'working' ? 'Working tree' : `vs ${s.base}`} ⇄
+          {s.mode === 'working' ? 'working tree' : `vs ${s.base}`}
         </button>
-        <span className="ml-auto shrink-0" data-testid="branch-totals">
-          {s.files.length} files •{' '}
-          {s.statsDone ? `+${totals.add} -${totals.del}` : '…'}
-          {(s.partial || !s.statsDone) && s.status === 'ready' && ' • Reading changes…'}
-        </span>
+        <span className="min-w-0 truncate text-text">{file?.path}</span>
+        {confirming ? (
+          <span role="alert" className="ml-auto shrink-0 text-text">
+            {confirming}
+          </span>
+        ) : (
+          <span className="ml-auto flex shrink-0 gap-3">
+            <span data-testid="branch-totals">
+              {s.statsDone ? `+${totals.add} -${totals.del}` : '…'}
+              {(s.partial || !s.statsDone) && s.status === 'ready' && ' · reading'}
+            </span>
+            <span data-testid="branch-progress">
+              {reviewedCount} / {s.files.length} reviewed
+            </span>
+          </span>
+        )}
       </header>
       {body && <div className="min-h-0 flex-1 overflow-auto">{body}</div>}
       {
         // Always mounted, so the patch view exists before the branch has loaded.
-        <div className={`min-h-0 flex-1 flex-col md:flex-row ${body ? 'hidden' : 'flex'}`}>
+        <div
+          className={`min-h-0 flex-1 flex-col md:flex-row ${body ? 'hidden' : 'flex'}`}
+        >
           <div
             ref={list}
             tabIndex={0}
             role="listbox"
             aria-label="Branch files"
-            className="max-h-[35%] w-full shrink-0 overflow-auto border-b border-line py-1 font-mono text-xs outline-none md:max-h-none md:w-[260px] md:border-b-0 md:border-r"
+            className="max-h-[35%] w-full shrink-0 overflow-auto py-1 font-mono text-xs outline-none md:max-h-none md:w-[260px] md:border-r md:border-line"
             onKeyDown={(e) => {
               if (e.ctrlKey || e.metaKey || e.altKey) return
               if (pressRef.current(e.key, 'index')) {
@@ -466,12 +514,10 @@ function Surface() {
               }
             }}
             onFocus={() =>
-              store.get(branchReviewAtom)?.focus !== 'index' && controller.setBranchFocus('index')
+              store.get(branchReviewAtom)?.focus !== 'index' &&
+              controller.setBranchFocus('index')
             }
           >
-            <div className="px-3 py-1 text-muted">
-              FILES ({Math.min(s.index + 1, s.files.length)}/{s.files.length})
-            </div>
             {rows.map((r, i) =>
               r.kind === 'dir' ? (
                 <div
@@ -497,21 +543,18 @@ function Surface() {
             )}
           </div>
           <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="flex h-8 shrink-0 items-center gap-3 border-b border-line px-3 font-mono text-xs text-muted">
-              <span className="truncate text-text">{file?.path}</span>
-              <span className="ml-auto shrink-0">
-                {stat ? `+${stat.add} -${stat.del}` : ''}
-                {file && approved.size > 0 && [...approved].some((k) => k.startsWith(`${file.path}#`))
-                  ? ' · approved hunks'
-                  : ''}
-              </span>
-            </div>
             {placeholder && (
               <div className="p-4 font-sans text-sm text-muted">
-                <button type="button" className="text-left underline-offset-2 hover:underline" onClick={inspect}>
+                <button
+                  type="button"
+                  className="text-left underline-offset-2 hover:underline"
+                  onClick={inspect}
+                >
                   {placeholder.text}
                 </button>
-                {placeholder.meta && <p className="mt-2 font-mono text-xs">{placeholder.meta}</p>}
+                {placeholder.meta && (
+                  <p className="mt-2 font-mono text-xs">{placeholder.meta}</p>
+                )}
               </div>
             )}
             {diffing && (
@@ -526,25 +569,14 @@ function Surface() {
                 ref={host}
                 className="h-full w-full"
                 onFocusCapture={() =>
-                  store.get(branchReviewAtom)?.focus !== 'canvas' && controller.setBranchFocus('canvas')
+                  store.get(branchReviewAtom)?.focus !== 'canvas' &&
+                  controller.setBranchFocus('canvas')
                 }
               />
             </div>
           </section>
         </div>
       }
-      <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line px-3 font-mono text-xs text-muted">
-        {confirming ? (
-          <span role="alert" className="text-text">
-            {confirming}
-          </span>
-        ) : (
-          <span className="truncate">n / ← → next · c / Enter approve or undo · r revert · e edit · q quit</span>
-        )}
-        <span className="ml-auto shrink-0" data-testid="branch-progress">
-          Reviewed {reviewedCount} / {s.files.length} files
-        </span>
-      </footer>
     </div>
   )
 }
@@ -573,12 +605,26 @@ function FileRow({
       } ${reviewed ? 'text-muted' : 'text-text'}`}
       style={{ paddingLeft: `${0.75 + row.depth}rem` }}
     >
-      {active && <span className="absolute inset-y-0 left-0 w-0.5 bg-accent" aria-hidden="true" />}
-      <span className="truncate">{row.name}</span>
-      <span className="ml-auto shrink-0">
-        {f.status !== 'M' ? `${f.status} ` : ''}
-        {reviewed ? '[✓]' : '[•]'}
+      <span
+        className={`truncate ${
+          reviewed
+            ? ''
+            : f.status === 'A'
+              ? 'text-diff-add-fg'
+              : f.status === 'D'
+                ? 'text-diff-remove-fg'
+                : ''
+        }`}
+      >
+        {row.name}
       </span>
+      {!reviewed && (
+        <span
+          aria-label="Not reviewed"
+          role="img"
+          className="ml-auto size-1 shrink-0 rounded-full bg-accent"
+        />
+      )}
     </div>
   )
 }

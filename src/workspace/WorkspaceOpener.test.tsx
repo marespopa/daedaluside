@@ -77,10 +77,10 @@ describe('workspace opener', () => {
     expect(store.get(activePathAtom)).toBeNull()
 
     const o = await opener()
-    expect(await within(o).findByText(/^Workspace ready · 2 files$/)).toBeInTheDocument()
+    expect(await within(o).findByText(/2 files$/)).toBeInTheDocument()
     expect(within(o).queryByRole('button', { name: 'Open folder' })).toBeNull()
     expect(within(o).queryByRole('button', { name: 'Open file' })).toBeNull()
-    expect(within(o).getByRole('button', { name: /Find in Files/ })).toBeInTheDocument()
+    expect(within(o).getByRole('button', { name: /Search Files/ })).toBeEnabled()
 
     await user.click(within(o).getByRole('button', { name: /Search Files/ }))
 

@@ -58,7 +58,12 @@ describe('GrepService with a folder handle', () => {
   it('indexes through the handle without reading on the main thread', async () => {
     const { root } = setup()
     const status: GrepStatus[] = []
-    const svc = new GrepService(forbiddenFs, (s) => status.push(s), createBackend(root), root)
+    const svc = new GrepService(
+      forbiddenFs,
+      (s) => status.push(s),
+      createBackend(root),
+      root,
+    )
     svc.sync([file('a.txt', 12), file('src/b.txt', 12), file('bin.dat', 3)])
     await vi.waitFor(() => expect(status.at(-1)).toMatchObject({ indexed: 3, total: 3 }))
     expect(forbiddenFs.readBytes).not.toHaveBeenCalled()

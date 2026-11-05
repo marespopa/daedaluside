@@ -1,8 +1,17 @@
 /// <reference lib="webworker" />
-import { prefetchBranch, ReviewError, type BranchPrefetch, type BranchRequest } from './branchPrefetch'
+import {
+  prefetchBranch,
+  ReviewError,
+  type BranchPrefetch,
+  type BranchRequest,
+} from './branchPrefetch'
 import { GitService } from './gitService'
 
-export type ToWorker = { t: 'start'; handle: FileSystemDirectoryHandle; req?: BranchRequest }
+export type ToWorker = {
+  t: 'start'
+  handle: FileSystemDirectoryHandle
+  req?: BranchRequest
+}
 export type FromWorker =
   | { t: 'result'; result: BranchPrefetch; done: boolean }
   | { t: 'error'; message: string }

@@ -10,6 +10,7 @@ import {
   type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { branchReviewAtom, branchTabActiveAtom } from '../state/branchReviewAtoms'
 import { prefersReducedMotion } from '../lib/motion'
 import { MOD_KEY_LABEL } from '../lib/platform'
 import {
@@ -41,6 +42,8 @@ export default function Tabs() {
   const active = useAtomValue(activePathAtom)
   const status = useAtomValue(workspaceStatusAtom)
   const snapshot = useAtomValue(snapshotAtom)
+  const review = useAtomValue(branchReviewAtom) !== null
+  const reviewActive = useAtomValue(branchTabActiveAtom)
   if (status.state === 'loading') {
     // Last session's tabs as static names until the buffers are open.
     if (!snapshot || snapshot.openFiles.length === 0) return null
@@ -62,14 +65,31 @@ export default function Tabs() {
       </nav>
     )
   }
-  if (buffers.length === 0) return null
-  return <TabStrip buffers={buffers} active={active} />
+  if (buffers.length === 0 && !review) return null
+  return (
+    <TabStrip
+      buffers={buffers}
+      active={review && reviewActive ? null : active}
+      review={review}
+      reviewActive={review && reviewActive}
+    />
+  )
 }
 
 type Drag = { from: number; path: string }
 type Menu = { path: string; x: number; y: number }
 
-function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string | null }) {
+function TabStrip({
+  buffers,
+  active,
+  review,
+  reviewActive,
+}: {
+  buffers: OpenBuffer[]
+  active: string | null
+  review: boolean
+  reviewActive: boolean
+}) {
   const store = useStore()
   const controller = useController()
   const list = useRef<HTMLDivElement>(null)
@@ -284,6 +304,33 @@ function TabStrip({ buffers, active }: { buffers: OpenBuffer[]; active: string |
             )
           })}
         </div>
+        {review && (
+          <div
+            data-tab="branch-review"
+            role="presentation"
+            className={`group relative ml-1 flex h-7 shrink-0 items-center rounded-md transition-colors duration-150 ease-out ${reviewActive ? 'bg-surface' : 'hover:bg-surface/60'}`}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={reviewActive}
+              aria-controls="editor-pane"
+              onClick={() => controller.showBranchReview()}
+              className={`flex h-full items-center rounded-md px-3 pr-7 text-left whitespace-nowrap focus-visible:outline-2 focus-visible:outline-accent ${reviewActive ? 'font-medium text-text' : 'text-muted group-hover:text-text'}`}
+            >
+              Branch Review
+            </button>
+            <IconButton
+              label="Close Branch Review"
+              icon="x"
+              size="xs"
+              variant="quiet"
+              tabIndex={-1}
+              onClick={() => controller.closeBranchReview()}
+              className="absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity duration-150 ease-out group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+            />
+          </div>
+        )}
       </div>
       {menu && (
         <TabMenu

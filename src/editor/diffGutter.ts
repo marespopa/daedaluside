@@ -1,4 +1,10 @@
-import { type Extension, type Range, RangeSet, StateEffect, StateField } from '@codemirror/state'
+import {
+  type Extension,
+  type Range,
+  RangeSet,
+  StateEffect,
+  StateField,
+} from '@codemirror/state'
 import { EditorView, gutter, GutterMarker } from '@codemirror/view'
 import type { Hunk } from '../review/diff'
 

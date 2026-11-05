@@ -148,12 +148,18 @@ function foldRanges(doc: EditorState['doc'], hunks: readonly Hunk[]) {
     const from = doc.line(first + 1).from
     const to = doc.line(last).to
     out.push(
-      Decoration.replace({ widget: new UnchangedLines(last - first), block: true }).range(from, to),
+      Decoration.replace({ widget: new UnchangedLines(last - first), block: true }).range(
+        from,
+        to,
+      ),
     )
   }
   let prevEnd = 0
   hunks.forEach((h, i) => {
-    fold(i === 0 ? 0 : prevEnd + FOLD_CONTEXT, Math.max(h.newRange.start - FOLD_CONTEXT, 0))
+    fold(
+      i === 0 ? 0 : prevEnd + FOLD_CONTEXT,
+      Math.max(h.newRange.start - FOLD_CONTEXT, 0),
+    )
     prevEnd = h.newRange.start + h.newRange.count
   })
   fold(hunks.length === 0 ? 0 : prevEnd + FOLD_CONTEXT, doc.lines)
@@ -166,7 +172,10 @@ export const foldField = StateField.define<DecorationSet>({
     for (const e of tr.effects) {
       if (e.is(setReviewHunks)) return Decoration.none
       if (e.is(foldUnchanged)) {
-        if (tr.state.doc.lines <= FOLD_MIN_DOC || tr.state.facet(paneMode) !== 'unified') {
+        if (
+          tr.state.doc.lines <= FOLD_MIN_DOC ||
+          tr.state.facet(paneMode) !== 'unified'
+        ) {
           return Decoration.none
         }
         return Decoration.set(foldRanges(tr.state.doc, e.value), true)
@@ -184,7 +193,11 @@ export const foldField = StateField.define<DecorationSet>({
 })
 
 /** One half of the split view: tinted hunk lines, and spacers where the other half has more lines. */
-function decorateSplit(doc: EditorState['doc'], hunks: readonly Hunk[], side: 'left' | 'right') {
+function decorateSplit(
+  doc: EditorState['doc'],
+  hunks: readonly Hunk[],
+  side: 'left' | 'right',
+) {
   const out: Range<Decoration>[] = []
   for (const h of hunks) {
     const own = side === 'left' ? h.baseRange : h.newRange

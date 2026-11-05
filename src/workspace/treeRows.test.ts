@@ -104,12 +104,18 @@ describe('flattenTree', () => {
     const tree = groups(TREE)
     const loaded = new Set(['', 'src', 'src/lib'])
     expect(
-      flattenTree(tree, new Set(['src', 'src/lib']), null, loaded).some((r) => r.type === 'note'),
+      flattenTree(tree, new Set(['src', 'src/lib']), null, loaded).some(
+        (r) => r.type === 'note',
+      ),
     ).toBe(false)
     const empty = groups([dir('docs')])
-    expect(flattenTree(empty, new Set(), null, new Set([''])).some((r) => r.type === 'note')).toBe(false)
     expect(
-      flattenTree(empty, new Set(['docs']), 'docs', new Set(['', 'docs'])).some((r) => r.type === 'note'),
+      flattenTree(empty, new Set(), null, new Set([''])).some((r) => r.type === 'note'),
+    ).toBe(false)
+    expect(
+      flattenTree(empty, new Set(['docs']), 'docs', new Set(['', 'docs'])).some(
+        (r) => r.type === 'note',
+      ),
     ).toBe(false)
   })
 })

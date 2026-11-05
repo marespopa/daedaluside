@@ -388,7 +388,9 @@ function Preview({
                 key={n}
                 className={`flex gap-3 whitespace-pre ${current ? 'bg-surface' : ''}`}
               >
-                <span className="w-8 shrink-0 select-none text-right text-muted">{n}</span>
+                <span className="w-8 shrink-0 select-none text-right text-muted">
+                  {n}
+                </span>
                 <span className="min-w-0 overflow-hidden">
                   {current ? (
                     <>

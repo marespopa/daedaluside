@@ -31,7 +31,11 @@ describe('diffGutter', () => {
   it('marks added and changed lines and the line after a deletion', () => {
     const { view, parent } = make('a\nb\nc\nd\ne')
     view.dispatch({
-      effects: setHunks.of([hunk('add', 0, 1), hunk('change', 2, 2), hunk('remove', 4, 0)]),
+      effects: setHunks.of([
+        hunk('add', 0, 1),
+        hunk('change', 2, 2),
+        hunk('remove', 4, 0),
+      ]),
     })
     expect(marks(parent)).toEqual(['add', 'change', 'change', 'remove'])
     expect(parent.querySelector('[data-diff=remove]')?.textContent).toBe('▲')

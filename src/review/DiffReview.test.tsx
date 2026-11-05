@@ -153,17 +153,41 @@ describe('diff review', () => {
     const act = vi.spyOn(controller, 'reviewAction').mockResolvedValue()
     await user.keyboard(']c')
     await user.keyboard('s')
-    expect(act).toHaveBeenLastCalledWith('a.txt', 'stage', expect.objectContaining({ kind: 'change' }))
+    expect(act).toHaveBeenLastCalledWith(
+      'a.txt',
+      'stage',
+      expect.objectContaining({ kind: 'change' }),
+    )
     await user.keyboard(' ')
-    expect(act).toHaveBeenLastCalledWith('a.txt', 'stage', expect.objectContaining({ kind: 'change' }))
+    expect(act).toHaveBeenLastCalledWith(
+      'a.txt',
+      'stage',
+      expect.objectContaining({ kind: 'change' }),
+    )
     await user.keyboard('X')
-    expect(act).toHaveBeenLastCalledWith('a.txt', 'revert', expect.objectContaining({ kind: 'change' }))
+    expect(act).toHaveBeenLastCalledWith(
+      'a.txt',
+      'revert',
+      expect.objectContaining({ kind: 'change' }),
+    )
     await user.keyboard('u')
-    expect(act).toHaveBeenLastCalledWith('a.txt', 'revert', expect.objectContaining({ kind: 'change' }))
+    expect(act).toHaveBeenLastCalledWith(
+      'a.txt',
+      'revert',
+      expect.objectContaining({ kind: 'change' }),
+    )
     await user.keyboard('dp')
-    expect(act).toHaveBeenLastCalledWith('a.txt', 'put', expect.objectContaining({ kind: 'change' }))
+    expect(act).toHaveBeenLastCalledWith(
+      'a.txt',
+      'put',
+      expect.objectContaining({ kind: 'change' }),
+    )
     await user.keyboard('do')
-    expect(act).toHaveBeenLastCalledWith('a.txt', 'obtain', expect.objectContaining({ kind: 'change' }))
+    expect(act).toHaveBeenLastCalledWith(
+      'a.txt',
+      'obtain',
+      expect.objectContaining({ kind: 'change' }),
+    )
   })
 
   it('stages the whole file when the cursor is on no hunk', async () => {
@@ -174,8 +198,9 @@ describe('diff review', () => {
   })
 })
 
-const reviewEditors = () =>
-  [...screen.getByTestId('diff-review').querySelectorAll<HTMLElement>('.cm-editor')]
+const reviewEditors = () => [
+  ...screen.getByTestId('diff-review').querySelectorAll<HTMLElement>('.cm-editor'),
+]
 
 describe('split diff review', () => {
   async function split() {
@@ -233,7 +258,11 @@ describe('split diff review', () => {
     await user.keyboard(']c')
     expect(line()).toBe(2)
     await user.keyboard('s')
-    expect(act2).toHaveBeenLastCalledWith('a.txt', 'stage', expect.objectContaining({ kind: 'change' }))
+    expect(act2).toHaveBeenLastCalledWith(
+      'a.txt',
+      'stage',
+      expect.objectContaining({ kind: 'change' }),
+    )
   })
 
   it('returns to the unified view when the layout changes back', async () => {

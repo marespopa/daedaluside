@@ -17,7 +17,9 @@ export function walkInWorker(
   return new Promise<Entry[]>((resolve, reject) => {
     let worker: Worker
     try {
-      worker = new Worker(new URL('./walk.worker.ts', import.meta.url), { type: 'module' })
+      worker = new Worker(new URL('./walk.worker.ts', import.meta.url), {
+        type: 'module',
+      })
     } catch {
       walkFolder(root, handlers).then(resolve, reject)
       return

@@ -69,13 +69,15 @@ export default function App() {
               />
             )}
             <SaveButton />
-            <IconButton
-              label="Full width"
-              icon="width"
-              aria-pressed={width === 'full'}
-              className="aria-pressed:bg-surface aria-pressed:text-text"
-              onClick={() => setWidth(width === 'full' ? 'measured' : 'full')}
-            />
+            {activePath && (
+              <IconButton
+                label="Full width"
+                icon="width"
+                aria-pressed={width === 'full'}
+                className="aria-pressed:bg-surface aria-pressed:text-text"
+                onClick={() => setWidth(width === 'full' ? 'measured' : 'full')}
+              />
+            )}
           </div>
         </header>
         <main

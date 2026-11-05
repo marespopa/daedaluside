@@ -1,4 +1,11 @@
-import { diffTexts, hunkStats, streamHunks, type DiffResult, type DiffStats, type Hunk } from './diff'
+import {
+  diffTexts,
+  hunkStats,
+  streamHunks,
+  type DiffResult,
+  type DiffStats,
+  type Hunk,
+} from './diff'
 import type { FromWorker, ToWorker } from './diff.worker'
 
 /** Where diffs are computed: a Web Worker in the browser, in-process elsewhere. */

@@ -3,6 +3,9 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Tailwind gates hover: behind (hover: hover), which Chrome Android reports as none even with a mouse. */
+@custom-variant hover (&:hover);
+
 @theme {
   --font-mono:
     'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,

@@ -58,7 +58,11 @@ export const treeStatusAtom = atom<TreeStatus>({ state: 'no-folder' })
  * Progress of a full folder read: entries found so far and, when a previous read of
  * the same workspace knew it, the expected total. Null unless the tree is loading.
  */
-export const treeProgressAtom = atom<{ done: number; total: number | null; startedAt?: number } | null>(null)
+export const treeProgressAtom = atom<{
+  done: number
+  total: number | null
+  startedAt?: number
+} | null>(null)
 /** Paths currently being deleted from the workspace. Tree actions stay disabled while non-empty. */
 export const deletingPathsAtom = atom<ReadonlySet<string>>(new Set<string>())
 export const openBuffersAtom = atom<OpenBuffer[]>([])
@@ -68,7 +72,11 @@ export const activePathAtom = atom<string | null>(null)
  * no longer grants readwrite access (after a reload, or the user revoked it); the tree
  * offers Reconnect.
  */
-export const linkedFolderAtom = atom<{ name: string; paused: boolean; single?: boolean } | null>(null)
+export const linkedFolderAtom = atom<{
+  name: string
+  paused: boolean
+  single?: boolean
+} | null>(null)
 /**
  * Whether the reconnect dialog is showing. Set when the linked folder is paused (on open,
  * or after a failed write). "Later" clears it until the next open or failed write.

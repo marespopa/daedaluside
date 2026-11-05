@@ -1,11 +1,9 @@
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { MOD_KEY_LABEL } from '../lib/platform'
-import { COMMAND_PREFIX } from '../editor/paletteSearch'
 import { openExPrompt } from '../editor/vimMode'
 import {
   editorHandleAtom,
-  grepOpenAtom,
   paletteOpenAtom,
   paletteQueryAtom,
   vimEnabledAtom,
@@ -21,10 +19,41 @@ import {
   workspacesAtom,
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
+import { gitBranchAtom } from '../state/gitAtoms'
 import { useFolderPicker } from './useFolderPicker'
 import { useFilePicker } from './useFilePicker'
-import { useLoadEta } from './loadEstimate'
 import { useController } from './useWorkspace'
+
+const ENTRY_POINTS = [
+  /^package\.json$/,
+  /^src\/(index|main)\.[jt]sx?$/,
+  /^src\/App\.[jt]sx$/,
+]
+
+const LOADING_WORDS = [
+  'Gathering',
+  'Wandering',
+  'Unfolding',
+  'Tracing',
+  'Weaving',
+  'Sifting',
+  'Mapping',
+  'Threading',
+  'Listening',
+  'Kindling',
+]
+
+/** A shuffled word that changes every 1.4s while `active`; the order is random per mount. */
+function useRotatingWord(active: boolean) {
+  const [order] = useState(() => [...LOADING_WORDS].sort(() => Math.random() - 0.5))
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    if (!active) return
+    const id = setInterval(() => setI((n) => (n + 1) % order.length), 1400)
+    return () => clearInterval(id)
+  }, [active, order])
+  return order[i]
+}
 
 /**
  * The blank page, shown when no file is open. A single quiet column on the canvas: no
@@ -42,9 +71,10 @@ export default function WorkspaceOpener() {
   const setNotice = useSetAtom(noticeAtom)
   const treeStatus = useAtomValue(treeStatusAtom)
   const progress = useAtomValue(treeProgressAtom)
-  const fileCount = useAtomValue(treeAtom).filter((e) => e.kind === 'file').length
   const treeComplete = useAtomValue(treeCompleteAtom)
-  const { eta, elapsed } = useLoadEta(progress)
+  const branch = useAtomValue(gitBranchAtom)
+  const tree = useAtomValue(treeAtom)
+  const fileCount = tree.filter((e) => e.kind === 'file').length
 
   const ready = status.state === 'ready'
   const current = workspaces.find((w) => w.id === currentId)
@@ -54,9 +84,12 @@ export default function WorkspaceOpener() {
   // "Ready" waits for the whole tree: file search needs every name.
   const loadingTree =
     hasWorkspace && (treeStatus.state === 'loading' || (folderReady && !treeComplete))
+  // Folder actions stay disabled until the whole workspace is loaded.
+  const workspaceReady = folderReady && treeComplete
   useEffect(() => {
     if (folderReady) void controller.ensureFullTree()
   }, [folderReady, controller])
+  const loadingWord = useRotatingWord(loadingTree)
   const title = current?.name ?? 'daedalus'
 
   // A printable key on the blank page starts an untitled file, and the key goes into it.
@@ -111,59 +144,15 @@ export default function WorkspaceOpener() {
     store.set(paletteOpenAtom, true)
   }
 
-  const showPalette = (q: string) => () => {
-    store.set(paletteQueryAtom, q)
-    store.set(paletteOpenAtom, true)
-  }
+  // Root files worth a direct link; shown only when present.
+  const entryPoints = workspaceReady
+    ? ENTRY_POINTS.map((re) => tree.find((e) => e.kind === 'file' && re.test(e.path)))
+        .filter((e): e is NonNullable<typeof e> => !!e)
+        .slice(0, 3)
+    : []
 
-  const paletteAction = {
-    keys: `${MOD_KEY_LABEL}+K`,
-    label: 'Command Palette',
-    enabled: ready,
-    run: showPalette(''),
-  }
-  const switchAction = {
-    keys: `${MOD_KEY_LABEL}+O`,
-    label: 'Switch Workspace',
-    enabled: ready,
-    run: showPalette(`${COMMAND_PREFIX}Workspace: `),
-  }
-  const actions: { keys?: string; label: string; enabled: boolean; run: () => void }[] =
-    hasWorkspace
-      ? [
-          {
-            keys: `${MOD_KEY_LABEL}+P`,
-            label: 'Search Files',
-            enabled: folderReady,
-            run: searchFiles,
-          },
-          {
-            keys: `${MOD_KEY_LABEL}+Shift+F`,
-            label: 'Find in Files',
-            enabled: folderReady,
-            run: () => store.set(grepOpenAtom, true),
-          },
-          {
-            keys: `${MOD_KEY_LABEL}+N`,
-            label: 'New Scratch Buffer',
-            enabled: folderReady,
-            run: () => void controller.startUntitled(''),
-          },
-          {
-            keys: `${MOD_KEY_LABEL}+Shift+B`,
-            label: 'Branch Review',
-            enabled: folderReady,
-            run: () => void controller.openBranchReview(),
-          },
-          paletteAction,
-          switchAction,
-        ]
-      : [
-          { label: 'Open folder', enabled: ready, run: () => void openFolder() },
-          { label: 'Open file', enabled: ready, run: () => void openFile() },
-          paletteAction,
-          switchAction,
-        ]
+  const quietBtn =
+    'rounded px-2 py-1 text-xs text-muted transition-colors hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50'
 
   return (
     <section
@@ -178,18 +167,25 @@ export default function WorkspaceOpener() {
               Could not read this folder: {treeStatus.message}
             </p>
           ) : treeStatus.state === 'permission' && hasWorkspace ? (
-            <p role="alert" className="text-xs text-diff-remove-fg">
-              Access to this folder expired. Reconnect it from the sidebar.
-            </p>
+            <div role="alert" className="space-y-2 text-xs text-diff-remove-fg">
+              <p>Access to this folder expired.</p>
+              <button
+                type="button"
+                onClick={() => void controller.reconnectFolder()}
+                className="rounded border border-muted/40 px-3 py-1 text-text hover:bg-line/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              >
+                Re-grant folder access
+              </button>
+            </div>
           ) : (
             <p
               className="text-xs text-muted"
               role={loadingTree || folderReady ? 'status' : undefined}
             >
               {loadingTree
-                ? `Loading workspace…${progress ? ` ${progress.done}${progress.total ? ` / ${progress.total}` : ''} files` : ''}${eta ? ` · ${eta}` : elapsed ? ` · ${elapsed}` : ''}`
+                ? `${loadingWord}…${progress ? ` ${progress.done}${progress.total ? ` / ${progress.total}` : ''} files` : ''}`
                 : folderReady
-                  ? `Workspace ready · ${fileCount} ${fileCount === 1 ? 'file' : 'files'}`
+                  ? `${branch ? `${branch} · ` : ''}${fileCount} ${fileCount === 1 ? 'file' : 'files'}`
                   : 'Open a folder to start editing.'}
             </p>
           )}
@@ -210,23 +206,60 @@ export default function WorkspaceOpener() {
           </div>
         )}
 
-        <ul className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3">
-          {actions.map((a) => (
-            <li key={a.label}>
+        {hasWorkspace ? (
+          workspaceReady && (
+            <>
               <button
                 type="button"
-                disabled={!a.enabled}
-                onClick={a.run}
-                className="flex h-16 w-full flex-col items-center justify-center gap-1 rounded-lg border border-line px-2 text-xs text-text transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40"
+                onClick={searchFiles}
+                className="flex h-10 w-full items-center justify-between rounded-lg border border-muted/40 px-3 text-sm text-muted transition-colors hover:border-muted/60 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50"
               >
-                <span>{a.label}</span>
-                {a.keys && (
-                  <kbd className="font-mono text-[11px] text-muted">{a.keys}</kbd>
-                )}
+                <span>Search Files</span>
+                <kbd className="font-mono text-[11px]">{MOD_KEY_LABEL}+P</kbd>
               </button>
-            </li>
-          ))}
-        </ul>
+              {entryPoints.length > 0 && (
+                <nav
+                  aria-label="Entry points"
+                  className="flex flex-wrap justify-center gap-1"
+                >
+                  {entryPoints.map((e) => (
+                    <button
+                      key={e.path}
+                      type="button"
+                      onClick={() => void controller.openFile(e.path)}
+                      className={quietBtn}
+                    >
+                      {e.path}
+                    </button>
+                  ))}
+                </nav>
+              )}
+              <p className="text-xs text-muted">
+                <kbd className="font-mono">{MOD_KEY_LABEL}+K</kbd> commands ·{' '}
+                <kbd className="font-mono">{MOD_KEY_LABEL}+Shift+F</kbd> find in files
+              </p>
+            </>
+          )
+        ) : (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={!ready}
+              onClick={() => void openFolder()}
+              className={quietBtn}
+            >
+              Open folder
+            </button>
+            <button
+              type="button"
+              disabled={!ready}
+              onClick={() => void openFile()}
+              className={quietBtn}
+            >
+              Open file
+            </button>
+          </div>
+        )}
 
         {status.state === 'loading' && (
           <p className="text-xs text-muted">Starting local storage…</p>

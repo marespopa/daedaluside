@@ -226,7 +226,8 @@ function ReviewPane() {
     })
     for (const v of left ? [view, left] : [view]) {
       void loadLanguage(path).then((l) => {
-        if (!stale && alive()) v.dispatch({ effects: language.current.reconfigure(l?.extension ?? []) })
+        if (!stale && alive())
+          v.dispatch({ effects: language.current.reconfigure(l?.extension ?? []) })
       })
     }
     return () => {
@@ -243,7 +244,9 @@ function ReviewPane() {
     >
       <div className="flex h-8 shrink-0 items-center gap-3 border-b border-line px-3 font-mono text-xs text-muted">
         <span className="truncate">{path ?? 'No file'}</span>
-        <span className="ml-auto shrink-0">{vimOn ? ']c [c ]f [f s X do dp q' : 's X · Esc closes'}</span>
+        <span className="ml-auto shrink-0">
+          {vimOn ? ']c [c ]f [f s X do dp q' : 's X · Esc closes'}
+        </span>
       </div>
       {empty && (
         <p role="status" className="px-3 py-2 font-sans text-xs text-muted">

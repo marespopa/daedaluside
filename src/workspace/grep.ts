@@ -135,7 +135,13 @@ export class GrepIndex {
       }
       const doc = this.docs.get(path)
       if (!doc) continue
-      const hits = scanDoc(path, doc, needle, exact, Math.min(PER_FILE_LIMIT, req.limit - total))
+      const hits = scanDoc(
+        path,
+        doc,
+        needle,
+        exact,
+        Math.min(PER_FILE_LIMIT, req.limit - total),
+      )
       if (hits.length > 0) {
         matched.push(path)
         batch.push(...hits)
@@ -188,7 +194,11 @@ function scanDoc(
     const at = hay.indexOf(needle, from)
     if (at === -1) break
     // Lines containing a hit are reported once; count newlines only up to the hit.
-    for (let nl = text.indexOf('\n', counted); nl !== -1 && nl < at; nl = text.indexOf('\n', counted)) {
+    for (
+      let nl = text.indexOf('\n', counted);
+      nl !== -1 && nl < at;
+      nl = text.indexOf('\n', counted)
+    ) {
       line++
       counted = nl + 1
     }
@@ -226,7 +236,8 @@ function hit(
   const len = lineEnd - lineStart
   // Drop a CR left by CRLF files.
   const end = text[lineEnd - 1] === '\r' ? lineEnd - 1 : lineEnd
-  if (len <= WINDOW) return { path, line, col, text: text.slice(lineStart, end), start: 0 }
+  if (len <= WINDOW)
+    return { path, line, col, text: text.slice(lineStart, end), start: 0 }
   const start = Math.max(0, col - LEAD)
   return {
     path,

@@ -1,6 +1,6 @@
 import { useAtomValue, useStore } from 'jotai'
 import { lazy, Suspense, useEffect, useRef } from 'react'
-import { branchReviewAtom } from '../state/branchReviewAtoms'
+import { branchReviewAtom, branchTabActiveAtom } from '../state/branchReviewAtoms'
 import { activeImageAtom, editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
 import { reviewOpenAtom } from '../state/gitAtoms'
 import {
@@ -27,7 +27,9 @@ export default function Editor() {
   const snapshot = useAtomValue(snapshotAtom)
   const width = useAtomValue(editorWidthAtom)
   const reviewOpen = useAtomValue(reviewOpenAtom)
-  const branchOpen = useAtomValue(branchReviewAtom) !== null
+  const branchLoaded = useAtomValue(branchReviewAtom) !== null
+  const branchTabActive = useAtomValue(branchTabActiveAtom)
+  const branchOpen = branchLoaded && branchTabActive
   const image = useAtomValue(activeImageAtom)
   // Last session's file is being restored: show its place, not an empty editor.
   const restoring = status.state === 'loading' && snapshot?.activeFile != null

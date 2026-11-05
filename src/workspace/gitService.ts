@@ -22,7 +22,13 @@ export interface BranchFile {
 }
 
 export type BranchChanges =
-  | { kind: 'ok'; mergeBase: string; head: string; files: BranchFile[]; multipleBases: boolean }
+  | {
+      kind: 'ok'
+      mergeBase: string
+      head: string
+      files: BranchFile[]
+      multipleBases: boolean
+    }
   | { kind: 'error'; message: string }
 
 export type BlobContent =
@@ -216,7 +222,11 @@ export class GitService {
       /* no origin/HEAD: a repository that was not cloned, or a bare remote */
     }
     try {
-      const configured = await git.getConfig({ fs: this.fs, dir: DIR, path: 'init.defaultBranch' })
+      const configured = await git.getConfig({
+        fs: this.fs,
+        dir: DIR,
+        path: 'init.defaultBranch',
+      })
       if (typeof configured === 'string' && configured) named.push(configured)
     } catch {
       /* no config */
@@ -272,7 +282,8 @@ export class GitService {
     } catch {
       bases = []
     }
-    if (bases.length === 0) return { kind: 'error', message: 'No common ancestor with base' }
+    if (bases.length === 0)
+      return { kind: 'error', message: 'No common ancestor with base' }
     const mergeBase = bases[0]!
     const files: BranchFile[] = []
     try {
@@ -293,8 +304,10 @@ export class GitService {
           if (dirA || dirB) {
             // A directory on one side and a file on the other: report the file side here
             // and let the walk descend for the directory side.
-            if (!dirA && a) files.push({ path, status: b ? 'M' : 'D', mbOid: oa, headOid: null })
-            if (!dirB && b) files.push({ path, status: a ? 'M' : 'A', mbOid: null, headOid: ob })
+            if (!dirA && a)
+              files.push({ path, status: b ? 'M' : 'D', mbOid: oa, headOid: null })
+            if (!dirB && b)
+              files.push({ path, status: a ? 'M' : 'A', mbOid: null, headOid: ob })
             return undefined
           }
           files.push({
@@ -308,9 +321,16 @@ export class GitService {
       })
     } catch (e) {
       if (signal?.cancelled) return { kind: 'error', message: 'Cancelled' }
-      return { kind: 'error', message: e instanceof Error ? e.message : 'Could not read branch' }
+      return {
+        kind: 'error',
+        message: e instanceof Error ? e.message : 'Could not read branch',
+      }
     }
-    onCommitted?.([...files].sort((x, y) => x.path.localeCompare(y.path)), mergeBase, head)
+    onCommitted?.(
+      [...files].sort((x, y) => x.path.localeCompare(y.path)),
+      mergeBase,
+      head,
+    )
     // Uncommitted work counts as part of the branch: overlay the working tree on HEAD.
     const merged = await this.overlayWorkingTree(mergeBase, files, signal)
     merged.sort((x, y) => x.path.localeCompare(y.path))
@@ -336,7 +356,13 @@ export class GitService {
       if (!prior) {
         try {
           mbOid = (
-            await git.readBlob({ fs: this.fs, dir: DIR, oid: mergeBase, filepath: path, cache: this.cache })
+            await git.readBlob({
+              fs: this.fs,
+              dir: DIR,
+              oid: mergeBase,
+              filepath: path,
+              cache: this.cache,
+            })
           ).oid
         } catch {
           mbOid = null
@@ -353,13 +379,19 @@ export class GitService {
       if (bytes) {
         headOid = (await git.hashBlob({ object: bytes })).oid
         this.overlayOids.add(headOid)
-        if (!this.blobsByOid.has(headOid)) this.blobsByOid.set(headOid, classifyBlob(bytes))
+        if (!this.blobsByOid.has(headOid))
+          this.blobsByOid.set(headOid, classifyBlob(bytes))
       }
       if (mbOid === headOid) {
         byPath.delete(path)
         return
       }
-      byPath.set(path, { path, status: !mbOid ? 'A' : !headOid ? 'D' : 'M', mbOid, headOid })
+      byPath.set(path, {
+        path,
+        status: !mbOid ? 'A' : !headOid ? 'D' : 'M',
+        mbOid,
+        headOid,
+      })
     })
     return [...byPath.values()]
   }
@@ -390,7 +422,12 @@ export class GitService {
     if (hit) return hit
     let out: BlobContent
     try {
-      const { blob } = await git.readBlob({ fs: this.fs, dir: DIR, oid, cache: this.cache })
+      const { blob } = await git.readBlob({
+        fs: this.fs,
+        dir: DIR,
+        oid,
+        cache: this.cache,
+      })
       out = classifyBlob(blob)
     } catch {
       out = { kind: 'binary', size: 0 }

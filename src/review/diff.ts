@@ -32,7 +32,12 @@ export function splitLines(text: string): string[] {
 
 /** Folds `diffArrays` parts into hunks; offsets place a sub-range inside the whole file. */
 function foldParts(
-  parts: readonly { count?: number | undefined; value: string[]; added?: boolean | undefined; removed?: boolean | undefined }[],
+  parts: readonly {
+    count?: number | undefined
+    value: string[]
+    added?: boolean | undefined
+    removed?: boolean | undefined
+  }[],
   aOff: number,
   bOff: number,
 ): Hunk[] {
@@ -146,7 +151,10 @@ export function* hunkPieces(a: string[], b: string[]): Generator<Hunk[]> {
   }
   let pa = lo
   let pb = lo
-  for (const [ai, bi] of [...anchorLines(a, lo, aHi, b, lo, bHi), [aHi, bHi] as [number, number]]) {
+  for (const [ai, bi] of [
+    ...anchorLines(a, lo, aHi, b, lo, bHi),
+    [aHi, bHi] as [number, number],
+  ]) {
     if (ai > pa || bi > pb) {
       const hunks = foldParts(diffArrays(a.slice(pa, ai), b.slice(pb, bi)), pa, pb)
       if (hunks.length > 0) yield hunks

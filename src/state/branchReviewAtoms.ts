@@ -29,9 +29,13 @@ export interface BranchReviewState {
 
 /** Null while the branch review surface is closed. */
 export const branchReviewAtom = atom<BranchReviewState | null>(null)
+/** True while the Branch Review tab (not a file tab) is the focused one. */
+export const branchTabActiveAtom = atom(false)
 /** Reviewed files of the open branch review (validated against blob oids). */
 export const branchMarksAtom = atom<Marks>({})
 /** Hunks approved with `sa` this session, as `path#baseStart:newStart`. */
 export const branchApprovedAtom = atom<ReadonlySet<string>>(new Set<string>())
 /** A destructive action waiting for y / n. */
-export const branchConfirmAtom = atom<{ kind: 'file' | 'hunk'; path: string } | null>(null)
+export const branchConfirmAtom = atom<{ kind: 'file' | 'hunk'; path: string } | null>(
+  null,
+)

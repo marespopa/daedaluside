@@ -34,7 +34,9 @@ describe('Astro language', () => {
     const state = EditorState.create({ doc, extensions: [lang!.extension] })
     const tree = ensureSyntaxTree(state, doc.length, 5000)!
     let parent: string | undefined
-    tree.iterate({ enter: (n) => void (n.name === 'Script' && (parent = n.node.parent?.name)) })
+    tree.iterate({
+      enter: (n) => void (n.name === 'Script' && (parent = n.node.parent?.name)),
+    })
     expect(parent).toBe('Element')
     expect(tree.resolveInner(doc.indexOf('let'), 1).name).toBe('let')
   })
