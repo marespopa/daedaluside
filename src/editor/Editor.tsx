@@ -57,7 +57,7 @@ export default function Editor() {
   return (
     <div className="relative h-full" data-editor-width={width}>
       <div ref={host} className="h-full" data-testid="editor" />
-      <Suspense fallback={null}>
+      <Suspense fallback={reviewOpen ? <EditorSkeleton /> : null}>
         {image && <ImageViewer />}
         {reviewOpen && <DiffReview />}
         {branchOpen && <BranchReview />}

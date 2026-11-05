@@ -13,6 +13,8 @@ export const gitHeadAtom = atom<{
 })
 /** Checked-out branch of the open folder ("HEAD" when detached); null when not a repo or unread. */
 export const gitBranchAtom = atom<string | null>(null)
+/** Per-file diffs against HEAD (gutter marks, +/- stats) are computed only while this is on; off by default. */
+export const fileDiffEnabledAtom = atom(false)
 /** Hunks of each diffed file against HEAD, keyed by workspace path. */
 export const fileDiffMapAtom = atom<ReadonlyMap<string, readonly Hunk[]>>(new Map())
 /** Index of the hunk under review in the active file; -1 when none is selected. */

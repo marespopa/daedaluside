@@ -1,3 +1,4 @@
+import EditorSkeleton from '../editor/EditorSkeleton'
 import { EditorState, Prec, Compartment, type Extension } from '@codemirror/state'
 import { EditorView, lineNumbers } from '@codemirror/view'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
@@ -72,6 +73,8 @@ function ReviewPane() {
   const viewsRef = useRef<Views | null>(null)
   const language = useRef(new Compartment())
   const [empty, setEmpty] = useState<string | null>(null)
+  // The path whose snapshot has been shown; until it matches, the pane would be blank.
+  const [loadedPath, setLoadedPath] = useState<string | null>(null)
 
   // The views live as long as the pane and its layout; their documents are replaced when the file or HEAD changes.
   useEffect(() => {
@@ -203,6 +206,7 @@ function ReviewPane() {
     let stale = false
     void controller.reviewSnapshot(path).then((snap) => {
       if (stale || !alive()) return
+      setLoadedPath(path)
       const replace = (v: EditorView, doc: string, hunks: Hunk[], base: string[]) =>
         v.dispatch({
           changes: { from: 0, to: v.state.doc.length, insert: doc },
@@ -248,12 +252,15 @@ function ReviewPane() {
           {vimOn ? ']c [c ]f [f s X do dp q' : 's X · Esc closes'}
         </span>
       </div>
-      {empty && (
+      {empty && loadedPath === path && (
         <p role="status" className="px-3 py-2 font-sans text-xs text-muted">
           {empty}
         </p>
       )}
-      <div ref={host} className="flex min-h-0 flex-1" />
+      <div className="relative flex min-h-0 flex-1">
+        <div ref={host} className="flex min-h-0 flex-1" />
+        {loadedPath !== path && <EditorSkeleton />}
+      </div>
     </div>
   )
 }

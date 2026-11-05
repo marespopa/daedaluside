@@ -41,7 +41,13 @@ import {
   unstageHunkText,
 } from '../review/stage'
 import { DiffService } from '../review/diffService'
-import { fileDiffMapAtom, gitBranchAtom, gitHeadAtom, reviewOpenAtom } from '../state/gitAtoms'
+import {
+  fileDiffEnabledAtom,
+  fileDiffMapAtom,
+  gitBranchAtom,
+  gitHeadAtom,
+  reviewOpenAtom,
+} from '../state/gitAtoms'
 import {
   activePathAtom,
   currentWorkspaceIdAtom,
@@ -616,11 +622,24 @@ export class WorkspaceController {
     this.gitTimer = setTimeout(() => void this.refreshGitStatus(), 500)
   }
 
+  /** Turns per-file diffs (gutter marks and stats) on or off; they are computed only on demand. */
+  setFileDiff(on: boolean) {
+    this.store.set(fileDiffEnabledAtom, on)
+    if (on) {
+      if (this.active) this.pushDiff(this.active, true)
+      return
+    }
+    this.diffSeq++
+    this.store.set(fileDiffMapAtom, new Map())
+    this.handle?.view.dispatch({ effects: setHunks.of([]) })
+  }
+
   /** Diffs a buffer's live text against HEAD and shows the hunks. */
   private pushDiff(path: string, immediate = false) {
     const svc = this.gitSvc
     const diffs = this.diffSvc
     const b = this.buffers.get(path)
+    if (!this.store.get(fileDiffEnabledAtom)) return
     if (!svc || !diffs || !b || b.image) return
     const seq = ++this.diffSeq
     const text = this.liveDoc(b, path).toString()

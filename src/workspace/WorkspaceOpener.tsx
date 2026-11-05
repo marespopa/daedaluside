@@ -22,6 +22,7 @@ import {
 import { gitBranchAtom } from '../state/gitAtoms'
 import { useFolderPicker } from './useFolderPicker'
 import { useFilePicker } from './useFilePicker'
+import TicTacToe from './TicTacToe'
 import { useController } from './useWorkspace'
 
 const ENTRY_POINTS = [
@@ -205,6 +206,8 @@ export default function WorkspaceOpener() {
             )}
           </div>
         )}
+
+        {loadingTree && <TicTacToe />}
 
         {hasWorkspace ? (
           workspaceReady && (

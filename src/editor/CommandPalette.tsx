@@ -24,6 +24,7 @@ import {
   treeProgressAtom,
   workspacesAtom,
 } from '../state/workspaceAtoms'
+import { fileDiffEnabledAtom } from '../state/gitAtoms'
 import { GlassPopover, Input } from '../ui'
 import { joinPath } from '../workspace/path'
 import {
@@ -162,6 +163,11 @@ export default function CommandPalette() {
         id: 'vim',
         label: 'Editor: Toggle Vim Mode',
         run: () => store.set(vimEnabledAtom, !store.get(vimEnabledAtom)),
+      },
+      {
+        id: 'file-diff',
+        label: 'Editor: Toggle Git Diff Marks',
+        run: () => controller.setFileDiff(!store.get(fileDiffEnabledAtom)),
       },
       {
         id: 'tab-close-others',
