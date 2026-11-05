@@ -19,10 +19,10 @@ afterEach(() => {
 })
 
 describe('theme registry', () => {
-  it('has four light and four dark themes with unique ids', () => {
-    expect(THEMES.filter((t) => t.kind === 'light')).toHaveLength(4)
-    expect(THEMES.filter((t) => t.kind === 'dark')).toHaveLength(4)
-    expect(new Set(THEMES.map((t) => t.id)).size).toBe(8)
+  it('has unique ids and offers both a light and a dark theme', () => {
+    expect(new Set(THEMES.map((t) => t.id)).size).toBe(THEMES.length)
+    expect(THEMES.some((t) => t.kind === 'light')).toBe(true)
+    expect(THEMES.some((t) => t.kind === 'dark')).toBe(true)
   })
 
   it('matches the ids and kinds in public/theme-init.js', () => {

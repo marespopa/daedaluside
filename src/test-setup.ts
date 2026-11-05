@@ -39,7 +39,8 @@ const PatchedKeyboardEvent = class extends OriginalKeyboardEvent {
 window.KeyboardEvent = PatchedKeyboardEvent
 globalThis.KeyboardEvent = PatchedKeyboardEvent
 
-// Some dependencies read keyCode. jsdom gives Enter keyCode 0, so fix it in the capture phase.
+// Events built some other way (e.g. by user-event) bypass the subclass above, and some
+// dependencies read keyCode. Fix Enter in the capture phase.
 window.addEventListener(
   'keydown',
   (e) => {

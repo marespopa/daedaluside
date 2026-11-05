@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
 import { Input } from './Input'
 
@@ -9,11 +10,11 @@ describe('Input', () => {
     expect(screen.getByRole('textbox', { name: 'Search' })).toBe(ref.current)
   })
 
-  it('focuses the field when the frame is clicked', () => {
+  it('focuses the field when the frame is clicked', async () => {
     render(<Input aria-label="Search" variant="field" />)
     const frame = screen.getByRole('textbox', { name: 'Search' }).closest('label')!
-    fireEvent.click(frame)
-    expect(screen.getByRole('textbox', { name: 'Search' })).toBeInTheDocument()
+    await userEvent.setup().click(frame)
+    expect(screen.getByRole('textbox', { name: 'Search' })).toHaveFocus()
   })
 
   it('stretches the frame with the className it is given', () => {

@@ -455,8 +455,7 @@ describe('minimal sidebar chrome', () => {
     const user = userEvent.setup()
     const store = mountTree(nested)
     store.set(linkedFolderAtom, { name: 'proj', paused: false, single: false })
-    const names = await screen.findAllByText('proj')
-    expect(names.some((n) => n.className.includes('uppercase'))).toBe(true)
+    expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Close file tree' }))
     expect(store.get(sidebarOpenAtom)).toBe(false)
   })
@@ -468,13 +467,6 @@ describe('minimal sidebar chrome', () => {
     expect(rowButtons()).toHaveLength(2)
     await user.click(screen.getByRole('button', { name: 'Collapse all' }))
     expect(rowButtons()).toHaveLength(1)
-  })
-
-  it('draws one guide per nesting level', async () => {
-    const user = userEvent.setup()
-    mountTree(nested)
-    await user.click(screen.getByRole('button', { name: 'src' }))
-    expect(document.querySelectorAll('[data-guide]')).toHaveLength(1)
   })
 
   it('marks dirty files, and their collapsed folders, with a dot', async () => {

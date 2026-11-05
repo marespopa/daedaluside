@@ -1,5 +1,4 @@
 import 'fake-indexeddb/auto'
-import { IDBFactory } from 'fake-indexeddb'
 import { zipSync } from 'fflate'
 import {
   entriesFromFileList,
@@ -11,8 +10,6 @@ import {
   type ImportEntry,
 } from './archive'
 import { FolderFS } from './folderFs'
-import { openDB } from './db'
-import { WorkspaceManager } from './manager'
 import { MemDisk } from './testing/memoryDisk'
 import type { WorkspaceFS } from './types'
 
@@ -84,32 +81,6 @@ describe('entriesFromFileList', () => {
     ])
     expect(name).toBe('proj')
     expect(entries.map((e) => e.path)).toEqual(['a.txt', 'src/b.ts'])
-  })
-})
-
-describe('WorkspaceManager', () => {
-  it('creates, renames, saves sessions and deletes records without touching disk', async () => {
-    const db = await openDB('m', new IDBFactory())
-    const disk = new MemDisk()
-    disk.setFile('x/y.txt', new TextEncoder().encode('data'))
-    const m = new WorkspaceManager(db)
-    const ws = await m.create('  Alpha ')
-    expect(ws.name).toBe('Alpha')
-    await m.setLink(ws.id, disk.handle() as never)
-    await m.rename(ws.id, 'Beta')
-    await m.saveSession(ws.id, ['x/y.txt'], 'x/y.txt')
-    expect(await m.get(ws.id)).toMatchObject({
-      name: 'Beta',
-      openFiles: ['x/y.txt'],
-      activeFile: 'x/y.txt',
-    })
-    await m.setLastId(ws.id)
-    expect(await m.getLastId()).toBe(ws.id)
-    await expect(m.create('   ')).rejects.toThrow()
-    await m.remove(ws.id)
-    expect(await m.list()).toEqual([])
-    // The linked folder is untouched.
-    expect(disk.files.has('x/y.txt')).toBe(true)
   })
 })
 

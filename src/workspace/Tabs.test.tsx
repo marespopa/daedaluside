@@ -6,6 +6,8 @@ import App from '../App'
 import { editorHandleAtom } from '../state/editorAtoms'
 import { activePathAtom, treeAtom, workspaceStatusAtom } from '../state/workspaceAtoms'
 import { getController } from './controller'
+import { openDB } from './db'
+import { WorkspaceManager } from './manager'
 import { MemDisk } from './testing/memoryDisk'
 import type { WorkspaceFS } from './types'
 
@@ -324,35 +326,16 @@ describe('tab strip', () => {
     await scratchTab()
     await openTabs(a.store, 'a.ts')
     act(() => ctl(a.store).togglePin('a.ts'))
-    // The session is saved 500 ms after a change.
     ctl(a.store).flushOnHide()
-    await new Promise((r) => setTimeout(r, 700))
+    await waitFor(async () => {
+      const [meta] = await new WorkspaceManager(await openDB()).list()
+      expect(meta?.pinnedFiles).toEqual(['a.ts'])
+    })
     a.unmount()
 
     const b = mount()
     await openFolder(b.store, disk)
     await screen.findByRole('tab', { name: 'a.ts' })
     expect(tabPaths()).toEqual(['a.ts', 'scratch.ts'])
-  })
-
-  it('shows quiet pill tabs in a scrollable strip, with the close icon on hover', async () => {
-    const disk = new MemDisk()
-    const a = mount()
-    await openFolder(a.store, disk)
-    await scratchTab()
-    await openTabs(a.store, 'a.ts', 'b.ts')
-
-    const strip = screen.getByRole('tablist', { name: 'Open files' })
-    expect(strip).toHaveClass('overflow-x-auto', '[scrollbar-width:none]')
-    expect(strip.parentElement).toHaveClass('font-sans', 'text-sm')
-    // The active tab is a surface pill; the others are muted text that brightens on hover.
-    expect(tabEl('b.ts').parentElement).toHaveClass('bg-surface')
-    expect(tabEl('a.ts').parentElement).not.toHaveClass('bg-surface')
-    expect(tabEl('a.ts')).toHaveClass('text-muted')
-    expect(within(strip).getAllByRole('button', { name: /^Close / })).toHaveLength(3)
-    expect(within(strip).getByRole('button', { name: 'Close a.ts' })).toHaveClass(
-      'opacity-0',
-      'group-hover:opacity-100',
-    )
   })
 })

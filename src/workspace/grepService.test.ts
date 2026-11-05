@@ -60,7 +60,7 @@ describe('GrepService with a folder handle', () => {
     const status: GrepStatus[] = []
     const svc = new GrepService(forbiddenFs, (s) => status.push(s), createBackend(root), root)
     svc.sync([file('a.txt', 12), file('src/b.txt', 12), file('bin.dat', 3)])
-    await settle()
+    await vi.waitFor(() => expect(status.at(-1)).toMatchObject({ indexed: 3, total: 3 }))
     expect(forbiddenFs.readBytes).not.toHaveBeenCalled()
     expect(await search(svc, 'needle')).toEqual(['src/b.txt'])
     expect(status.at(-1)).toMatchObject({ indexed: 3, total: 3 })

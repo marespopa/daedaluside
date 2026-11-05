@@ -58,4 +58,27 @@ describe('WorkspaceManager', () => {
     expect(kept.map((w) => w.id)).toEqual([one.id])
     expect(post).not.toHaveBeenCalled()
   })
+
+  it('creates, renames, saves sessions and deletes records without touching disk', async () => {
+    const disk = new MemDisk()
+    disk.setFile('x/y.txt', new TextEncoder().encode('data'))
+    const m = await makeManager()
+    const ws = await m.create('  Alpha ')
+    expect(ws.name).toBe('Alpha')
+    await m.setLink(ws.id, disk.handle() as never)
+    await m.rename(ws.id, 'Beta')
+    await m.saveSession(ws.id, ['x/y.txt'], 'x/y.txt')
+    expect(await m.get(ws.id)).toMatchObject({
+      name: 'Beta',
+      openFiles: ['x/y.txt'],
+      activeFile: 'x/y.txt',
+    })
+    await m.setLastId(ws.id)
+    expect(await m.getLastId()).toBe(ws.id)
+    await expect(m.create('   ')).rejects.toThrow()
+    await m.remove(ws.id)
+    expect(await m.list()).toEqual([])
+    // The linked folder is untouched.
+    expect(disk.files.has('x/y.txt')).toBe(true)
+  })
 })
