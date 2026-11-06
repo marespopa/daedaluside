@@ -11,6 +11,8 @@ export interface BranchPrefetch {
   stats: Record<string, { add: number; del: number }>
   /** Committed files only: the working-tree overlay has not been merged in yet. */
   partial?: boolean
+  /** Criss-cross history: the first of several merge bases was used. */
+  multipleBases?: boolean
   /** Working-tree content behind `files`; the other thread has no object for these oids. */
   blobs?: [string, BlobContent][]
 }
@@ -61,6 +63,7 @@ export async function prefetchBranch(
     files: res.files,
     stats: { ...stats },
     partial: false,
+    multipleBases: res.multipleBases,
   })
   send(out(), res.files.length === 0)
   if (res.files.length === 0) return

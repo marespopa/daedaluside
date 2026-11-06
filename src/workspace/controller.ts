@@ -585,6 +585,8 @@ export class WorkspaceController {
       this.reviewWorker?.dispose()
       this.reviewWorker = null
       clearTimeout(this.gitTimer)
+      this.gitPaths.clear()
+      this.gitFull = false
       this.diffSeq++
       this.store.set(gitHeadAtom, (g) => ({ version: g.version + 1, status: new Map() }))
       this.store.set(fileDiffMapAtom, new Map())
@@ -601,10 +603,11 @@ export class WorkspaceController {
   }
 
   /** Re-reads HEAD and the changed-file list, then re-diffs the open file against it. */
-  private async refreshGitStatus() {
+  private async refreshGitStatus(savedPaths?: string[]) {
     const svc = this.gitSvc
     if (!svc) return
     try {
+      if (savedPaths) await svc.patchChanged(savedPaths)
       const status = await svc.listChanged()
       if (this.gitSvc !== svc) return
       this.store.set(gitHeadAtom, (g) => ({ version: g.version + 1, status }))
@@ -621,17 +624,35 @@ export class WorkspaceController {
         rev.mode === 'base' ? rev.base : undefined,
         rev.mode,
         true,
+        // A save only touched known files: reuse this thread's cached scan instead of
+        // starting a worker that scans the whole tree again.
+        savedPaths !== undefined,
       )
     }
   }
 
   /** Status changes after a save or a commit; coalesce bursts of saves. */
-  private scheduleGitRefresh() {
+  private scheduleGitRefresh(path?: string) {
     if (!this.gitSvc) return
-    this.gitSvc.invalidateStatus()
+    // A save names its file: re-check just that one. Anything else needs a full scan.
+    if (path === undefined) {
+      this.gitSvc.invalidateStatus()
+      this.gitFull = true
+    } else {
+      this.gitPaths.add(path)
+    }
     clearTimeout(this.gitTimer)
-    this.gitTimer = setTimeout(() => void this.refreshGitStatus(), 500)
+    this.gitTimer = setTimeout(() => {
+      const paths = this.gitFull ? undefined : [...this.gitPaths]
+      this.gitPaths.clear()
+      this.gitFull = false
+      void this.refreshGitStatus(paths)
+    }, 500)
   }
+
+  /** Files saved since the last refresh, and whether something else needs a full scan. */
+  private readonly gitPaths = new Set<string>()
+  private gitFull = false
 
   /** Turns per-file diffs (gutter marks and stats) on or off; they are computed only on demand. */
   setFileDiff(on: boolean) {
@@ -802,9 +823,19 @@ export class WorkspaceController {
     )
   }
 
-  async openBranchReview(baseArg?: string, mode: BranchMode = 'base', quiet = false) {
+  async openBranchReview(
+    baseArg?: string,
+    mode: BranchMode = 'base',
+    quiet = false,
+    inThread = false,
+  ) {
     const cacheKey = `${this.wsId ?? ''}|${mode}|${baseArg?.trim() ?? ''}`
-    const cached = this.branchCache.get(cacheKey)
+    const hit = this.branchCache.get(cacheKey)
+    // A result for another HEAD (a commit since) would show the wrong diff until revalidated.
+    const knownHead = this.gitSvc?.knownHead()
+    const cached =
+      hit && knownHead && hit.head && hit.head !== knownHead ? undefined : hit
+    if (hit && !cached) this.branchCache.delete(cacheKey)
     if (this.branchSignal) this.branchSignal.cancelled = true
     const signal = { cancelled: false }
     this.branchSignal = signal
@@ -853,7 +884,7 @@ export class WorkspaceController {
     // The comparison (git walk, status scan, line totals) runs in a worker so the editor
     // stays responsive; without one, or if it dies, the same work runs below.
     const linked = this.linkHandle
-    if (linked && linked.kind === 'directory') {
+    if (linked && linked.kind === 'directory' && !inThread) {
       const finished = await this.reviewInWorker(
         linked as FileSystemDirectoryHandle,
         { mode, base: baseArg },
@@ -878,7 +909,7 @@ export class WorkspaceController {
     if (signal.cancelled) return
     this.branchPatch({ base, branch })
     // Edits made outside the app are picked up here; saves already invalidate the scan.
-    svc.invalidateStatusIfOlder(5000)
+    if (!inThread) svc.invalidateStatusIfOlder(5000)
     const res = await svc.branchChanges(baseOid, signal, (files, mergeBase, head) => {
       // Show the committed files at once; the working-tree overlay lands in the final patch.
       if (signal.cancelled || this.gitSvc !== svc) return
@@ -1000,7 +1031,7 @@ export class WorkspaceController {
             stats,
             statsDone: done,
             partial: r.partial === true,
-            message: null,
+            message: r.multipleBases ? 'Several merge bases; using the first.' : null,
           })
           if (r.partial) return
           const key = this.branchMarksKey()
@@ -1848,7 +1879,7 @@ export class WorkspaceController {
         b.saveError = false
         if (this.fs === fs) {
           this.grepSvc?.touch(path)
-          this.scheduleGitRefresh()
+          this.scheduleGitRefresh(path)
         }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'NotAllowedError') {

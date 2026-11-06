@@ -49,6 +49,16 @@ export async function mapLimit<T>(
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
 }
 
+/** Folds one statusMatrix row (file, HEAD, workdir, stage) into the changed-file map. */
+function applyRow(out: Map<string, GitStatus>, row: readonly [string, number, number, number]) {
+  const [file, head, workdir, stage] = row
+  if (head === 0) {
+    if (workdir === 2) out.set(file, stage === 0 ? 'untracked' : 'added')
+  } else if (workdir === 0) out.set(file, 'deleted')
+  else if (workdir === 2) out.set(file, 'modified')
+  else if (stage !== 1) out.set(file, 'modified') // index differs from HEAD while the tree matches it
+}
+
 function classifyBlob(blob: Uint8Array): BlobContent {
   if (blob.length > MAX_TEXT_BYTES) return { kind: 'large', size: blob.length }
   if (blob.includes(0)) return { kind: 'binary', size: blob.length }
@@ -81,12 +91,21 @@ export class GitService {
     }
   }
 
-  /** Re-reads HEAD; the blob cache is dropped only when the commit changed. */
+  /** Re-reads HEAD; the blob cache and the status scan are dropped only when the commit changed. */
   async refreshHead(): Promise<string | null> {
     const oid = await this.resolveHead()
-    if (oid !== this.oid) this.blobs.clear()
+    if (oid !== this.oid) {
+      this.blobs.clear()
+      // A commit moves HEAD under a scan taken against the old one.
+      if (this.oid !== undefined) this.changed = null
+    }
     this.oid = oid
     return oid
+  }
+
+  /** The last HEAD commit seen: undefined before the first read, null without commits. */
+  knownHead(): string | null | undefined {
+    return this.oid
   }
 
   /**
@@ -481,13 +500,45 @@ export class GitService {
     } catch {
       return out
     }
-    for (const [file, head, workdir, stage] of matrix) {
-      if (head === 0) {
-        if (workdir === 2) out.set(file, stage === 0 ? 'untracked' : 'added')
-      } else if (workdir === 0) out.set(file, 'deleted')
-      else if (workdir === 2) out.set(file, 'modified')
-      else if (stage !== 1) out.set(file, 'modified') // index differs from HEAD while the tree matches it
-    }
+    for (const row of matrix) applyRow(out, row)
     return out
+  }
+
+  /**
+   * Re-reads the status of just `paths` into the cached scan, so a save costs a stat of
+   * one file instead of a walk of the whole tree. Without a scan to patch, or when HEAD
+   * moved, the next `listChanged()` does the full scan instead.
+   */
+  async patchChanged(paths: readonly string[]): Promise<void> {
+    const prior = this.changed
+    if (!prior) return
+    const head = this.oid
+    let base: Map<string, GitStatus>
+    try {
+      base = await prior
+    } catch {
+      return
+    }
+    if (this.changed !== prior || (await this.resolveHead()) !== head) {
+      this.changed = null
+      return
+    }
+    const next = new Map(base)
+    for (const p of paths) next.delete(p)
+    try {
+      const matrix = await git.statusMatrix({
+        fs: this.fs,
+        dir: DIR,
+        filepaths: [...paths],
+      })
+      for (const row of matrix) applyRow(next, row)
+    } catch {
+      this.changed = null
+      return
+    }
+    if (this.changed === prior) {
+      this.changed = Promise.resolve(next)
+      this.changedAt = Date.now()
+    }
   }
 }

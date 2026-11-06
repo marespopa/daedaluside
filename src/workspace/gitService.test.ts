@@ -76,6 +76,17 @@ describe('GitService', () => {
     })
   })
 
+  it('patches the cached scan for saved paths without a full rescan', async () => {
+    const { svc, disk } = await fixture()
+    disk.setFile('a.txt', enc('changed\n'))
+    svc.invalidateStatus()
+    expect(Object.fromEntries(await svc.listChanged())).toEqual({ 'a.txt': 'modified' })
+    disk.setFile('new.txt', enc('n\n'))
+    disk.setFile('a.txt', enc('one\ntwo\nthree\n')) // reverted to HEAD
+    await svc.patchChanged(['a.txt', 'new.txt'])
+    expect(Object.fromEntries(await svc.listChanged())).toEqual({ 'new.txt': 'untracked' })
+  })
+
   it('picks up a new commit on refreshHead', async () => {
     const { svc, disk, fs } = await fixture()
     expect(await svc.getHeadBlob('a.txt')).toBe('one\ntwo\nthree\n')
@@ -213,6 +224,48 @@ describe('GitService branch review', () => {
     const res = await svc.branchChanges(baseTip)
     expect(res.kind === 'ok' && res.mergeBase).toBe(initial)
     expect(res.kind === 'ok' && res.files.some((f) => f.path === 'other.txt')).toBe(false)
+  })
+
+  it('shows the net change across several feature commits', async () => {
+    const { svc, fs, commit, initial } = await branched()
+    await commit('c2', { 'a.txt': 'one\nTWO\nTHREE\n', 'tmp.txt': 'temp\n', 'src/new.ts': 'v2\n' })
+    await commit('c3', { 'tmp.txt': null, 'a.txt': 'one\nTWO\nTHREE\nfour\n', 'c3.txt': 'c3\n' })
+    await git.checkout({ fs, dir: '/', ref: 'base' })
+    await commit('base moved', { 'other.txt': 'x\n' })
+    const baseTip = await git.resolveRef({ fs, dir: '/', ref: 'base' })
+    await git.checkout({ fs, dir: '/', ref: 'feature' })
+    const res = await svc.branchChanges(baseTip)
+    if (res.kind !== 'ok') throw new Error('expected ok')
+    expect(res.mergeBase).toBe(initial)
+    expect(res.files.map((f) => [f.path, f.status])).toEqual([
+      ['a.txt', 'M'],
+      ['c3.txt', 'A'],
+      ['img.bin', 'A'],
+      ['src/b.txt', 'D'],
+      ['src/new.ts', 'A'],
+    ])
+    const a = res.files[0]!
+    expect(await svc.readBlobAt(a.mbOid!)).toEqual({ kind: 'text', text: 'one\ntwo\nthree\n' })
+    expect(await svc.readBlobAt(a.headOid!)).toEqual({
+      kind: 'text',
+      text: 'one\nTWO\nTHREE\nfour\n',
+    })
+  })
+
+  it('drops the status scan when HEAD moves, so a commit never pairs with a stale list', async () => {
+    const { svc, disk, fs, commit, initial } = await branched()
+    disk.setFile('a.txt', enc('dirty\n'))
+    svc.invalidateStatus()
+    expect([...(await svc.listChanged()).keys()]).toEqual(['a.txt'])
+    // Commit that edit outside the service, then dirty another file; no explicit invalidate.
+    await git.add({ fs, dir: '/', filepath: 'a.txt' })
+    await git.commit({ fs, dir: '/', message: 'c2', author })
+    disk.setFile('src/new.ts', enc('dirty too\n'))
+    const res = await svc.branchChanges(initial)
+    if (res.kind !== 'ok') throw new Error('expected ok')
+    expect(res.files.map((f) => f.path)).toContain('src/new.ts')
+    expect(svc.knownHead()).toBe(res.head)
+    void commit
   })
 
   it('reports no changes when the branch equals the base', async () => {
