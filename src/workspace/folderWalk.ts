@@ -1,4 +1,5 @@
 import { joinPath } from './path'
+import { NO_RULES, parseGitignoreDirs, skipsDir, type DirRules } from './ignore'
 import type { Entry } from './types'
 
 /** Folders that are never imported: huge, regenerable, and not useful as AI context. */
@@ -48,6 +49,13 @@ export async function walkFolder(
   const out: Entry[] = []
   const run = limiter(WALK_CONCURRENCY)
   let failed = false
+  let rules: DirRules = NO_RULES
+  try {
+    const f = await (await root.getFileHandle('.gitignore')).getFile()
+    rules = parseGitignoreDirs(await f.text())
+  } catch (e) {
+    if (isPermissionError(e)) throw e // no .gitignore (or unreadable): only the defaults apply
+  }
 
   const visit = async (dir: FileSystemDirectoryHandle, path: string): Promise<void> => {
     const files: { name: string; handle: FileSystemFileHandle }[] = []
@@ -56,7 +64,7 @@ export async function walkFolder(
       await run(async () => {
         for await (const [name, h] of dir.entries()) {
           if (h.kind === 'file') files.push({ name, handle: h as FileSystemFileHandle })
-          else if (!IGNORED.has(name))
+          else if (!IGNORED.has(name) && !skipsDir(name, joinPath(path, name), rules))
             dirs.push({ name, handle: h as FileSystemDirectoryHandle })
         }
       })

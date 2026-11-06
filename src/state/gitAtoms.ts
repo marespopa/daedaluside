@@ -13,6 +13,12 @@ export const gitHeadAtom = atom<{
 })
 /** Checked-out branch of the open folder ("HEAD" when detached); null when not a repo or unread. */
 export const gitBranchAtom = atom<string | null>(null)
+/** True when the open folder has a `.git` entry: a branch name is on its way. */
+export const gitRepoAtom = atom(false)
+/** True once the default-base branch review has been read in the background, so opening it is instant. */
+export const branchPrefetchReadyAtom = atom(false)
+/** Files the default-base review changes, once the background read has them; null before that or on failure. */
+export const branchPrefetchCountAtom = atom<number | null>(null)
 /** Per-file diffs against HEAD (gutter marks, +/- stats) are computed only while this is on; off by default. */
 export const fileDiffEnabledAtom = atom(false)
 /** Hunks of each diffed file against HEAD, keyed by workspace path. */

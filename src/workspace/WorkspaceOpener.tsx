@@ -20,7 +20,7 @@ import {
   workspacesAtom,
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
-import { gitBranchAtom } from '../state/gitAtoms'
+import BranchStatus from './BranchStatus'
 import { Button, Icon, IconButton } from '../ui'
 import { useFolderPicker } from './useFolderPicker'
 import { useFilePicker } from './useFilePicker'
@@ -76,7 +76,6 @@ export default function WorkspaceOpener() {
   const treeStatus = useAtomValue(treeStatusAtom)
   const progress = useAtomValue(treeProgressAtom)
   const treeComplete = useAtomValue(treeCompleteAtom)
-  const branch = useAtomValue(gitBranchAtom)
   const tree = useAtomValue(treeAtom)
   const fileCount = tree.filter((e) => e.kind === 'file').length
 
@@ -88,8 +87,8 @@ export default function WorkspaceOpener() {
   // "Ready" waits for the whole tree: file search needs every name.
   const loadingTree =
     hasWorkspace && (treeStatus.state === 'loading' || (folderReady && !treeComplete))
-  // Folder actions stay disabled until the whole workspace is loaded.
-  const workspaceReady = folderReady && treeComplete
+  // Actions are usable as soon as the root is listed; the palette shows indexing progress.
+  const workspaceReady = folderReady
   useEffect(() => {
     if (folderReady) void controller.ensureFullTree()
   }, [folderReady, controller])
@@ -208,10 +207,11 @@ export default function WorkspaceOpener() {
               {loadingTree
                 ? `${loadingWord}…${progress ? ` ${progress.done}${progress.total ? ` / ${progress.total}` : ''} files` : ''}`
                 : folderReady
-                  ? `${branch ? `${branch} · ` : ''}${fileCount} ${fileCount === 1 ? 'file' : 'files'}`
+                  ? `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`
                   : 'Open a folder to start editing.'}
             </p>
           )}
+          {ready && hasWorkspace && <BranchStatus className="justify-center" />}
         </header>
 
         {loadingTree && (
@@ -241,14 +241,6 @@ export default function WorkspaceOpener() {
               >
                 <span>Search Files</span>
                 <kbd className="font-mono text-[11px]">{MOD_KEY_LABEL}+P</kbd>
-              </button>
-              <button
-                type="button"
-                onClick={() => void controller.openBranchReview()}
-                className="-mt-4 flex h-10 w-full items-center justify-between rounded-lg border border-muted/40 px-3 text-sm text-muted transition-colors hover:border-muted/60 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              >
-                <span>Branch Review</span>
-                <Icon name="check" className="size-3.5" />
               </button>
               {entryPoints.length > 0 && (
                 <nav

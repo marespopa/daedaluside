@@ -21,6 +21,7 @@ export type IconName =
   | 'chevron-right'
   | 'chevron-down'
   | 'check'
+  | 'git-branch'
   | 'width'
   | 'expand-all'
   | 'search'
@@ -73,6 +74,14 @@ const paths: Record<IconName, ReactNode> = {
   'chevron-left': <path d="M15 6l-6 6 6 6" />,
   'chevron-right': <path d="M9 6l6 6-6 6" />,
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  'git-branch': (
+    <>
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="6" cy="19" r="2" />
+      <circle cx="18" cy="8" r="2" />
+      <path d="M6 7v10M18 10c0 4-6 3-11 7" />
+    </>
+  ),
   'chevron-down': <path d="M6 9l6 6 6-6" />,
   pin: (
     <>

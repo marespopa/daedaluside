@@ -42,8 +42,8 @@ import {
 
 /**
  * Plain input searches files. A leading `>` searches commands, as in VS Code.
- * Mod-P and Mod-K open the palette in file mode. Mod-Shift-P and a double tap of Shift
- * open it in command mode.
+ * Mod-P and Mod-K open the palette in file mode. A double tap of Shift does the same.
+ * Mod-Shift-P opens it in command mode.
  */
 export default function CommandPalette() {
   const store = useStore()
@@ -96,9 +96,9 @@ export default function CommandPalette() {
         show(`${COMMAND_PREFIX}Workspace: `)
       }
     }
-    // Double Shift also opens the command palette (IntelliJ-style). Ignored while it is open.
+    // Double Shift opens the palette like Mod-P (IntelliJ-style). Ignored while it is open.
     const doubleShift = createDoubleShift(() => {
-      if (!store.get(paletteOpenAtom)) show(COMMAND_PREFIX)
+      if (!store.get(paletteOpenAtom)) show('')
     })
     const onDown = (e: KeyboardEvent) => {
       doubleShift.keydown(e)

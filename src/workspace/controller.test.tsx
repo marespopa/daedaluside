@@ -729,14 +729,14 @@ describe('double Shift', () => {
     lastDisk = null
   })
 
-  it('opens the command palette in command mode', async () => {
+  it('opens the palette in file mode, like Mod-P', async () => {
     const user = userEvent.setup()
     mount()
     await waitFor(() =>
       expect(screen.queryAllByText(/Open folder/).length).toBeGreaterThan(0),
     )
     await user.keyboard('{Shift}{/Shift}{Shift}{/Shift}')
-    expect((await screen.findByRole('combobox')) as HTMLInputElement).toHaveValue('>')
+    expect((await screen.findByRole('combobox')) as HTMLInputElement).toHaveValue('')
     await user.keyboard('{Escape}')
   })
 })

@@ -52,7 +52,7 @@ export function useWorkspaceLifecycle() {
         void controller.ensureFullTree().then(() => {
           const files = store.get(treeAtom).filter((e) => e.kind === 'file')
           const exact = files.find((f) => f.path === name)
-          const found = exact ? [exact] : matchFiles(files, name)
+          const found = exact ? [exact] : matchFiles(files, name, undefined, false)
           if (found.length === 1) return void controller.openFile(found[0]!.path)
           if (found.length === 0) return notify(`No file matches ${name}`)
           notify(

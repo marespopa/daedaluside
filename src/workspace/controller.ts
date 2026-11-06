@@ -45,7 +45,10 @@ import { DiffService } from '../review/diffService'
 import {
   fileDiffEnabledAtom,
   fileDiffMapAtom,
+  branchPrefetchCountAtom,
+  branchPrefetchReadyAtom,
   gitBranchAtom,
+  gitRepoAtom,
   gitHeadAtom,
   reviewOpenAtom,
 } from '../state/gitAtoms'
@@ -85,6 +88,7 @@ import {
 import { imageKind, imageMime, sniffImage } from './image'
 import { downloadBytes, exportZip, IGNORED, walkTree } from './archive'
 import { openDB } from './db'
+import { loadTreeCache, saveTreeCache } from './treeCache'
 import { startSnapshotSync } from './snapshot'
 import { FolderFS } from './folderFs'
 import { loadKnownCount, saveKnownCount } from './loadEstimate'
@@ -515,6 +519,21 @@ export class WorkspaceController {
       const total = this.wsId
         ? (this.knownCounts.get(this.wsId) ?? loadKnownCount(this.wsId))
         : null
+      // Show the last full list at once; the walk below replaces it with the real one.
+      const wsId = this.wsId
+      const startMutations = this.treeMutations
+      if (wsId) {
+        void loadTreeCache(wsId).then((cached) => {
+          if (!cached || this.fs !== fs || this.complete || this.fullWalk !== self.p)
+            return
+          if (this.treeMutations !== startMutations) return
+          this.store.set(treeAtom, cached)
+          this.setLoaded(
+            new Set(['', ...cached.filter((e) => e.kind === 'dir').map((e) => e.path)]),
+          )
+          this.setComplete(true)
+        })
+      }
       try {
         let entries: Entry[]
         // An edit during the read could be missing from it: read again (a few times at most).
@@ -529,6 +548,7 @@ export class WorkspaceController {
         if (this.wsId) {
           this.knownCounts.set(this.wsId, entries.length)
           saveKnownCount(this.wsId, entries.length)
+          void saveTreeCache(this.wsId, entries)
         }
         this.store.set(treeProgressAtom, null)
         this.store.set(treeAtom, entries)
@@ -593,6 +613,9 @@ export class WorkspaceController {
       this.store.set(gitHeadAtom, (g) => ({ version: g.version + 1, status: new Map() }))
       this.store.set(fileDiffMapAtom, new Map())
       this.store.set(gitBranchAtom, null)
+      this.store.set(branchPrefetchReadyAtom, false)
+      this.store.set(branchPrefetchCountAtom, null)
+      this.store.set(gitRepoAtom, false)
     }
     if (!fs || !handle || handle.kind === 'file') return
     if (!this.gitSvc) {
@@ -600,21 +623,68 @@ export class WorkspaceController {
       this.gitFor = fs
       this.diffSvc = new DiffService()
       this.startBranchPrefetch(handle as FileSystemDirectoryHandle)
+      void this.detectRepo(handle as FileSystemDirectoryHandle, this.gitSvc)
     }
     void this.refreshGitStatus()
   }
 
   /** Re-reads HEAD and the changed-file list, then re-diffs the open file against it. */
+  /** One directory lookup: a `.git` folder (or a worktree's `.git` file) means a repository. */
+  private async detectRepo(handle: FileSystemDirectoryHandle, svc: GitService) {
+    let found = false
+    let branch: string | null = null
+    try {
+      const git = await handle.getDirectoryHandle('.git')
+      found = true
+      // `.git/HEAD` is one tiny file: `ref: refs/heads/<branch>`, or a bare id when detached.
+      try {
+        const head = (
+          await (await (await git.getFileHandle('HEAD')).getFile()).text()
+        ).trim()
+        const m = /^ref:\s*refs\/heads\/(.+)$/.exec(head)
+        branch = m ? m[1]! : head ? 'HEAD' : null
+      } catch {
+        // unreadable: the full read below sets it
+      }
+    } catch {
+      try {
+        await handle.getFileHandle('.git')
+        found = true
+      } catch {
+        // neither: not a repository
+      }
+    }
+    if (this.gitSvc !== svc) return
+    this.store.set(gitRepoAtom, found)
+    // Never replace a branch the full read already set.
+    if (branch && !this.store.get(gitBranchAtom)) this.store.set(gitBranchAtom, branch)
+  }
+
   private async refreshGitStatus(savedPaths?: string[]) {
     const svc = this.gitSvc
     if (!svc) return
+    // The branch is a single ref read: show it before the (slow) status scan finishes.
+    // Only for a repository with a commit: a plain folder has no branch to show.
+    void svc
+      .hasHead()
+      .then(async (has) => {
+        if (!has) {
+          // A repository with no commit has no branch to wait for.
+          if (this.gitSvc === svc) {
+            this.store.set(gitRepoAtom, false)
+            this.store.set(gitBranchAtom, null)
+          }
+          return
+        }
+        const branch = await svc.currentBranch()
+        if (this.gitSvc === svc) this.store.set(gitBranchAtom, branch)
+      })
+      .catch(() => undefined)
     try {
       if (savedPaths) await svc.patchChanged(savedPaths)
       const status = await svc.listChanged()
       if (this.gitSvc !== svc) return
       this.store.set(gitHeadAtom, (g) => ({ version: g.version + 1, status }))
-      const branch = await svc.currentBranch()
-      if (this.gitSvc === svc) this.store.set(gitBranchAtom, branch)
     } catch {
       return // a failed read just leaves the previous marks
     }
@@ -845,6 +915,8 @@ export class WorkspaceController {
     const svc = (this.prefetchSvc ??= new BranchPrefetchService())
     const run: NonNullable<typeof this.prefetchRun> = { pending: true, join: null }
     this.prefetchRun = run
+    this.store.set(branchPrefetchReadyAtom, false)
+    this.store.set(branchPrefetchCountAtom, null)
     const ws = this.wsId
     const key = `${ws ?? ''}|base|`
     svc.start(
@@ -860,6 +932,7 @@ export class WorkspaceController {
           stats: r.stats,
           statsDone: done,
         }
+        this.store.set(branchPrefetchCountAtom, r.files.length)
         this.rememberStats(r.files, r.stats)
         // Never replace a result the review itself has produced since.
         if (!this.branchCache.get(key)?.statsDone) this.branchCache.set(key, entry)
@@ -887,11 +960,14 @@ export class WorkspaceController {
       },
       () => {
         run.pending = false
+        if (this.prefetchRun === run) this.store.set(branchPrefetchReadyAtom, true)
         run.join?.resolve(run.join.finished)
       },
       undefined,
       () => {
         run.pending = false
+        // Nothing to wait for any more: opening the review reads it itself.
+        if (this.prefetchRun === run) this.store.set(branchPrefetchReadyAtom, true)
         const j = run.join
         if (!j) return
         if (!j.signal.cancelled && this.gitSvc !== j.svc)
@@ -1621,11 +1697,16 @@ export class WorkspaceController {
     }
     h.setState(b.state)
     if (this.active) {
-      // A stashed state carries the hunks it was left with; show the freshest, then re-diff.
-      h.view.dispatch({
-        effects: setHunks.of(this.store.get(fileDiffMapAtom).get(this.active) ?? []),
-      })
-      this.pushDiff(this.active, true)
+      // Code first: the diff markers and re-diff follow once the text has painted.
+      const path = this.active
+      setTimeout(() => {
+        if (this.active !== path || this.handle !== h) return
+        // A stashed state carries the hunks it was left with; show the freshest, then re-diff.
+        h.view.dispatch({
+          effects: setHunks.of(this.store.get(fileDiffMapAtom).get(path) ?? []),
+        })
+        this.pushDiff(path, true)
+      }, 0)
     }
     if (!b.languageSet && this.active) {
       b.languageSet = true
@@ -1685,15 +1766,45 @@ export class WorkspaceController {
 
   // ---- buffers ---------------------------------------------------------
 
+  /** Bytes read ahead of a click (pointer-down), consumed by the next `load` of that path. */
+  private preread = new Map<string, Promise<Uint8Array>>()
+
+  /** Starts reading a small file now, so the click that follows finds it ready. */
+  prefetchFile(rawPath: string) {
+    const fs = this.fs
+    if (!fs) return
+    const path = normalizePath(rawPath)
+    if (this.buffers.has(path) || this.preread.has(path)) return
+    const e = this.store.get(treeAtom).find((x) => x.path === path)
+    if (e?.kind !== 'file' || (e.size ?? 0) > 1_000_000) return
+    if (this.preread.size >= 4) this.preread.delete(this.preread.keys().next().value!)
+    const p = fs.readBytes(path)
+    p.catch(() => undefined)
+    this.preread.set(path, p)
+    // Disk can change; a read nobody used goes stale quickly.
+    setTimeout(() => {
+      if (this.preread.get(path) === p) this.preread.delete(path)
+    }, 3000)
+  }
+
   /** Reads a file into a buffer without showing it. Returns false if the workspace changed meanwhile. */
   private async load(rawPath: string): Promise<string | null> {
     const path = normalizePath(rawPath)
     if (this.buffers.has(path)) return path
     const fs = this.requireFS()
     const epoch = this.epoch
-    const st = await fs.stat(path)
-    if (!st || st.kind !== 'file') throw new Error(`Not a file: ${path}`)
-    const bytes = await fs.readBytes(path)
+    // The loaded tree already says it is a file: skip the extra stat round trip.
+    const known = this.store.get(treeAtom).find((e) => e.path === path)
+    if (known?.kind !== 'file') {
+      const st = await fs.stat(path)
+      if (!st || st.kind !== 'file') throw new Error(`Not a file: ${path}`)
+    }
+    const pre = this.preread.get(path)
+    this.preread.delete(path)
+    const bytes =
+      pre && this.fs === fs
+        ? await pre.catch(() => fs.readBytes(path))
+        : await fs.readBytes(path)
     const kind = imageKind(path)
     if (kind) {
       if (!sniffImage(kind, bytes))

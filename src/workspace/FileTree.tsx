@@ -592,6 +592,9 @@ function Sidebar({ open }: { open: boolean }) {
                 data-tree-row
                 data-row-key={entry.path}
                 tabIndex={entry.path === tabStop ? 0 : -1}
+                onPointerDown={() => {
+                  if (!isDir) controller.prefetchFile(entry.path)
+                }}
                 onClick={() => activate(entry)}
                 onKeyDown={(e) => onRowKey(e, index)}
                 className={`flex h-full min-w-0 flex-1 items-center gap-1.5 text-left font-mono text-sm transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent ${isActive ? 'font-medium text-text' : 'text-muted group-hover/row:text-text'}`}

@@ -10,6 +10,7 @@ import { activePathAtom, settingsOpenAtom, sidebarOpenAtom } from './state/works
 import { IconButton } from './ui'
 import FileTree from './workspace/FileTree'
 import HomeButton from './workspace/HomeButton'
+import BranchStatus from './workspace/BranchStatus'
 import Notice from './workspace/Notice'
 import ReconnectDialog from './workspace/ReconnectDialog'
 import SaveButton from './workspace/SaveButton'
@@ -91,7 +92,10 @@ export default function App() {
         </main>
         <div className="flex shrink-0 items-baseline">
           <VimStatus />
-          <DiffStat />
+          <div className="ml-auto flex items-baseline gap-3 px-3 pb-1">
+            {activePath !== null && <BranchStatus />}
+            <DiffStat />
+          </div>
         </div>
       </div>
       <CommandPalette />

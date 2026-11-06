@@ -53,6 +53,21 @@ describe('matchCommands', () => {
 })
 
 describe('matchFiles', () => {
+  it('filters by glob such as *.css', () => {
+    const files = [
+      file('src/a.css'),
+      file('src/b.css.ts'),
+      file('src/styles/c.CSS'),
+      file('x.css/readme.md'),
+    ]
+    expect(matchFiles(files, '*.css').map((e) => e.path)).toEqual([
+      'src/a.css',
+      'src/styles/c.CSS',
+    ])
+    expect(matchFiles(files, 'styles *.css').map((e) => e.path)).toEqual(['src/styles/c.CSS'])
+    expect(matchFiles(files, 'src/*.css').map((e) => e.path)).toEqual(['src/a.css'])
+  })
+
   const files = [
     file('docs/app-notes.md'),
     file('src/app.ts'),
@@ -86,5 +101,23 @@ describe('matchFiles', () => {
   it('stops at the limit on large trees', () => {
     const many = Array.from({ length: 5000 }, (_, i) => file(`d/f${i}.ts`))
     expect(matchFiles(many, 'f4', 50)).toHaveLength(50)
+  })
+})
+
+describe('matchFiles fuzzy fallback', () => {
+  const files = [file('src/file-controller.ts'), file('src/fc.ts'), file('README.md')]
+
+  it('matches letters in order after every substring match', () => {
+    expect(matchFiles(files, 'fctl').map((e) => e.path)).toEqual([
+      'src/file-controller.ts',
+    ])
+    expect(matchFiles(files, 'fc').map((e) => e.path)).toEqual([
+      'src/fc.ts',
+      'src/file-controller.ts',
+    ])
+  })
+
+  it('can be turned off', () => {
+    expect(matchFiles(files, 'fctl', 50, false)).toEqual([])
   })
 })

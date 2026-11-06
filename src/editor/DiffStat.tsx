@@ -14,7 +14,7 @@ export default function DiffStat() {
     <div
       role="status"
       aria-label="Changes against HEAD"
-      className="ml-auto shrink-0 px-3 pb-1 font-mono text-xs text-muted/70"
+      className="shrink-0 font-mono text-xs text-muted/70"
     >
       +{added} -{removed} &bull; {n} {n === 1 ? 'hunk' : 'hunks'}
     </div>

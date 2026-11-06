@@ -5,6 +5,11 @@ import { createStore, Provider } from 'jotai'
 import App from '../App'
 import { branchReviewAtom, branchTabActiveAtom } from '../state/branchReviewAtoms'
 import { paletteOpenAtom } from '../state/editorAtoms'
+import {
+  branchPrefetchCountAtom,
+  branchPrefetchReadyAtom,
+  gitBranchAtom,
+} from '../state/gitAtoms'
 import { activePathAtom, treeAtom, workspaceStatusAtom } from '../state/workspaceAtoms'
 import { getController } from './controller'
 import { MemDisk } from './testing/memoryDisk'
@@ -52,10 +57,51 @@ describe('workspace opener', () => {
     await act(async () => {
       getController(store).showHome()
     })
+    // A plain folder has no branch; pretend a repository was read.
+    await act(async () => {
+      store.set(gitBranchAtom, 'main')
+      store.set(branchPrefetchReadyAtom, false)
+    })
     const o = await opener()
-    await user.click(within(o).getByRole('button', { name: /Branch Review/ }))
+    // No link while the review is still being prepared.
+    expect(within(o).getByText('Checking changes…')).toBeInTheDocument()
+    expect(within(o).queryByRole('button', { name: /Review branch changes/ })).toBeNull()
+    await act(async () => {
+      store.set(branchPrefetchCountAtom, 3)
+      store.set(branchPrefetchReadyAtom, true)
+    })
+    expect(within(o).getByText('3 files changed')).toBeInTheDocument()
+    await user.click(within(o).getByRole('button', { name: /Review branch changes/ }))
     expect(store.get(branchTabActiveAtom)).toBe(true)
     expect(store.get(branchReviewAtom)).not.toBeNull()
+  })
+
+  it('keeps the branch status in the footer while a file is open', async () => {
+    const user = userEvent.setup()
+    const disk = new MemDisk()
+    disk.setFile('README.md', new TextEncoder().encode('# r'))
+    const store = mount()
+    await openFolder(store, disk, 'README.md')
+    await act(async () => {
+      store.set(gitBranchAtom, 'main')
+      store.set(branchPrefetchCountAtom, 1)
+      store.set(branchPrefetchReadyAtom, true)
+    })
+    await user.click(await screen.findByRole('button', { name: /Review branch changes/ }))
+    expect(store.get(branchTabActiveAtom)).toBe(true)
+  })
+
+  it('shows no branch for a folder that is not a git repository', async () => {
+    const disk = new MemDisk()
+    disk.setFile('README.md', new TextEncoder().encode('# r'))
+    const store = mount()
+    await openFolder(store, disk, 'README.md')
+    await act(async () => {
+      getController(store).showHome()
+    })
+    const o = await opener()
+    expect(within(o).queryByRole('button', { name: /Review branch changes/ })).toBeNull()
+    expect(within(o).queryByRole('status', { name: 'Reading branch' })).toBeNull()
   })
 
   it('offers Open folder, not file search, when no workspace is open', async () => {
