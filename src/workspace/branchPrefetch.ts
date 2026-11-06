@@ -57,17 +57,48 @@ export async function prefetchBranch(
   }
   const send = (r: BranchPrefetch, done: boolean) =>
     emit({ ...r, blobs: svc.overlayBlobs(r.files) }, done)
-  const res = await svc.branchChanges(baseOid, undefined, (files, mergeBase, head) =>
-    send({ base, branch, mergeBase, head, files, stats: {}, partial: true }, false),
-  )
-  if (res.kind !== 'ok') throw new ReviewError(res.message)
   const stats: BranchPrefetch['stats'] = {}
-  const todo: BranchFile[] = []
-  for (const f of res.files) {
-    const hit = req.known?.[`${f.mbOid}|${f.headOid}`]
-    if (hit) stats[f.path] = hit
-    else todo.push(f)
+  // Totals by `mbOid|headOid`, shared between the committed files (counted while the
+  // working-tree scan runs) and the final list, so a file is never diffed twice.
+  const counted = new Map<string, Promise<{ add: number; del: number } | null>>()
+  const count = (f: BranchFile) => {
+    const key = `${f.mbOid}|${f.headOid}`
+    let hit = counted.get(key)
+    if (!hit) {
+      hit = (async () => {
+        try {
+          const empty = { kind: 'text', text: '' } as const
+          const [a, b] = await Promise.all([
+            f.mbOid ? svc.readBlobAt(f.mbOid) : Promise.resolve(empty),
+            f.headOid ? svc.readBlobAt(f.headOid) : Promise.resolve(empty),
+          ])
+          if (a.kind !== 'text' || b.kind !== 'text') return null
+          const { stats: st } = diffTexts(a.text, b.text)
+          return { add: st.added, del: st.removed }
+        } catch {
+          return null // an unreadable blob just has no totals
+        }
+      })()
+      counted.set(key, hit)
+    }
+    return hit
   }
+  let final = false
+  let early: Promise<void> = Promise.resolve()
+  const res = await svc.branchChanges(baseOid, undefined, (files, mergeBase, head) => {
+    send({ base, branch, mergeBase, head, files, stats: {}, partial: true }, false)
+    // The status scan is the slow part; count the committed files while it runs.
+    const todo = files.filter((f) => !req.known?.[`${f.mbOid}|${f.headOid}`])
+    let n = 0
+    early = mapLimit(todo, 4, async (f) => {
+      const t = await count(f)
+      if (!t) return
+      stats[f.path] = t
+      if (!final && ++n % 20 === 0)
+        send({ base, branch, mergeBase, head, files, stats: { ...stats }, partial: true }, false)
+    })
+  })
+  if (res.kind !== 'ok') throw new ReviewError(res.message)
   const out = (): BranchPrefetch => ({
     base,
     branch,
@@ -78,25 +109,28 @@ export async function prefetchBranch(
     partial: false,
     multipleBases: res.multipleBases,
   })
-  send(out(), todo.length === 0)
-  if (todo.length === 0) return
+  await early
+  final = true
+  // Totals counted early may belong to a file the working tree has since changed: keep
+  // only those whose blobs are the ones in the final list.
+  for (const k of Object.keys(stats)) delete stats[k]
+  const left: BranchFile[] = []
+  for (const f of res.files) {
+    const key = `${f.mbOid}|${f.headOid}`
+    const hit = req.known?.[key]
+    if (hit) stats[f.path] = hit
+    else if (counted.has(key)) {
+      const t = await counted.get(key)
+      if (t) stats[f.path] = t
+    } else left.push(f)
+  }
+  send(out(), left.length === 0)
+  if (left.length === 0) return
   let n = 0
-  await mapLimit(todo, 4, async (f) => {
-    try {
-      const empty = { kind: 'text', text: '' } as const
-      const [a, b] = await Promise.all([
-        f.mbOid ? svc.readBlobAt(f.mbOid) : Promise.resolve(empty),
-        f.headOid ? svc.readBlobAt(f.headOid) : Promise.resolve(empty),
-      ])
-      if (a.kind === 'text' && b.kind === 'text') {
-        const { stats: st } = diffTexts(a.text, b.text)
-        stats[f.path] = { add: st.added, del: st.removed }
-      }
-    } catch {
-      // an unreadable blob just has no totals
-    }
-    // Stream totals as they land so the header fills in instead of waiting for the last file.
-    if (++n % 20 === 0 && n < todo.length) emit(out(), false)
+  await mapLimit(left, 4, async (f) => {
+    const t = await count(f)
+    if (t) stats[f.path] = t
+    if (++n % 20 === 0 && n < left.length) emit(out(), false)
   })
   send(out(), true)
 }

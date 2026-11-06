@@ -1,6 +1,7 @@
 import { Buffer } from 'buffer'
 import git from 'isomorphic-git'
 import type { GitStatus } from '../state/gitAtoms'
+import { scanStatus } from './fastStatus'
 import { createGitFs, type GitFs } from './gitFs'
 
 // isomorphic-git reaches for a global Buffer, which browsers do not have.
@@ -493,12 +494,20 @@ export class GitService {
 
   private async scanChanged(): Promise<Map<string, GitStatus>> {
     const out = new Map<string, GitStatus>()
-    if ((await this.refreshHead()) === null) return out
-    let matrix: [string, number, number, number][]
+    const head = await this.refreshHead()
+    if (head === null) return out
+    let matrix: readonly (readonly [string, number, number, number])[]
     try {
-      matrix = await git.statusMatrix({ fs: this.fs, dir: DIR })
+      matrix = await scanStatus(this.fs, this.cache, head, (filepath) =>
+        git.isIgnored({ fs: this.fs, dir: DIR, filepath }),
+      )
     } catch {
-      return out
+      // The fast scan could not read the repository: let isomorphic-git try.
+      try {
+        matrix = await git.statusMatrix({ fs: this.fs, dir: DIR })
+      } catch {
+        return out
+      }
     }
     for (const row of matrix) applyRow(out, row)
     return out
