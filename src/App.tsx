@@ -84,7 +84,6 @@ export default function App() {
         </header>
         <main
           id="editor-pane"
-          onPointerDownCapture={() => setSidebarOpen(false)}
           className="min-h-0 flex-1"
         >
           <h1 className="sr-only">Daedalus IDE</h1>
