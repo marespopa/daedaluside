@@ -136,7 +136,6 @@ const SESSION_SAVE_MS = 500
 const isPermissionDomError = (e: unknown) =>
   e instanceof DOMException &&
   (e.name === 'NotAllowedError' || e.name === 'SecurityError')
-const MAX_OPEN_BYTES = 5 * 1024 * 1024
 
 interface Buffer {
   state: EditorState
@@ -1569,7 +1568,6 @@ export class WorkspaceController {
     const epoch = this.epoch
     const st = await fs.stat(path)
     if (!st || st.kind !== 'file') throw new Error(`Not a file: ${path}`)
-    if ((st.size ?? 0) > MAX_OPEN_BYTES) throw new Error(`${path} is too large to edit`)
     const bytes = await fs.readBytes(path)
     const kind = imageKind(path)
     if (kind) {
@@ -1594,19 +1592,28 @@ export class WorkspaceController {
       }
       return path
     }
-    if (bytes.subarray(0, 8192).includes(0)) throw new Error(`${path} is a binary file`)
+    // Binary files open as lossy text, read-only so a save can never corrupt them.
+    const binary = bytes.subarray(0, 8192).includes(0)
     if (epoch !== this.epoch) return null
     if (!this.buffers.has(path)) {
       const text = new TextDecoder().decode(bytes)
-      const state = this.handle
+      let state = this.handle
         ? this.handle.createState(text)
         : EditorState.create({ doc: text })
+      if (binary) {
+        state = state.update({
+          effects: StateEffect.appendConfig.of([
+            EditorView.editable.of(false),
+            EditorState.readOnly.of(true),
+          ]),
+        }).state
+      }
       this.buffers.set(path, {
         state,
         saved: state.doc,
         dirty: false,
         saveError: false,
-        languageSet: false,
+        languageSet: binary,
         timer: undefined,
         chain: Promise.resolve(),
       })
