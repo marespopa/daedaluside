@@ -2,7 +2,15 @@ import { Compartment, EditorState, Prec } from '@codemirror/state'
 import { EditorView, lineNumbers } from '@codemirror/view'
 import { getCM } from '@replit/codemirror-vim'
 import { useAtomValue, useStore } from 'jotai'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { loadLanguage } from '../../editor/languages'
 import { editorTheme } from '../../editor/theme'
 import { openExPrompt, vimExtension } from '../../editor/vimMode'
@@ -12,6 +20,7 @@ import {
   branchConfirmAtom,
   branchMarksAtom,
   branchReviewAtom,
+  branchStatsAtom,
 } from '../../state/branchReviewAtoms'
 import type { BranchFile } from '../../workspace/gitService'
 import { useController } from '../../workspace/useWorkspace'
@@ -52,6 +61,13 @@ function vimBusy(view: EditorView): boolean {
     (vs?.inputState?.keyBuffer?.length ?? 0) > 0
   )
 }
+
+/** Every row of the file list has this height, so the visible window is plain arithmetic. */
+const ROW_H = 20
+/** Rows drawn beyond the viewport on each side, so a fast scroll never shows a gap. */
+const OVERSCAN = 12
+/** Used until the list has been measured (or while it is hidden). */
+const FALLBACK_H = 800
 
 interface Row {
   kind: 'dir' | 'file'
@@ -113,16 +129,52 @@ function Surface() {
 
   const file: BranchFile | undefined = s.files[s.index]
   const rows = useMemo(() => buildRows(s.files), [s.files])
-  const reviewedCount = s.files.filter((f) => isReviewed(marks, f)).length
-  const totals = useMemo(() => {
-    let add = 0
-    let del = 0
-    for (const st of Object.values(s.stats)) {
-      add += st.add
-      del += st.del
+  /** Row position of each file, to scroll the selected one into view. */
+  const rowOfFile = useMemo(() => {
+    const at: number[] = []
+    rows.forEach((r, i) => {
+      if (r.kind === 'file') at[r.index] = i
+    })
+    return at
+  }, [rows])
+  const [view, setView] = useState({ top: 0, height: 0 })
+  useLayoutEffect(() => {
+    const el = list.current
+    if (!el) return
+    const read = () =>
+      setView((v) =>
+        v.top === el.scrollTop && v.height === el.clientHeight
+          ? v
+          : { top: el.scrollTop, height: el.clientHeight },
+      )
+    read()
+    el.addEventListener('scroll', read, { passive: true })
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(read)
+    ro?.observe(el)
+    return () => {
+      el.removeEventListener('scroll', read)
+      ro?.disconnect()
     }
-    return { add, del }
-  }, [s.stats])
+  }, [])
+  const first = Math.max(0, Math.floor(view.top / ROW_H) - OVERSCAN)
+  const last = Math.min(
+    rows.length,
+    Math.ceil((view.top + (view.height || FALLBACK_H)) / ROW_H) + OVERSCAN,
+  )
+  const reviewedCount = s.files.filter((f) => isReviewed(marks, f)).length
+  const onToggleRow = useCallback(
+    (index: number, reviewed: boolean) =>
+      controller.setBranchFileReviewed(index, reviewed),
+    [controller],
+  )
+  const onSelectRow = useCallback(
+    (index: number) => {
+      controller.branchSelect(index)
+      controller.setBranchFocus('index')
+      list.current?.focus()
+    },
+    [controller],
+  )
 
   const hunkUnderCursor = useCallback((): Hunk | null => {
     const view = viewRef.current
@@ -411,12 +463,16 @@ function Surface() {
     else list.current?.focus()
   }, [s.focus, s.status])
 
-  // Keep the selected row in view.
+  // Keep the selected row in view; its element may not be drawn, so scroll by position.
   useEffect(() => {
-    list.current
-      ?.querySelector('[aria-current="true"]')
-      ?.scrollIntoView?.({ block: 'nearest' })
-  }, [s.index])
+    const el = list.current
+    const at = rowOfFile[s.index]
+    if (!el || at === undefined || el.clientHeight === 0) return
+    const y = at * ROW_H + 4 // the list has 4px of padding above the first row
+    if (y < el.scrollTop) el.scrollTop = y
+    else if (y + ROW_H > el.scrollTop + el.clientHeight)
+      el.scrollTop = y + ROW_H - el.clientHeight
+  }, [s.index, rowOfFile])
 
   const inspect = async () => {
     if (!file) return
@@ -485,10 +541,7 @@ function Surface() {
           </span>
         ) : (
           <span className="ml-auto flex shrink-0 gap-3">
-            <span data-testid="branch-totals">
-              {s.statsDone ? `+${totals.add} -${totals.del}` : '…'}
-              {(s.partial || !s.statsDone) && s.status === 'ready' && ' · reading'}
-            </span>
+            <Totals partial={s.partial === true} ready={s.status === 'ready'} />
             <span data-testid="branch-progress">
               {reviewedCount} / {s.files.length} reviewed
             </span>
@@ -519,12 +572,17 @@ function Surface() {
               controller.setBranchFocus('index')
             }
           >
-            {rows.map((r, i) =>
+            <div aria-hidden style={{ height: first * ROW_H }} />
+            {rows.slice(first, last).map((r, k) =>
               r.kind === 'dir' ? (
                 <div
-                  key={`d${i}`}
-                  className="truncate py-0.5 text-muted"
-                  style={{ paddingLeft: `${0.75 + r.depth}rem` }}
+                  key={`d${first + k}`}
+                  className="truncate text-muted"
+                  style={{
+                    height: ROW_H,
+                    lineHeight: `${ROW_H}px`,
+                    paddingLeft: `${0.75 + r.depth}rem`,
+                  }}
                 >
                   {r.name}
                 </div>
@@ -532,19 +590,15 @@ function Surface() {
                 <FileRow
                   key={r.file!.path}
                   row={r}
+                  total={s.files.length}
                   active={r.index === s.index}
                   reviewed={isReviewed(marks, r.file!)}
-                  onToggle={() =>
-                    controller.setBranchFileReviewed(r.index, !isReviewed(marks, r.file!))
-                  }
-                  onSelect={() => {
-                    controller.branchSelect(r.index)
-                    controller.setBranchFocus('index')
-                    list.current?.focus()
-                  }}
+                  onToggle={onToggleRow}
+                  onSelect={onSelectRow}
                 />
               ),
             )}
+            <div aria-hidden style={{ height: (rows.length - last) * ROW_H }} />
           </div>
           <section className="flex min-h-0 min-w-0 flex-1 flex-col">
             {placeholder && (
@@ -585,31 +639,62 @@ function Surface() {
   )
 }
 
-function FileRow({
+/** Sums the line totals itself, so a stats patch re-renders this span, not the whole surface. */
+const Totals = memo(function Totals({
+  partial,
+  ready,
+}: {
+  partial: boolean
+  ready: boolean
+}) {
+  const { stats, done } = useAtomValue(branchStatsAtom)
+  const reading = (partial || !done) && ready
+  const { add, del } = useMemo(() => {
+    let a = 0
+    let d = 0
+    for (const st of Object.values(stats)) {
+      a += st.add
+      d += st.del
+    }
+    return { add: a, del: d }
+  }, [stats])
+  return (
+    <span data-testid="branch-totals">
+      {done ? `+${add} -${del}` : '…'}
+      {reading && ' · reading'}
+    </span>
+  )
+})
+
+const FileRow = memo(function FileRow({
   row,
+  total,
   active,
   reviewed,
   onSelect,
   onToggle,
 }: {
   row: Row
+  total: number
   active: boolean
   reviewed: boolean
-  onSelect: () => void
-  onToggle: () => void
+  onSelect: (index: number) => void
+  onToggle: (index: number, reviewed: boolean) => void
 }) {
   const f = row.file!
   return (
     <div
       role="option"
       aria-selected={active}
+      aria-setsize={total}
+      aria-posinset={row.index + 1}
       aria-current={active}
       data-reviewed={reviewed}
-      onClick={onSelect}
-      className={`relative flex cursor-pointer items-center gap-2 truncate py-0.5 pr-3 ${
+      onClick={() => onSelect(row.index)}
+      className={`relative flex cursor-pointer items-center gap-2 truncate pr-3 ${
         active ? 'bg-surface' : ''
       } ${reviewed ? 'text-muted' : 'text-text'}`}
-      style={{ paddingLeft: `${0.75 + row.depth}rem` }}
+      style={{ height: ROW_H, paddingLeft: `${0.75 + row.depth}rem` }}
     >
       <button
         type="button"
@@ -619,7 +704,7 @@ function FileRow({
         tabIndex={-1}
         onClick={(e) => {
           e.stopPropagation()
-          onToggle()
+          onToggle(row.index, !reviewed)
         }}
         className={`flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
           reviewed
@@ -644,4 +729,4 @@ function FileRow({
       </span>
     </div>
   )
-}
+})

@@ -28,6 +28,7 @@ import {
   branchConfirmAtom,
   branchMarksAtom,
   branchReviewAtom,
+  branchStatsAtom,
   branchTabActiveAtom,
   type BranchFocus,
   type BranchReviewState,
@@ -87,7 +88,7 @@ import { openDB } from './db'
 import { startSnapshotSync } from './snapshot'
 import { FolderFS } from './folderFs'
 import { loadKnownCount, saveKnownCount } from './loadEstimate'
-import type { BranchRequest } from './branchPrefetch'
+import type { BranchPrefetch, BranchRequest } from './branchPrefetch'
 import { BranchPrefetchService } from './branchPrefetchService'
 import { GitService, mapLimit, type BranchFile } from './gitService'
 import { GrepService } from './grepService'
@@ -582,6 +583,7 @@ export class WorkspaceController {
       this.diffSvc = null
       this.prefetchSvc?.dispose()
       this.prefetchSvc = null
+      this.prefetchRun = null
       this.reviewWorker?.dispose()
       this.reviewWorker = null
       clearTimeout(this.gitTimer)
@@ -767,6 +769,51 @@ export class WorkspaceController {
 
   private lastBranchBase: string | undefined
 
+  /** Line totals by `mbOid|headOid`: the oids name the content, so an entry never goes stale. */
+  private statsCache = new Map<string, { add: number; del: number }>()
+
+  private statKey(f: BranchFile) {
+    return `${f.mbOid}|${f.headOid}`
+  }
+
+  /** Known totals for these files, from earlier reviews (also after a commit or a revert). */
+  private knownStats(files: readonly BranchFile[]) {
+    const out: Record<string, { add: number; del: number }> = {}
+    for (const f of files) {
+      const st = this.statsCache.get(this.statKey(f))
+      if (st) out[f.path] = st
+    }
+    return out
+  }
+
+  private rememberStats(
+    files: readonly BranchFile[],
+    stats: Readonly<Record<string, { add: number; del: number }>>,
+  ) {
+    for (const f of files) {
+      const st = stats[f.path]
+      if (st) this.statsCache.set(this.statKey(f), st)
+    }
+    // Bounded: drop the oldest entries first.
+    for (const k of this.statsCache.keys()) {
+      if (this.statsCache.size <= 20000) break
+      this.statsCache.delete(k)
+    }
+  }
+
+  /** The default-base prefetch in flight, and the review (if any) waiting on its result. */
+  private prefetchRun: {
+    pending: boolean
+    join: {
+      signal: { cancelled: boolean }
+      svc: GitService
+      cacheKey: string
+      fail: (message: string) => void
+      finished: boolean
+      resolve: (finished: boolean) => void
+    } | null
+  } | null = null
+
   /** Flips between "diff with main" and "working tree vs HEAD". */
   toggleBranchMode() {
     const s = this.store.get(branchReviewAtom)
@@ -780,15 +827,24 @@ export class WorkspaceController {
   /** Last finished review per workspace/mode/base: shown at once, then revalidated. */
   private branchCache = new Map<
     string,
-    Pick<
-      BranchReviewState,
-      'base' | 'branch' | 'mergeBase' | 'head' | 'files' | 'stats' | 'statsDone'
-    >
+    Pick<BranchReviewState, 'base' | 'branch' | 'mergeBase' | 'head' | 'files'> & {
+      stats: Readonly<Record<string, { add: number; del: number }>>
+      statsDone: boolean
+    }
   >()
+
+  private setStats(
+    stats: Readonly<Record<string, { add: number; del: number }>>,
+    done: boolean,
+  ) {
+    if (this.store.get(branchReviewAtom)) this.store.set(branchStatsAtom, { stats, done })
+  }
 
   /** Reads the default-base review in a worker so opening it finds the result waiting. */
   private startBranchPrefetch(handle: FileSystemDirectoryHandle) {
     const svc = (this.prefetchSvc ??= new BranchPrefetchService())
+    const run: NonNullable<typeof this.prefetchRun> = { pending: true, join: null }
+    this.prefetchRun = run
     const ws = this.wsId
     const key = `${ws ?? ''}|base|`
     svc.start(
@@ -804,11 +860,19 @@ export class WorkspaceController {
           stats: r.stats,
           statsDone: done,
         }
+        this.rememberStats(r.files, r.stats)
         // Never replace a result the review itself has produced since.
         if (!this.branchCache.get(key)?.statsDone) this.branchCache.set(key, entry)
+        if (r.blobs) this.gitSvc?.primeBlobs(r.blobs)
+        // A review opened while this worker runs joins it instead of starting a second one.
+        const j = run.join
+        if (j && !j.signal.cancelled && this.gitSvc === j.svc) {
+          if (this.applyWorkerResult(r, done, j.signal, j.cacheKey) && done)
+            j.finished = true
+          return
+        }
         // The review was opened while the worker was still reading: fill it in now.
         const cur = this.store.get(branchReviewAtom)
-        if (r.blobs) this.gitSvc?.primeBlobs(r.blobs)
         if (
           cur &&
           cur.status === 'loading' &&
@@ -816,10 +880,24 @@ export class WorkspaceController {
           cur.base === '…' &&
           cur.files.length === 0
         ) {
-          this.branchPatch({ ...entry, status: 'ready' })
+          const { stats, statsDone, ...shown } = entry
+          this.setStats({ ...this.knownStats(r.files), ...stats }, statsDone)
+          this.branchPatch({ ...shown, status: 'ready' })
         }
       },
-      () => {},
+      () => {
+        run.pending = false
+        run.join?.resolve(run.join.finished)
+      },
+      undefined,
+      () => {
+        run.pending = false
+        const j = run.join
+        if (!j) return
+        if (!j.signal.cancelled && this.gitSvc !== j.svc)
+          j.fail('Workspace changed while reading the branch.')
+        j.resolve(true)
+      },
     )
   }
 
@@ -857,11 +935,24 @@ export class WorkspaceController {
         files: [],
         index: 0,
         focus: 'index',
-        stats: {},
-        statsDone: false,
         // Optimistic: the previous result, until the fresh one replaces it.
-        ...(cached ? { ...cached, status: 'ready' as const } : {}),
+        ...(cached
+          ? {
+              base: cached.base,
+              branch: cached.branch,
+              mergeBase: cached.mergeBase,
+              head: cached.head,
+              files: cached.files,
+              status: 'ready' as const,
+            }
+          : {}),
       })
+      this.store.set(
+        branchStatsAtom,
+        cached
+          ? { stats: cached.stats, done: cached.statsDone }
+          : { stats: {}, done: false },
+      )
       if (cached) {
         const key = this.branchMarksKey()
         this.setBranchMarks(pruneMarks(key ? loadMarks(key) : {}, cached.files))
@@ -872,9 +963,9 @@ export class WorkspaceController {
         this.branchPatch({ status: 'error', message })
     }
     // Git attaches when the tree walk ends; wait for it rather than refusing.
-    for (let i = 0; i < 600 && !this.gitSvc && !signal.cancelled; i++) {
+    for (let i = 0; i < 3000 && !this.gitSvc && !signal.cancelled; i++) {
       if (this.store.get(treeStatusAtom).state !== 'loading') break
-      await new Promise((r) => setTimeout(r, 100))
+      await new Promise((r) => setTimeout(r, 20))
     }
     if (signal.cancelled) return
     const svc = this.gitSvc
@@ -883,6 +974,15 @@ export class WorkspaceController {
     }
     // The comparison (git walk, status scan, line totals) runs in a worker so the editor
     // stays responsive; without one, or if it dies, the same work runs below.
+    const run = this.prefetchRun
+    if (run?.pending && mode === 'base' && !baseArg?.trim() && !inThread) {
+      run.join?.resolve(true)
+      const finished = await new Promise<boolean>((resolve) => {
+        run.join = { signal, svc, cacheKey, fail, finished: false, resolve }
+      })
+      if (run.join?.signal === signal) run.join = null
+      if (finished || signal.cancelled) return
+    }
     const linked = this.linkHandle
     if (linked && linked.kind === 'directory' && !inThread) {
       const finished = await this.reviewInWorker(
@@ -929,29 +1029,21 @@ export class WorkspaceController {
     if (res.kind === 'error') {
       return this.branchPatch({ status: 'error', message: res.message })
     }
-    // Keep the cursor on the same file, and keep totals of files that did not change.
+    // Keep the cursor on the same file, and totals of files that did not change.
     const prev = this.store.get(branchReviewAtom)
     const prevPath = prev?.files[prev.index]?.path
-    const sameOids = new Map(
-      (prev?.files ?? []).map((f) => [f.path, `${f.mbOid}|${f.headOid}`]),
-    )
-    const keptStats: Record<string, { add: number; del: number }> = {}
-    for (const f of res.files) {
-      const st = prev?.stats[f.path]
-      if (st && sameOids.get(f.path) === `${f.mbOid}|${f.headOid}`) keptStats[f.path] = st
-    }
+    const keptStats = this.knownStats(res.files)
     const at = prevPath ? res.files.findIndex((f) => f.path === prevPath) : -1
     const complete = res.files.every((f) => keptStats[f.path])
+    this.setStats(keptStats, res.files.length === 0 || complete)
     this.branchPatch({
       status: 'ready',
       mergeBase: res.mergeBase,
       head: res.head,
       files: res.files,
       index: at === -1 ? 0 : at,
-      stats: keptStats,
       message: res.multipleBases ? 'Several merge bases; using the first.' : null,
       partial: false,
-      statsDone: res.files.length === 0 || complete,
     })
     const key = this.branchMarksKey()
     const marks = pruneMarks(key ? loadMarks(key) : {}, res.files)
@@ -964,16 +1056,50 @@ export class WorkspaceController {
   private rememberBranch(signal: { cancelled: boolean }, cacheKey: string) {
     const cur = this.store.get(branchReviewAtom)
     if (cur && cur.status === 'ready' && !signal.cancelled) {
+      const totals = this.store.get(branchStatsAtom)
       this.branchCache.set(cacheKey, {
         base: cur.base,
         branch: cur.branch,
         mergeBase: cur.mergeBase,
         head: cur.head,
         files: cur.files,
-        stats: cur.stats,
-        statsDone: cur.statsDone,
+        stats: totals.stats,
+        statsDone: totals.done,
       })
     }
+  }
+
+  /** Patches the open review with a worker result; true once a full (non-partial) result landed. */
+  private applyWorkerResult(
+    r: BranchPrefetch,
+    done: boolean,
+    signal: { cancelled: boolean },
+    cacheKey: string,
+  ): boolean {
+    // A review already on screen keeps its full list until the full result lands.
+    if (r.partial && this.store.get(branchReviewAtom)?.status === 'ready') return false
+    // Keep the cursor on the same file; totals of unchanged files come from the cache.
+    const prev = this.store.get(branchReviewAtom)
+    const prevPath = prev?.files[prev.index]?.path
+    this.rememberStats(r.files, r.stats)
+    this.setStats({ ...this.knownStats(r.files), ...r.stats }, done)
+    const at = prevPath ? r.files.findIndex((f) => f.path === prevPath) : -1
+    this.branchPatch({
+      status: 'ready',
+      base: r.base,
+      branch: r.branch,
+      mergeBase: r.mergeBase,
+      head: r.head,
+      files: r.files,
+      index: at === -1 ? 0 : at,
+      partial: r.partial === true,
+      message: r.multipleBases ? 'Several merge bases; using the first.' : null,
+    })
+    if (r.partial) return false
+    const key = this.branchMarksKey()
+    this.setBranchMarks(pruneMarks(key ? loadMarks(key) : {}, r.files))
+    this.rememberBranch(signal, cacheKey)
+    return true
   }
 
   /**
@@ -1004,46 +1130,13 @@ export class WorkspaceController {
         (r, done) => {
           if (stale()) return
           if (r.blobs) svc.primeBlobs(r.blobs)
-          // A review already on screen keeps its full list until the full result lands.
-          if (r.partial && this.store.get(branchReviewAtom)?.status === 'ready') return
-          // Keep the cursor on the same file, and totals of files that did not change.
-          const prev = this.store.get(branchReviewAtom)
-          const prevPath = prev?.files[prev.index]?.path
-          const sameOids = new Map(
-            (prev?.files ?? []).map((f) => [f.path, `${f.mbOid}|${f.headOid}`]),
-          )
-          const stats: Record<string, { add: number; del: number }> = {}
-          for (const f of r.files) {
-            const old = prev?.stats[f.path]
-            if (old && sameOids.get(f.path) === `${f.mbOid}|${f.headOid}`)
-              stats[f.path] = old
-          }
-          Object.assign(stats, r.stats)
-          const at = prevPath ? r.files.findIndex((f) => f.path === prevPath) : -1
-          this.branchPatch({
-            status: 'ready',
-            base: r.base,
-            branch: r.branch,
-            mergeBase: r.mergeBase,
-            head: r.head,
-            files: r.files,
-            index: at === -1 ? 0 : at,
-            stats,
-            statsDone: done,
-            partial: r.partial === true,
-            message: r.multipleBases ? 'Several merge bases; using the first.' : null,
-          })
-          if (r.partial) return
-          const key = this.branchMarksKey()
-          this.setBranchMarks(pruneMarks(key ? loadMarks(key) : {}, r.files))
-          this.rememberBranch(signal, cacheKey)
-          if (done) finished = true
+          if (this.applyWorkerResult(r, done, signal, cacheKey) && done) finished = true
         },
         () => {
           if (this.reviewWorker === worker) this.reviewWorker = null
           resolve(finished)
         },
-        req,
+        { ...req, known: Object.fromEntries(this.statsCache) },
         (message) => {
           if (stale()) return
           finished = true
@@ -1084,9 +1177,9 @@ export class WorkspaceController {
       } catch {
         // an unreadable blob just has no totals
       }
-      if (++n % 10 === 0 && !signal.cancelled) this.branchPatch({ stats: { ...stats } })
+      if (++n % 10 === 0 && !signal.cancelled) this.setStats({ ...stats }, false)
     })
-    if (!signal.cancelled) this.branchPatch({ stats, statsDone: true })
+    if (!signal.cancelled) this.setStats(stats, true)
   }
 
   private async statOne(
@@ -1105,6 +1198,7 @@ export class WorkspaceController {
     if (a.kind === 'text' && b.kind === 'text') {
       const { stats: st } = diffTexts(a.text, b.text)
       stats[f.path] = { add: st.added, del: st.removed }
+      this.statsCache.set(this.statKey(f), stats[f.path]!)
     }
   }
 

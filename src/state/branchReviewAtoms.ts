@@ -19,13 +19,20 @@ export interface BranchReviewState {
   files: readonly BranchFile[]
   index: number
   focus: BranchFocus
-  /** Line totals per path, filled in the background; absent until computed. */
-  stats: Readonly<Record<string, { add: number; del: number }>>
-  /** True once every file's stats are in, so the header total is final. */
-  statsDone: boolean
   /** True while the file list is only the committed changes and the working tree is still being read. */
   partial?: boolean
 }
+
+/**
+ * Line totals per path, filled in the background (absent until computed), and whether every
+ * file's are in so the header total is final. Kept apart from the review so that each patch
+ * as totals stream in re-renders only the header total, not the file list.
+ */
+export interface BranchStats {
+  stats: Readonly<Record<string, { add: number; del: number }>>
+  done: boolean
+}
+export const branchStatsAtom = atom<BranchStats>({ stats: {}, done: false })
 
 /** Null while the branch review surface is closed. */
 export const branchReviewAtom = atom<BranchReviewState | null>(null)

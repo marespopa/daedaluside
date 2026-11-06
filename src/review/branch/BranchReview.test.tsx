@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { IDBFactory } from 'fake-indexeddb'
 import { createStore, Provider } from 'jotai'
@@ -8,6 +8,7 @@ import {
   branchConfirmAtom,
   branchMarksAtom,
   branchReviewAtom,
+  branchStatsAtom,
   type BranchReviewState,
   branchTabActiveAtom,
 } from '../../state/branchReviewAtoms'
@@ -35,8 +36,6 @@ const state = (over: Partial<BranchReviewState> = {}): BranchReviewState => ({
   files,
   index: 0,
   focus: 'index',
-  stats: { 'src/a.ts': { add: 2, del: 1 }, 'src/b.ts': { add: 3, del: 0 } },
-  statsDone: true,
   ...over,
 })
 
@@ -59,6 +58,10 @@ async function setup(over: Partial<BranchReviewState> = {}) {
     'base: p1, 3 bytes · head: p2, 4 bytes',
   )
   act(() => {
+    store.set(branchStatsAtom, {
+      stats: { 'src/a.ts': { add: 2, del: 1 }, 'src/b.ts': { add: 3, del: 0 } },
+      done: true,
+    })
     store.set(branchReviewAtom, state(over))
     store.set(branchTabActiveAtom, true)
   })
@@ -277,8 +280,22 @@ describe('branch review surface', () => {
     expect(await screen.findByText(/p1, 3 bytes/)).toBeInTheDocument()
   })
 
+  it('draws only a window of a long file list, and keeps positions for assistive tech', async () => {
+    const many: BranchFile[] = Array.from({ length: 1000 }, (_, i) => ({
+      path: `d/f${String(i).padStart(4, '0')}.ts`,
+      status: 'M' as const,
+      mbOid: `m${i}`,
+      headOid: `h${i}`,
+    }))
+    await setup({ files: many })
+    const options = within(index()).getAllByRole('option')
+    expect(options.length).toBeLessThan(100)
+    expect(options[0]).toHaveAttribute('aria-posinset', '1')
+    expect(options[0]).toHaveAttribute('aria-setsize', '1000')
+  })
+
   it('shows the empty state for a branch with no changes', async () => {
-    await setup({ files: [], statsDone: true, stats: {} })
+    await setup({ files: [] })
     expect(
       screen.getByText('No differences from main, committed or uncommitted.'),
     ).toBeInTheDocument()
