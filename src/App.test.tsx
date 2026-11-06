@@ -4,9 +4,10 @@ import { getDefaultStore } from 'jotai'
 import App from './App'
 import { runEx } from './editor/testing/runEx'
 import { editorHandleAtom } from './state/editorAtoms'
+import { sidebarOpenAtom } from './state/workspaceAtoms'
 
 describe('App', () => {
-  it('opens the file tree with :Explore and closes it when the editor is clicked', async () => {
+  it('opens the file tree with :Explore and keeps it open when the editor is clicked', async () => {
     const user = userEvent.setup()
     render(<App />)
     const tree = screen.getByLabelText('File tree')
@@ -17,7 +18,9 @@ describe('App', () => {
     expect(tree).toHaveAttribute('aria-hidden', 'false')
 
     await user.click(screen.getByRole('main'))
-    expect(tree).toHaveAttribute('aria-hidden', 'true')
+    expect(tree).toHaveAttribute('aria-hidden', 'false')
+
+    act(() => getDefaultStore().set(sidebarOpenAtom, false))
   })
 
   it('toggles the file tree with Mod-B', async () => {
