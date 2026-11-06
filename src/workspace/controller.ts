@@ -615,6 +615,15 @@ export class WorkspaceController {
       return // a failed read just leaves the previous marks
     }
     if (this.active) this.pushDiff(this.active, true)
+    // An open branch review follows the working tree: revalidate it in place.
+    const rev = this.store.get(branchReviewAtom)
+    if (rev && rev.status === 'ready' && this.store.get(branchTabActiveAtom)) {
+      void this.openBranchReview(
+        rev.mode === 'base' ? rev.base : undefined,
+        rev.mode,
+        true,
+      )
+    }
   }
 
   /** Status changes after a save or a commit; coalesce bursts of saves. */
@@ -794,40 +803,43 @@ export class WorkspaceController {
     )
   }
 
-  async openBranchReview(baseArg?: string, mode: BranchMode = 'base') {
+  async openBranchReview(baseArg?: string, mode: BranchMode = 'base', quiet = false) {
     const cacheKey = `${this.wsId ?? ''}|${mode}|${baseArg?.trim() ?? ''}`
     const cached = this.branchCache.get(cacheKey)
     if (this.branchSignal) this.branchSignal.cancelled = true
     const signal = { cancelled: false }
     this.branchSignal = signal
-    // Open at once in a loading state; the workspace may still be reading its tree.
-    this.store.set(reviewOpenAtom, false)
-    this.store.set(branchTabActiveAtom, true)
-    this.store.set(branchConfirmAtom, null)
-    this.store.set(branchApprovedAtom, new Set())
-    this.store.set(branchMarksAtom, {})
-    this.store.set(branchReviewAtom, {
-      mode,
-      base: mode === 'working' ? 'HEAD' : baseArg?.trim() || '…',
-      branch: '…',
-      status: 'loading',
-      message: null,
-      mergeBase: null,
-      head: null,
-      files: [],
-      index: 0,
-      focus: 'index',
-      stats: {},
-      statsDone: false,
-      // Optimistic: the previous result, until the fresh one replaces it.
-      ...(cached ? { ...cached, status: 'ready' as const } : {}),
-    })
-    if (cached) {
-      const key = this.branchMarksKey()
-      this.setBranchMarks(pruneMarks(key ? loadMarks(key) : {}, cached.files))
+    if (!quiet) {
+      // Open at once in a loading state; the workspace may still be reading its tree.
+      this.store.set(reviewOpenAtom, false)
+      this.store.set(branchTabActiveAtom, true)
+      this.store.set(branchConfirmAtom, null)
+      this.store.set(branchApprovedAtom, new Set())
+      this.store.set(branchMarksAtom, {})
+      this.store.set(branchReviewAtom, {
+        mode,
+        base: mode === 'working' ? 'HEAD' : baseArg?.trim() || '…',
+        branch: '…',
+        status: 'loading',
+        message: null,
+        mergeBase: null,
+        head: null,
+        files: [],
+        index: 0,
+        focus: 'index',
+        stats: {},
+        statsDone: false,
+        // Optimistic: the previous result, until the fresh one replaces it.
+        ...(cached ? { ...cached, status: 'ready' as const } : {}),
+      })
+      if (cached) {
+        const key = this.branchMarksKey()
+        this.setBranchMarks(pruneMarks(key ? loadMarks(key) : {}, cached.files))
+      }
     }
     const fail = (message: string) => {
-      if (!signal.cancelled && !cached) this.branchPatch({ status: 'error', message })
+      if (!signal.cancelled && !cached && !quiet)
+        this.branchPatch({ status: 'error', message })
     }
     // Git attaches when the tree walk ends; wait for it rather than refusing.
     for (let i = 0; i < 600 && !this.gitSvc && !signal.cancelled; i++) {
