@@ -10,7 +10,6 @@ import { activePathAtom, settingsOpenAtom, sidebarOpenAtom } from './state/works
 import { IconButton } from './ui'
 import FileTree from './workspace/FileTree'
 import HomeButton from './workspace/HomeButton'
-import UpdatePrompt from './pwa/UpdatePrompt'
 import Notice from './workspace/Notice'
 import ReconnectDialog from './workspace/ReconnectDialog'
 import SaveButton from './workspace/SaveButton'
@@ -100,7 +99,6 @@ export default function App() {
       <Suspense fallback={null}>{settingsOpen && <SettingsDialog />}</Suspense>
       <ReconnectDialog />
       <Notice />
-      <UpdatePrompt />
     </div>
   )
 }
