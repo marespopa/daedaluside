@@ -83,11 +83,7 @@ export default function CompanionChat({
           />
         )}
         {messages.length === 0 && (
-          <p className="text-muted">
-            Ask anything about code. The AI can read your workspace files, and edit them
-            when you ask (undo with Ctrl-Z). Replies come from your Plan model. Change the
-            model or add a key under Configure.
-          </p>
+          <p className="text-muted">Ask about your code. Type / for commands.</p>
         )}
         {messages.map((m) => (
           <div key={m.id} className="anim-fade space-y-1">
@@ -179,7 +175,7 @@ export default function CompanionChat({
           <Textarea
             aria-label="Message"
             autoFocus={autoFocus}
-            placeholder="Message the AI, or / for commands. Enter to send, Shift+Enter for a new line"
+            placeholder="Message the AI"
             rows={2}
             value={draft}
             onChange={(e) => setDraft(e.currentTarget.value)}

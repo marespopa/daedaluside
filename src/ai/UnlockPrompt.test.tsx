@@ -34,7 +34,7 @@ describe('inline vault unlock', () => {
         <CompanionChat />
       </Provider>,
     )
-    await screen.findByText(/Ask anything about code/)
+    await screen.findByText(/Ask about your code/)
     expect(screen.queryByLabelText('Vault passphrase')).toBeNull()
   })
 })
