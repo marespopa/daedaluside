@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadRoutes } from '../router/router'
 import {
   createVault,
@@ -18,6 +18,7 @@ describe('AiSettings', () => {
     const user = userEvent.setup()
     render(<AiSettings />)
     await user.type(await screen.findByLabelText('New vault passphrase'), 'hunter2')
+    await user.type(screen.getByLabelText('Repeat vault passphrase'), 'hunter2')
     await user.click(screen.getByRole('button', { name: 'Create vault' }))
     expect(await screen.findByText('Key vault is unlocked')).toBeInTheDocument()
 
@@ -54,6 +55,7 @@ describe('AiSettings', () => {
     const user = userEvent.setup()
     render(<AiSettings />)
     await user.type(await screen.findByLabelText('New vault passphrase'), 'p')
+    await user.type(screen.getByLabelText('Repeat vault passphrase'), 'p')
     await user.click(screen.getByRole('button', { name: 'Create vault' }))
     await user.type(await screen.findByLabelText('Anthropic API key'), 'k')
     await user.click(screen.getByRole('button', { name: 'Save Anthropic API key' }))
@@ -84,5 +86,87 @@ describe('AiSettings', () => {
     await user.click(await screen.findByRole('combobox', { name: 'Plan model provider' }))
     await user.click(await screen.findByRole('option', { name: 'Ollama (local)' }))
     await waitFor(async () => expect((await loadRoutes()).plan.provider).toBe('ollama'))
+  })
+
+  it("switches to the new provider's default model, not the old one", async () => {
+    const user = userEvent.setup()
+    render(<AiSettings />)
+    await user.click(await screen.findByRole('combobox', { name: 'Edit model provider' }))
+    await user.click(await screen.findByRole('option', { name: 'Gemini' }))
+    await waitFor(async () => {
+      const r = (await loadRoutes()).execute
+      expect(r).toEqual({ provider: 'gemini', model: 'gemini-flash-latest' })
+    })
+    expect(screen.getByLabelText('Edit model name')).toHaveValue('gemini-flash-latest')
+  })
+
+  it("lists the provider's real models and picks one", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({ models: [{ name: 'qwen3-coder:30b' }, { name: 'llama3.2' }] }),
+      ),
+    )
+    try {
+      const user = userEvent.setup()
+      render(<AiSettings />)
+      await user.click(
+        await screen.findByRole('combobox', { name: 'Plan model provider' }),
+      )
+      await user.click(await screen.findByRole('option', { name: 'Ollama (local)' }))
+      const field = screen.getByRole('combobox', { name: 'Plan model name' })
+      await user.click(field)
+      expect(await screen.findByRole('option', { name: 'qwen3-coder:30b' })).toBeVisible()
+      await user.clear(field)
+      await user.type(field, 'llama')
+      expect(field).toHaveValue('llama3.2')
+      expect(screen.queryByRole('option', { name: 'qwen3-coder:30b' })).toBeNull()
+      await user.click(screen.getByRole('option', { name: 'llama3.2' }))
+      await waitFor(async () => expect((await loadRoutes()).plan.model).toBe('llama3.2'))
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('says why the list is empty when the request fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('offline')
+      }),
+    )
+    try {
+      const user = userEvent.setup()
+      render(<AiSettings />)
+      await user.click(
+        await screen.findByRole('combobox', { name: 'Plan model provider' }),
+      )
+      await user.click(await screen.findByRole('option', { name: 'Ollama (local)' }))
+      await user.click(screen.getByRole('combobox', { name: 'Plan model name' }))
+      expect(await screen.findByText(/could not reach the provider/i)).toBeVisible()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('refuses a passphrase that was not repeated the same', async () => {
+    const user = userEvent.setup()
+    render(<AiSettings />)
+    await user.type(await screen.findByLabelText('New vault passphrase'), 'one')
+    await user.type(screen.getByLabelText('Repeat vault passphrase'), 'two')
+    await user.click(screen.getByRole('button', { name: 'Create vault' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('do not match')
+    expect(await vaultStatus()).toBe('none')
+  })
+
+  it('resets a vault whose passphrase was forgotten', async () => {
+    await createVault('forgotten')
+    lock()
+    const user = userEvent.setup()
+    render(<AiSettings />)
+    await user.click(await screen.findByRole('button', { name: 'Reset vault…' }))
+    await user.click(screen.getByRole('button', { name: 'Delete vault and keys' }))
+    expect(await screen.findByLabelText('New vault passphrase')).toBeInTheDocument()
+    expect(await vaultStatus()).toBe('none')
   })
 })

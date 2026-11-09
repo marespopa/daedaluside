@@ -18,12 +18,17 @@ interface Tracked {
   mtime: number
 }
 
-async function pool<T>(items: readonly T[], fn: (item: T) => Promise<void>): Promise<void> {
+async function pool<T>(
+  items: readonly T[],
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
   let next = 0
   const worker = async () => {
     while (next < items.length) await fn(items[next++]!)
   }
-  await Promise.all(Array.from({ length: Math.min(SCAN_CONCURRENCY, items.length) }, worker))
+  await Promise.all(
+    Array.from({ length: Math.min(SCAN_CONCURRENCY, items.length) }, worker),
+  )
 }
 
 /**
@@ -55,7 +60,8 @@ export async function scanStatus(
       if (th === 'commit' || ts === 'commit') return null
       if (th === 'tree' || ts === 'tree') return undefined
       if (th !== 'blob' && ts !== 'blob') return null
-      const st = (await stage?.stat()) as { size: number; mtimeSeconds: number } | undefined
+      const st = (await stage?.stat()) as
+        { size: number; mtimeSeconds: number } | undefined
       tracked.set(path, {
         path,
         head: th === 'blob' ? ((await head?.oid()) ?? null) : null,
@@ -110,12 +116,15 @@ async function untracked(
 ): Promise<string[]> {
   const dirs = new Set<string>()
   for (const p of tracked.keys()) {
-    for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1)) dirs.add(p.slice(0, i))
+    for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1))
+      dirs.add(p.slice(0, i))
   }
   let rules: DirRules = NO_RULES
   try {
     const raw = await fs.promises.readFile('/.gitignore', 'utf8')
-    rules = parseGitignoreDirs(typeof raw === 'string' ? raw : new TextDecoder().decode(raw))
+    rules = parseGitignoreDirs(
+      typeof raw === 'string' ? raw : new TextDecoder().decode(raw),
+    )
   } catch {
     // no .gitignore
   }

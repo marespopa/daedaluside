@@ -7,6 +7,7 @@ import Editor from './editor/Editor'
 import VimStatus from './editor/VimStatus'
 import { activeBufferAtom, editorWidthAtom } from './state/editorAtoms'
 import { aiOpenAtom } from './state/aiAtoms'
+import { sidecarOpenAtom } from './state/companionAtoms'
 import { activePathAtom, settingsOpenAtom, sidebarOpenAtom } from './state/workspaceAtoms'
 import { IconButton } from './ui'
 import FileTree from './workspace/FileTree'
@@ -20,6 +21,7 @@ import { useController, useWorkspaceLifecycle } from './workspace/useWorkspace'
 
 const SettingsDialog = lazy(() => import('./workspace/SettingsDialog'))
 const AiPanel = lazy(() => import('./ai/AiPanel'))
+const AiSidecar = lazy(() => import('./ai/AiSidecar'))
 
 export default function App() {
   useWorkspaceLifecycle()
@@ -30,6 +32,7 @@ export default function App() {
   const setSidebarOpen = useSetAtom(sidebarOpenAtom)
   const settingsOpen = useAtomValue(settingsOpenAtom)
   const aiOpen = useAtomValue(aiOpenAtom)
+  const [sidecarOpen, setSidecarOpen] = useAtom(sidecarOpenAtom)
 
   useEffect(() => {
     let wasNarrow = window.innerWidth < 1024
@@ -74,6 +77,13 @@ export default function App() {
               />
             )}
             <SaveButton />
+            <IconButton
+              label="AI chat"
+              icon="chat"
+              aria-pressed={sidecarOpen}
+              className="aria-pressed:bg-surface aria-pressed:text-text"
+              onClick={() => setSidecarOpen((o) => !o)}
+            />
             {activePath && (
               <IconButton
                 label="Full width"
@@ -85,10 +95,7 @@ export default function App() {
             )}
           </div>
         </header>
-        <main
-          id="editor-pane"
-          className="min-h-0 flex-1"
-        >
+        <main id="editor-pane" className="min-h-0 flex-1">
           <h1 className="sr-only">Daedalus IDE</h1>
           <Editor />
         </main>
@@ -100,6 +107,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      <Suspense fallback={null}>{sidecarOpen && <AiSidecar />}</Suspense>
       <CommandPalette />
       <GrepFinder />
       <Suspense fallback={null}>{settingsOpen && <SettingsDialog />}</Suspense>

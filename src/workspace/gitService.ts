@@ -51,7 +51,10 @@ export async function mapLimit<T>(
 }
 
 /** Folds one statusMatrix row (file, HEAD, workdir, stage) into the changed-file map. */
-function applyRow(out: Map<string, GitStatus>, row: readonly [string, number, number, number]) {
+function applyRow(
+  out: Map<string, GitStatus>,
+  row: readonly [string, number, number, number],
+) {
   const [file, head, workdir, stage] = row
   if (head === 0) {
     if (workdir === 2) out.set(file, stage === 0 ? 'untracked' : 'added')

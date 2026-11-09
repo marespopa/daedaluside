@@ -16,6 +16,7 @@ export type IconName =
   | 'menu'
   | 'home'
   | 'sidebar'
+  | 'chat'
   | 'pin'
   | 'chevron-left'
   | 'chevron-right'
@@ -70,6 +71,9 @@ const paths: Record<IconName, ReactNode> = {
       <rect x="3" y="5" width="18" height="14" rx="2" />
       <path d="M9 5v14" />
     </>
+  ),
+  chat: (
+    <path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-8l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
   ),
   'chevron-left': <path d="M15 6l-6 6 6 6" />,
   'chevron-right': <path d="M9 6l6 6-6 6" />,

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { aiOpenAtom } from '../state/aiAtoms'
-import { settingsOpenAtom } from '../state/workspaceAtoms'
+import { companionOpenAtom, companionViewAtom } from '../state/companionAtoms'
 import { createVault, resetVaultForTests, setKey } from '../vault/vault'
 import AiPanel from './AiPanel'
 
@@ -69,15 +69,16 @@ describe('AiPanel', () => {
     expect(screen.getByLabelText('What should change?')).toBeInTheDocument()
   })
 
-  it('asks for the key vault when it is locked and opens Settings', async () => {
+  it('asks for the key vault when it is locked and opens AI Configure', async () => {
     const user = userEvent.setup()
     mockFetch('x', 'y')
     const store = mount()
     await user.type(screen.getByLabelText('What should change?'), 'task')
     await user.click(screen.getByRole('button', { name: 'Make plan' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/Vault is locked/)
-    await user.click(screen.getByRole('button', { name: 'Open Settings' }))
-    expect(store.get(settingsOpenAtom)).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Open AI Configure' }))
+    expect(store.get(companionOpenAtom)).toBe(true)
+    expect(store.get(companionViewAtom)).toBe('config')
     expect(store.get(aiOpenAtom)).toBe(false)
   })
 

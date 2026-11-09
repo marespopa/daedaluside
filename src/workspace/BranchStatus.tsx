@@ -5,6 +5,7 @@ import {
   gitBranchAtom,
   gitRepoAtom,
 } from '../state/gitAtoms'
+import { Button } from '../ui/Button'
 import { Icon } from '../ui/Icon'
 import { useController } from './useWorkspace'
 
@@ -13,7 +14,14 @@ import { useController } from './useWorkspace'
  * text is the way into the review and is underlined, so it never relies on color alone.
  * It reads the branch first, then waits for the background review before offering the link.
  */
-export default function BranchStatus({ className = '' }: { className?: string }) {
+export default function BranchStatus({
+  className = '',
+  link = true,
+}: {
+  className?: string
+  /** Show the changed-files link; the opener shows a button beside Settings instead. */
+  link?: boolean
+}) {
   const controller = useController()
   const branch = useAtomValue(gitBranchAtom)
   const isRepo = useAtomValue(gitRepoAtom)
@@ -33,7 +41,15 @@ export default function BranchStatus({ className = '' }: { className?: string })
       {branch && (
         <>
           <span aria-hidden>·</span>
-          {!ready ? (
+          {!link ? (
+            <span>
+              {!ready
+                ? 'Checking changes…'
+                : count === 0
+                  ? 'No changes'
+                  : `${count ?? 'Some'} ${count === 1 ? 'file' : 'files'} changed`}
+            </span>
+          ) : !ready ? (
             <span className="motion-safe:animate-pulse">Checking changes…</span>
           ) : count === 0 ? (
             <span>No changes</span>
@@ -52,5 +68,23 @@ export default function BranchStatus({ className = '' }: { className?: string })
         </>
       )}
     </p>
+  )
+}
+
+/** Opens the branch review; renders nothing until the branch has changes to review. */
+export function BranchReviewButton() {
+  const controller = useController()
+  const branch = useAtomValue(gitBranchAtom)
+  const ready = useAtomValue(branchPrefetchReadyAtom)
+  const count = useAtomValue(branchPrefetchCountAtom)
+  if (!branch || !ready || count === 0) return null
+  return (
+    <Button
+      size="sm"
+      onClick={() => void controller.openBranchReview()}
+      aria-label={`Review branch changes on ${branch}`}
+    >
+      Review Branch
+    </Button>
   )
 }

@@ -1,12 +1,7 @@
-import { useAtom, useSetAtom, useStore } from 'jotai'
+import { useAtom, useStore } from 'jotai'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { aiOpenAtom } from '../state/aiAtoms'
-import {
-  activePathAtom,
-  openBuffersAtom,
-  settingsOpenAtom,
-  treeAtom,
-} from '../state/workspaceAtoms'
+import { activePathAtom, openBuffersAtom, treeAtom } from '../state/workspaceAtoms'
 import { resolveStage } from '../router/router'
 import { Button } from '../ui'
 import { focusEditor, useController } from '../workspace/useWorkspace'
@@ -25,7 +20,6 @@ const NEEDS_SETTINGS = /vault is locked|no api key|no vault/i
 function Panel({ onClose }: { onClose: () => void }) {
   const store = useStore()
   const controller = useController()
-  const setSettings = useSetAtom(settingsOpenAtom)
   const wf = useMemo(
     () =>
       new Workflow({
@@ -254,10 +248,10 @@ function Panel({ onClose }: { onClose: () => void }) {
               <Button
                 onClick={() => {
                   onClose()
-                  setSettings(true)
+                  controller.openCompanion('config')
                 }}
               >
-                Open Settings
+                Open AI Configure
               </Button>
             )}
             {state.plan && (

@@ -95,7 +95,10 @@ export async function prefetchBranch(
       if (!t) return
       stats[f.path] = t
       if (!final && ++n % 20 === 0)
-        send({ base, branch, mergeBase, head, files, stats: { ...stats }, partial: true }, false)
+        send(
+          { base, branch, mergeBase, head, files, stats: { ...stats }, partial: true },
+          false,
+        )
     })
   })
   if (res.kind !== 'ok') throw new ReviewError(res.message)

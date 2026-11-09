@@ -64,7 +64,9 @@ describe('matchFiles', () => {
       'src/a.css',
       'src/styles/c.CSS',
     ])
-    expect(matchFiles(files, 'styles *.css').map((e) => e.path)).toEqual(['src/styles/c.CSS'])
+    expect(matchFiles(files, 'styles *.css').map((e) => e.path)).toEqual([
+      'src/styles/c.CSS',
+    ])
     expect(matchFiles(files, 'src/*.css').map((e) => e.path)).toEqual(['src/a.css'])
   })
 

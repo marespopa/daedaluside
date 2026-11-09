@@ -1,4 +1,4 @@
-import { idbGet, idbPut, openDB } from '../workspace/db'
+import { idbDelete, idbGet, idbPut, openDB } from '../workspace/db'
 
 /** PBKDF2-SHA-256 work factor, per ARCHITECTURE.md (>= 600,000). */
 export const PBKDF2_ITERATIONS = 600_000
@@ -121,6 +121,12 @@ export async function unlock(passphrase: string): Promise<void> {
   salt = record.salt
   iterations = record.iterations
   keys = JSON.parse(new TextDecoder().decode(plain)) as KeyMap
+}
+
+/** Deletes the stored vault and every key in it. For a forgotten passphrase; cannot be undone. */
+export async function resetVault(): Promise<void> {
+  lock()
+  await idbDelete(await db(), 'vault', RECORD_KEY)
 }
 
 /** Forgets the derived key and every decrypted secret. */
