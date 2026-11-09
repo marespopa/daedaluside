@@ -14,6 +14,7 @@ import { typographyAtom } from '../lib/typography'
 import { editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
 import { settingsOpenAtom } from '../state/workspaceAtoms'
 import { Button, Select } from '../ui'
+import AiSettings from '../ai/AiSettings'
 import { focusEditor } from './useWorkspace'
 
 const MODES: { id: ThemeMode; label: string }[] = [
@@ -213,6 +214,7 @@ function Dialog({ onClose }: { onClose: () => void }) {
             file tree.
           </p>
         </section>
+        <AiSettings />
       </div>
     </div>
   )

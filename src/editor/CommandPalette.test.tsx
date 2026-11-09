@@ -188,3 +188,23 @@ describe('command palette: open a file', () => {
     expect(store.get(activePathAtom)).toBe('other.txt')
   })
 })
+
+describe('command palette: AI', () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory()
+  })
+
+  it('opens the AI plan overlay from the command list', async () => {
+    const user = userEvent.setup()
+    const store = mount()
+    await openFolder(store)
+    await waitFor(() => expect(store.get(editorHandleAtom)).toBeTruthy())
+    const input = await openCommands(user)
+    await user.type(input, 'AI: Plan')
+    await user.keyboard('{Enter}')
+    expect(
+      await screen.findByRole('dialog', { name: 'AI: Plan change' }),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('What should change?')).toBeInTheDocument()
+  })
+})

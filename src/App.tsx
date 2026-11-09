@@ -6,6 +6,7 @@ import DiffStat from './editor/DiffStat'
 import Editor from './editor/Editor'
 import VimStatus from './editor/VimStatus'
 import { activeBufferAtom, editorWidthAtom } from './state/editorAtoms'
+import { aiOpenAtom } from './state/aiAtoms'
 import { activePathAtom, settingsOpenAtom, sidebarOpenAtom } from './state/workspaceAtoms'
 import { IconButton } from './ui'
 import FileTree from './workspace/FileTree'
@@ -18,6 +19,7 @@ import Tabs from './workspace/Tabs'
 import { useController, useWorkspaceLifecycle } from './workspace/useWorkspace'
 
 const SettingsDialog = lazy(() => import('./workspace/SettingsDialog'))
+const AiPanel = lazy(() => import('./ai/AiPanel'))
 
 export default function App() {
   useWorkspaceLifecycle()
@@ -27,6 +29,7 @@ export default function App() {
   const [width, setWidth] = useAtom(editorWidthAtom)
   const setSidebarOpen = useSetAtom(sidebarOpenAtom)
   const settingsOpen = useAtomValue(settingsOpenAtom)
+  const aiOpen = useAtomValue(aiOpenAtom)
 
   useEffect(() => {
     let wasNarrow = window.innerWidth < 1024
@@ -100,6 +103,7 @@ export default function App() {
       <CommandPalette />
       <GrepFinder />
       <Suspense fallback={null}>{settingsOpen && <SettingsDialog />}</Suspense>
+      <Suspense fallback={null}>{aiOpen && <AiPanel />}</Suspense>
       <ReconnectDialog />
       <Notice />
     </div>

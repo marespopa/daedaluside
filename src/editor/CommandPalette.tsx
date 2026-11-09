@@ -1,3 +1,4 @@
+import { aiOpenAtom } from '../state/aiAtoms'
 import { openSearchPanel } from '@codemirror/search'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -54,6 +55,7 @@ export default function CommandPalette() {
   const setBuffer = useSetAtom(activeBufferAtom)
   const controller = useController()
   const setSettings = useSetAtom(settingsOpenAtom)
+  const setAi = useSetAtom(aiOpenAtom)
   const setSidebar = useSetAtom(sidebarOpenAtom)
   const setWidth = useSetAtom(editorWidthAtom)
   const tree = useAtomValue(treeAtom)
@@ -201,6 +203,7 @@ export default function CommandPalette() {
         run: () => activePath && void controller.copyPath(activePath),
       },
       { id: 'settings', label: 'Settings', run: () => setSettings(true) },
+      { id: 'ai-plan', label: 'AI: Plan change', run: () => setAi(true) },
       { id: 'new-file', label: 'File: New File', enter: { kind: 'file' } },
       { id: 'new-folder', label: 'File: New Folder', enter: { kind: 'folder' } },
       {
@@ -284,6 +287,7 @@ export default function CommandPalette() {
     controller,
     activePath,
     setSettings,
+    setAi,
     setSidebar,
     setWidth,
     store,
