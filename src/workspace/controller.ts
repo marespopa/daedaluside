@@ -14,6 +14,7 @@ import {
   paletteOpenAtom,
 } from '../state/editorAtoms'
 import { computeHunks, diffTexts, type Hunk } from '../review/diff'
+import type { FilePatch } from '../workflow/types'
 import {
   isReviewed,
   loadMarks,
@@ -1464,6 +1465,48 @@ export class WorkspaceController {
       )
     } catch (e) {
       this.fail(e)
+    }
+  }
+
+  /**
+   * Applies reviewed AI patches through the editor buffers, so each change can be undone with
+   * Ctrl-Z. All-or-nothing up front: if any file no longer matches the text the patch was made
+   * from, nothing is written. Returns whether the patches were applied.
+   */
+  async applyPatches(patches: FilePatch[]): Promise<boolean> {
+    try {
+      for (const p of patches) {
+        const live = await this.readForPreview(p.path)
+        if (p.base === null ? live !== null : live !== p.base) {
+          this.notify(
+            'error',
+            p.base === null
+              ? `${p.path} now exists; nothing was applied.`
+              : `${p.path} changed since the plan; nothing was applied.`,
+          )
+          return false
+        }
+      }
+      for (const p of patches) {
+        if (p.base === null) await this.createFile(p.path)
+        else await this.openFile(p.path)
+        const view = this.handle?.view
+        if (!view || this.active !== normalizePath(p.path)) {
+          throw new Error(`Could not open ${p.path}; some files may already be changed.`)
+        }
+        view.dispatch({
+          changes: minimalChange(view.state.doc.toString(), p.content),
+        })
+        await this.saveActive()
+      }
+      this.notify(
+        'info',
+        `Applied changes to ${patches.length} file${patches.length === 1 ? '' : 's'}. Undo with Ctrl-Z in the editor.`,
+      )
+      return true
+    } catch (e) {
+      this.fail(e)
+      return false
     }
   }
 
