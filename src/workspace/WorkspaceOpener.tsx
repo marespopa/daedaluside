@@ -20,7 +20,7 @@ import {
   workspacesAtom,
   workspaceStatusAtom,
 } from '../state/workspaceAtoms'
-import BranchStatus from './BranchStatus'
+import BranchStatus, { BranchReviewButton } from './BranchStatus'
 import { Button, Icon, IconButton } from '../ui'
 import { useFolderPicker } from './useFolderPicker'
 import { useFilePicker } from './useFilePicker'
@@ -211,7 +211,7 @@ export default function WorkspaceOpener() {
                   : 'Open a folder to start editing.'}
             </p>
           )}
-          {ready && hasWorkspace && <BranchStatus className="justify-center" />}
+          {ready && hasWorkspace && <BranchStatus className="justify-center" link={false} />}
         </header>
 
         {loadingTree && (
@@ -291,6 +291,7 @@ export default function WorkspaceOpener() {
               <Button size="sm" onClick={() => void openFolder()}>
                 Open a Workspace
               </Button>
+              <BranchReviewButton />
               <Button size="sm" onClick={() => setSettings(true)}>
                 Settings
               </Button>
