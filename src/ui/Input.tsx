@@ -8,8 +8,9 @@ import { Icon, type IconName } from './Icon'
  * - `field`: a soft filled box, for search fields in panels.
  * - `bare`: no box, for a search that is the whole surface (the command palette).
  * - `inline`: a ringed field for editing a name in place.
+ * - `outlined`: a bordered box like Button and Select, for form fields in dialogs.
  */
-export type InputVariant = 'field' | 'bare' | 'inline'
+export type InputVariant = 'field' | 'bare' | 'inline' | 'outlined'
 export type InputSize = 'xs' | 'sm' | 'lg'
 
 const frames: Record<InputVariant, string> = {
@@ -17,6 +18,8 @@ const frames: Record<InputVariant, string> = {
     'bg-surface text-muted hover:bg-surface/80 focus-within:bg-canvas focus-within:text-text focus-within:ring-1 focus-within:ring-accent/50',
   bare: 'text-muted focus-within:text-text',
   inline: 'bg-canvas text-text ring-1 ring-accent/60 focus-within:ring-accent',
+  outlined:
+    'border border-muted bg-canvas text-text hover:bg-surface focus-within:border-accent focus-within:ring-1 focus-within:ring-accent',
 }
 
 const sizes: Record<InputSize, string> = {
@@ -32,6 +35,8 @@ export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
   icon?: IconName | undefined
   /** Applies to the frame around the field, e.g. `w-full`. */
   className?: string
+  /** Extra classes for the `<input>` itself. */
+  inputClassName?: string
   ref?: Ref<HTMLInputElement> | undefined
 }
 
@@ -44,6 +49,7 @@ export function Input({
   size = 'sm',
   icon,
   className = '',
+  inputClassName = '',
   ref,
   ...rest
 }: InputProps) {
@@ -57,7 +63,7 @@ export function Input({
         spellCheck={false}
         autoComplete="off"
         {...rest}
-        className="min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted"
+        className={`min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted ${inputClassName}`}
       />
     </label>
   )

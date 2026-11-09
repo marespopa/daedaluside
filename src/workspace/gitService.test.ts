@@ -84,7 +84,9 @@ describe('GitService', () => {
     disk.setFile('new.txt', enc('n\n'))
     disk.setFile('a.txt', enc('one\ntwo\nthree\n')) // reverted to HEAD
     await svc.patchChanged(['a.txt', 'new.txt'])
-    expect(Object.fromEntries(await svc.listChanged())).toEqual({ 'new.txt': 'untracked' })
+    expect(Object.fromEntries(await svc.listChanged())).toEqual({
+      'new.txt': 'untracked',
+    })
   })
 
   it('picks up a new commit on refreshHead', async () => {
@@ -228,8 +230,16 @@ describe('GitService branch review', () => {
 
   it('shows the net change across several feature commits', async () => {
     const { svc, fs, commit, initial } = await branched()
-    await commit('c2', { 'a.txt': 'one\nTWO\nTHREE\n', 'tmp.txt': 'temp\n', 'src/new.ts': 'v2\n' })
-    await commit('c3', { 'tmp.txt': null, 'a.txt': 'one\nTWO\nTHREE\nfour\n', 'c3.txt': 'c3\n' })
+    await commit('c2', {
+      'a.txt': 'one\nTWO\nTHREE\n',
+      'tmp.txt': 'temp\n',
+      'src/new.ts': 'v2\n',
+    })
+    await commit('c3', {
+      'tmp.txt': null,
+      'a.txt': 'one\nTWO\nTHREE\nfour\n',
+      'c3.txt': 'c3\n',
+    })
     await git.checkout({ fs, dir: '/', ref: 'base' })
     await commit('base moved', { 'other.txt': 'x\n' })
     const baseTip = await git.resolveRef({ fs, dir: '/', ref: 'base' })
@@ -245,7 +255,10 @@ describe('GitService branch review', () => {
       ['src/new.ts', 'A'],
     ])
     const a = res.files[0]!
-    expect(await svc.readBlobAt(a.mbOid!)).toEqual({ kind: 'text', text: 'one\ntwo\nthree\n' })
+    expect(await svc.readBlobAt(a.mbOid!)).toEqual({
+      kind: 'text',
+      text: 'one\ntwo\nthree\n',
+    })
     expect(await svc.readBlobAt(a.headOid!)).toEqual({
       kind: 'text',
       text: 'one\nTWO\nTHREE\nfour\n',

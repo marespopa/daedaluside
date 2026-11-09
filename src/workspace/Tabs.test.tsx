@@ -98,6 +98,36 @@ describe('tab strip', () => {
     vi.restoreAllMocks()
   })
 
+  it('opens the AI Companion as a tab beside the files and closes it again', async () => {
+    const { store } = mount()
+    await openFolder(store, new MemDisk())
+    await openTabs(store, 'a.ts')
+    act(() => ctl(store).openCompanion('chat'))
+    const tab = await screen.findByRole('tab', { name: 'AI Companion' })
+    expect(tab).toHaveAttribute('aria-selected', 'true')
+    // The file tab is not also shown as selected.
+    expect(screen.getByRole('tab', { name: /^a\.ts/ })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    )
+    expect(await screen.findByRole('log', { name: 'Conversation' })).toBeVisible()
+
+    // Clicking a file tab returns to the file; the companion stays open but hidden.
+    await userEvent.setup().click(screen.getByRole('tab', { name: /^a\.ts/ }))
+    expect(screen.getByRole('tab', { name: 'AI Companion' })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    )
+    expect(document.getElementById('ai-companion')).toHaveAttribute('hidden')
+
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'AI Companion' }))
+    expect(document.getElementById('ai-companion')).not.toHaveAttribute('hidden')
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Close AI Companion' }))
+    expect(screen.queryByRole('tab', { name: 'AI Companion' })).toBeNull()
+  })
+
   it('middle-click closes a tab', async () => {
     const disk = new MemDisk()
     const a = mount()

@@ -1,3 +1,4 @@
+import { sidecarOpenAtom } from '../state/companionAtoms'
 import { aiOpenAtom } from '../state/aiAtoms'
 import { openSearchPanel } from '@codemirror/search'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
@@ -56,6 +57,7 @@ export default function CommandPalette() {
   const controller = useController()
   const setSettings = useSetAtom(settingsOpenAtom)
   const setAi = useSetAtom(aiOpenAtom)
+  const setSidecar = useSetAtom(sidecarOpenAtom)
   const setSidebar = useSetAtom(sidebarOpenAtom)
   const setWidth = useSetAtom(editorWidthAtom)
   const tree = useAtomValue(treeAtom)
@@ -203,6 +205,21 @@ export default function CommandPalette() {
         run: () => activePath && void controller.copyPath(activePath),
       },
       { id: 'settings', label: 'Settings', run: () => setSettings(true) },
+      {
+        id: 'ai-companion',
+        label: 'AI Companion: Chat',
+        run: () => controller.openCompanion('chat'),
+      },
+      {
+        id: 'ai-sidecar',
+        label: 'AI Companion: Toggle Chat Sidecar',
+        run: () => setSidecar((o) => !o),
+      },
+      {
+        id: 'ai-config',
+        label: 'AI Companion: Configure',
+        run: () => controller.openCompanion('config'),
+      },
       { id: 'ai-plan', label: 'AI: Plan change', run: () => setAi(true) },
       { id: 'new-file', label: 'File: New File', enter: { kind: 'file' } },
       { id: 'new-folder', label: 'File: New Folder', enter: { kind: 'folder' } },
@@ -288,6 +305,7 @@ export default function CommandPalette() {
     activePath,
     setSettings,
     setAi,
+    setSidecar,
     setSidebar,
     setWidth,
     store,

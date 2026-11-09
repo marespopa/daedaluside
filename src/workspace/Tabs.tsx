@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { branchReviewAtom, branchTabActiveAtom } from '../state/branchReviewAtoms'
+import { companionOpenAtom, companionTabActiveAtom } from '../state/companionAtoms'
 import { prefersReducedMotion } from '../lib/motion'
 import { MOD_KEY_LABEL } from '../lib/platform'
 import {
@@ -45,6 +46,8 @@ export default function Tabs() {
   const snapshot = useAtomValue(snapshotAtom)
   const review = useAtomValue(branchReviewAtom) !== null
   const reviewActive = useAtomValue(branchTabActiveAtom)
+  const companion = useAtomValue(companionOpenAtom)
+  const companionActive = useAtomValue(companionTabActiveAtom)
   const opening = useAtomValue(openingPathAtom)
   // The file is known before it is read: show its tab at once, in the place the real one will take.
   const pending =
@@ -70,14 +73,20 @@ export default function Tabs() {
       </nav>
     )
   }
-  if (buffers.length === 0 && !review && !pending) return null
+  if (buffers.length === 0 && !review && !companion && !pending) return null
   return (
     <TabStrip
       buffers={buffers}
       pending={pending}
-      active={pending || (review && reviewActive) ? null : active}
+      active={
+        pending || (review && reviewActive) || (companion && companionActive)
+          ? null
+          : active
+      }
       review={review}
       reviewActive={review && reviewActive}
+      companion={companion}
+      companionActive={companion && companionActive}
     />
   )
 }
@@ -91,6 +100,8 @@ function TabStrip({
   active,
   review,
   reviewActive,
+  companion,
+  companionActive,
 }: {
   buffers: OpenBuffer[]
   /** A file being read: shown as a placeholder tab until its real tab replaces it. */
@@ -98,6 +109,8 @@ function TabStrip({
   active: string | null
   review: boolean
   reviewActive: boolean
+  companion: boolean
+  companionActive: boolean
 }) {
   const store = useStore()
   const controller = useController()
@@ -347,6 +360,33 @@ function TabStrip({
               variant="quiet"
               tabIndex={-1}
               onClick={() => controller.closeBranchReview()}
+              className="absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity duration-150 ease-out group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+            />
+          </div>
+        )}
+        {companion && (
+          <div
+            data-tab="ai-companion"
+            role="presentation"
+            className={`group relative ml-1 flex h-7 shrink-0 items-center rounded-md transition-colors duration-150 ease-out ${companionActive ? 'bg-surface' : 'hover:bg-surface/60'}`}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={companionActive}
+              aria-controls="ai-companion"
+              onClick={() => controller.openCompanion()}
+              className={`flex h-full items-center rounded-md px-3 pr-7 text-left whitespace-nowrap focus-visible:outline-2 focus-visible:outline-accent ${companionActive ? 'font-medium text-text' : 'text-muted group-hover:text-text'}`}
+            >
+              AI Companion
+            </button>
+            <IconButton
+              label="Close AI Companion"
+              icon="x"
+              size="xs"
+              variant="quiet"
+              tabIndex={-1}
+              onClick={() => controller.closeCompanion()}
               className="absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity duration-150 ease-out group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
             />
           </div>

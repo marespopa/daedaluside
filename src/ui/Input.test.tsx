@@ -23,3 +23,11 @@ describe('Input', () => {
     expect(frame).toHaveClass('w-full', 'h-12')
   })
 })
+
+describe('Input outlined', () => {
+  it('draws a border like Button and Select', () => {
+    render(<Input aria-label="Name" variant="outlined" />)
+    const frame = screen.getByRole('textbox', { name: 'Name' }).closest('label')!
+    expect(frame).toHaveClass('border', 'border-muted')
+  })
+})

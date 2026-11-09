@@ -25,6 +25,12 @@ import {
   type Marks,
 } from '../review/branch/marks'
 import {
+  companionOpenAtom,
+  companionTabActiveAtom,
+  companionViewAtom,
+  type CompanionView,
+} from '../state/companionAtoms'
+import {
   branchApprovedAtom,
   branchConfirmAtom,
   branchMarksAtom,
@@ -997,6 +1003,7 @@ export class WorkspaceController {
     if (!quiet) {
       // Open at once in a loading state; the workspace may still be reading its tree.
       this.store.set(reviewOpenAtom, false)
+      this.store.set(companionTabActiveAtom, false)
       this.store.set(branchTabActiveAtom, true)
       this.store.set(branchConfirmAtom, null)
       this.store.set(branchApprovedAtom, new Set())
@@ -1283,7 +1290,23 @@ export class WorkspaceController {
   showBranchReview() {
     if (!this.store.get(branchReviewAtom)) return
     this.store.set(reviewOpenAtom, false)
+    this.store.set(companionTabActiveAtom, false)
     this.store.set(branchTabActiveAtom, true)
+  }
+
+  /** Opens the AI Companion tab (or focuses it) on `view` when given. Responds in the same frame. */
+  openCompanion(view?: CompanionView) {
+    if (view) this.store.set(companionViewAtom, view)
+    this.store.set(reviewOpenAtom, false)
+    this.store.set(branchTabActiveAtom, false)
+    this.store.set(companionOpenAtom, true)
+    this.store.set(companionTabActiveAtom, true)
+  }
+
+  closeCompanion() {
+    this.store.set(companionOpenAtom, false)
+    this.store.set(companionTabActiveAtom, false)
+    this.handle?.view.focus()
   }
 
   closeBranchReview() {
@@ -1981,6 +2004,7 @@ export class WorkspaceController {
   /** Focuses a tab, even if it is already active (clicking a tab returns focus to the editor). */
   private activate(path: string) {
     this.store.set(branchTabActiveAtom, false)
+    this.store.set(companionTabActiveAtom, false)
     this.commit(openTab(this.tabState(), path), { force: true })
   }
 
@@ -2279,6 +2303,7 @@ export class WorkspaceController {
     // The review overlays cover the opener, so drop them too.
     this.store.set(reviewOpenAtom, false)
     this.store.set(branchTabActiveAtom, false)
+    this.store.set(companionTabActiveAtom, false)
     if (this.active === null) return
     this.commit({ tabs: this.tabs, active: null })
   }

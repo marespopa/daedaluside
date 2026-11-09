@@ -85,4 +85,31 @@ describe('SettingsDialog', () => {
       ligatures: false,
     })
   })
+
+  it('points AI setup at the AI Companion tab', async () => {
+    const { user } = setup()
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(screen.queryByText(/AI Companion tab/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'AI' }))
+    expect(await screen.findByText(/AI Companion tab/)).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Dark theme' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'General' }))
+    expect(screen.getByRole('combobox', { name: 'Dark theme' })).toBeInTheDocument()
+  })
+
+  it('moves between tabs with the arrow keys', async () => {
+    const { user } = setup()
+    screen.getByRole('tab', { name: 'General' }).focus()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'AI' })).toHaveFocus()
+    expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveFocus()
+  })
 })

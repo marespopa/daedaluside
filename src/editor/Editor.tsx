@@ -1,6 +1,7 @@
 import { useAtomValue, useStore } from 'jotai'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { branchReviewAtom, branchTabActiveAtom } from '../state/branchReviewAtoms'
+import { companionOpenAtom } from '../state/companionAtoms'
 import { activeImageAtom, editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
 import { reviewOpenAtom } from '../state/gitAtoms'
 import {
@@ -21,6 +22,7 @@ import { symbolTriggers } from './contextMenu'
 // Rarely-open views load on first use, keeping them out of the startup chunk.
 const DiffReview = lazy(() => import('../review/DiffReview'))
 const BranchReview = lazy(() => import('../review/branch/BranchReview'))
+const AiCompanion = lazy(() => import('../ai/AiCompanion'))
 const ImageViewer = lazy(() => import('./ImageViewer'))
 
 /** True once `on` has held for `ms`, so fast opens do not flash a placeholder. */
@@ -51,6 +53,7 @@ export default function Editor() {
   const branchLoaded = useAtomValue(branchReviewAtom) !== null
   const branchTabActive = useAtomValue(branchTabActiveAtom)
   const branchOpen = branchLoaded && branchTabActive
+  const companionExists = useAtomValue(companionOpenAtom)
   const image = useAtomValue(activeImageAtom)
   // Last session's file is being restored: show its place, not an empty editor.
   const restoring = status.state === 'loading' && snapshot?.activeFile != null
@@ -104,6 +107,7 @@ export default function Editor() {
         {image && <ImageViewer />}
         {reviewOpen && <DiffReview />}
         {branchOpen && <BranchReview />}
+        {companionExists && <AiCompanion />}
       </Suspense>
       {(restoring || opening) && <EditorSkeleton />}
       {/* Not while storage is starting: the workspace is about to open a file. */}
