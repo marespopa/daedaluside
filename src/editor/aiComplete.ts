@@ -1,3 +1,4 @@
+import { closeCompletion, completionStatus } from '@codemirror/autocomplete'
 import {
   type Extension,
   Prec,
@@ -159,6 +160,8 @@ export function aiComplete({
             if (!text || ctl.signal.aborted) return
             if (view.state.doc !== doc || view.state.selection.main.head !== ctx.pos)
               return
+            // The word popup would sit over the suggestion and take Enter, so the suggestion wins.
+            if (completionStatus(view.state) !== null) closeCompletion(view)
             view.dispatch({ effects: setGhost.of({ pos: ctx.pos, text }) })
           },
           () => {

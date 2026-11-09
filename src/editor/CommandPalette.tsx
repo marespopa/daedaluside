@@ -6,14 +6,19 @@ import { runAction } from '../actions/registry'
 import { createDoubleShift } from '../lib/doubleShift'
 import { themeAtom } from '../lib/theme'
 import { THEMES, type ThemeId, type ThemeMode } from '../lib/themes'
+import { sidecarOpenAtom } from '../state/companionAtoms'
 import {
   activeBufferAtom,
+  aiCompleteEnabledAtom,
   editorHandleAtom,
+  editorWidthAtom,
   grepOpenAtom,
   grepQueryAtom,
   paletteOpenAtom,
   paletteQueryAtom,
+  vimEnabledAtom,
 } from '../state/editorAtoms'
+import { fileDiffEnabledAtom } from '../state/gitAtoms'
 import {
   activePathAtom,
   currentWorkspaceIdAtom,
@@ -47,6 +52,12 @@ export default function CommandPalette() {
   const [open, setOpen] = useAtom(paletteOpenAtom)
   const [query, setQuery] = useAtom(paletteQueryAtom)
   const handle = useAtomValue(editorHandleAtom)
+  // Switch commands say what they will do: "Enable X" while off, "Disable X" while on.
+  const fullWidth = useAtomValue(editorWidthAtom) === 'full'
+  const vimOn = useAtomValue(vimEnabledAtom)
+  const aiCompleteOn = useAtomValue(aiCompleteEnabledAtom)
+  const diffMarksOn = useAtomValue(fileDiffEnabledAtom)
+  const sidecarOn = useAtomValue(sidecarOpenAtom)
   const [themeSetting, setTheme] = useAtom(themeAtom)
   const setBuffer = useSetAtom(activeBufferAtom)
   const controller = useController()
@@ -141,11 +152,19 @@ export default function CommandPalette() {
       },
       { id: 'close', label: 'File: Close Buffer', run: act('file.close') },
       { id: 'tree', label: 'View: Open File Tree (:Explore)', run: act('view.sidebar') },
-      { id: 'width', label: 'View: Toggle Full Width', run: act('view.toggle-width') },
-      { id: 'vim', label: 'Editor: Toggle Vim Mode', run: act('editor.toggle-vim') },
+      {
+        id: 'width',
+        label: `View: ${fullWidth ? 'Disable' : 'Enable'} Full Width`,
+        run: act('view.toggle-width'),
+      },
+      {
+        id: 'vim',
+        label: `Editor: ${vimOn ? 'Disable' : 'Enable'} Vim Mode`,
+        run: act('editor.toggle-vim'),
+      },
       {
         id: 'ai-complete',
-        label: 'Editor: Toggle AI Suggestions',
+        label: `Editor: ${aiCompleteOn ? 'Disable' : 'Enable'} AI Suggestions`,
         run: act('editor.toggle-ai-complete'),
       },
       { id: 'fold-all', label: 'Editor: Fold All Sections', run: act('editor.fold-all') },
@@ -156,7 +175,7 @@ export default function CommandPalette() {
       },
       {
         id: 'file-diff',
-        label: 'Editor: Toggle Git Diff Marks',
+        label: `Editor: ${diffMarksOn ? 'Disable' : 'Enable'} Git Diff Marks`,
         run: act('editor.toggle-diff'),
       },
       {
@@ -186,7 +205,7 @@ export default function CommandPalette() {
       },
       {
         id: 'ai-sidecar',
-        label: 'AI Companion: Toggle Chat Sidecar',
+        label: `AI Companion: ${sidecarOn ? 'Hide' : 'Show'} Chat Sidecar`,
         run: act('ai.toggle-sidecar'),
       },
       { id: 'ai-config', label: 'AI Companion: Configure', run: act('ai.open-config') },
@@ -277,6 +296,11 @@ export default function CommandPalette() {
     store,
     workspaces,
     currentId,
+    fullWidth,
+    vimOn,
+    aiCompleteOn,
+    diffMarksOn,
+    sidecarOn,
   ])
 
   const files = useMemo(() => tree.filter((e) => e.kind === 'file'), [tree])

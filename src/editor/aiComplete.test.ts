@@ -1,3 +1,8 @@
+import {
+  autocompletion,
+  completionStatus,
+  startCompletion,
+} from '@codemirror/autocomplete'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -32,6 +37,33 @@ const tab = (view: EditorView) =>
 afterEach(() => {
   vi.useRealTimers()
   document.body.innerHTML = ''
+})
+
+describe('aiComplete with the word popup', () => {
+  it('closes the popup so the suggestion shows and Tab accepts it', async () => {
+    const view = new EditorView({
+      parent: document.body,
+      state: EditorState.create({
+        doc: 'const a',
+        extensions: [
+          autocompletion({
+            override: [
+              () => ({ from: 0, options: [{ label: 'const' }, { label: 'constant' }] }),
+            ],
+          }),
+          aiComplete({ enabled: () => true, complete: async () => ' = 1', delay: 10 }),
+        ],
+      }),
+    })
+    type(view, ' ')
+    startCompletion(view)
+    await vi.waitFor(() => expect(completionStatus(view.state)).not.toBeNull())
+    await vi.waitFor(() => expect(view.dom.querySelector('.cm-ai-ghost')).not.toBeNull())
+    expect(completionStatus(view.state)).toBeNull()
+    tab(view)
+    expect(view.state.doc.toString()).toBe('const a  = 1')
+    view.destroy()
+  })
 })
 
 describe('aiComplete', () => {
