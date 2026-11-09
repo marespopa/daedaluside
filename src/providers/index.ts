@@ -5,7 +5,11 @@ import type { AdapterOptions, ProviderAdapter, ProviderId } from './types'
 
 export * from './types'
 
-export const PROVIDER_IDS: readonly ProviderId[] = ['gemini', 'anthropic', 'ollama']
+/**
+ * Providers offered in the app. The Ollama adapter stays in the tree but is not offered for now:
+ * a saved Ollama route is ignored and falls back to the default.
+ */
+export const PROVIDER_IDS: readonly ProviderId[] = ['gemini', 'anthropic']
 
 /** Whether the provider needs a key from the vault. */
 export const needsKey = (id: ProviderId) => id !== 'ollama'

@@ -8,15 +8,9 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   ollama: 'qwen2.5-coder',
 }
 
-/**
- * Providers that can serve a request right now: a keyed provider needs a saved key, and
- * keyless Ollama needs a reachable local server (merely being listed is not enough).
- */
-export function configuredProviders(
-  saved: readonly string[],
-  ollamaUp: boolean,
-): ProviderId[] {
-  return PROVIDER_IDS.filter((id) => (needsKey(id) ? saved.includes(id) : ollamaUp))
+/** Providers that can serve a request right now: a keyed provider needs a saved key. */
+export function configuredProviders(saved: readonly string[]): ProviderId[] {
+  return PROVIDER_IDS.filter((id) => !needsKey(id) || saved.includes(id))
 }
 
 /** The provider and default model a stage falls back to when its own is not configured. */

@@ -91,6 +91,7 @@ export default function Editor() {
           enabled: () =>
             store.get(aiCompleteEnabledAtom) && store.get(activePathAtom) !== null,
           complete: (ctx, signal) => requestCompletion(ctx, signal),
+          onError: (e) => console.warn('AI suggestions:', e),
         }),
         symbolTriggers({
           enabled: () => store.get(activePathAtom) !== null,

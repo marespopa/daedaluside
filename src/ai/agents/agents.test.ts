@@ -54,10 +54,11 @@ describe('tools and models', () => {
       provider: 'anthropic',
       model: 'claude-haiku-5-5',
     })
-    expect(agentRoute('ollama/qwen2.5-coder')).toEqual({
-      provider: 'ollama',
-      model: 'qwen2.5-coder',
+    expect(agentRoute('gemini/gemini-flash-latest')).toEqual({
+      provider: 'gemini',
+      model: 'gemini-flash-latest',
     })
+    expect(agentRoute('ollama/qwen2.5-coder')).toBeNull()
     expect(agentRoute('gpt-4')).toBeNull()
     expect(agentRoute(undefined)).toBeNull()
   })

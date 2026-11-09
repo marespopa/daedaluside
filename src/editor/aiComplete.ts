@@ -25,6 +25,8 @@ export interface AiCompleteOptions {
     ctx: { prefix: string; suffix: string },
     signal: AbortSignal,
   ) => Promise<string | null>
+  /** Called with the reason when a request fails, so the cause can be seen. */
+  onError?: (e: unknown) => void
   /** Quiet time after typing before asking, in ms. */
   delay?: number
 }
@@ -125,6 +127,7 @@ function dismiss(view: EditorView): boolean {
 export function aiComplete({
   enabled,
   complete,
+  onError,
   delay = 700,
 }: AiCompleteOptions): Extension {
   const plugin = ViewPlugin.fromClass(
@@ -164,8 +167,9 @@ export function aiComplete({
             if (completionStatus(view.state) !== null) closeCompletion(view)
             view.dispatch({ effects: setGhost.of({ pos: ctx.pos, text }) })
           },
-          () => {
-            /* locked vault, no key, offline: stay quiet */
+          (e) => {
+            // Locked vault, no key, offline: no suggestion, and no error in the editor.
+            if (!ctl.signal.aborted) onError?.(e)
           },
         )
       }

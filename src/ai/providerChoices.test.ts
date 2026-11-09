@@ -3,13 +3,12 @@ import { configuredProviders, fallbackRoute } from './providerChoices'
 
 describe('configuredProviders', () => {
   it('lists keyed providers only once their key is saved', () => {
-    expect(configuredProviders([], false)).toEqual([])
-    expect(configuredProviders(['anthropic'], false)).toEqual(['anthropic'])
+    expect(configuredProviders([])).toEqual([])
+    expect(configuredProviders(['anthropic'])).toEqual(['anthropic'])
   })
 
-  it('lists Ollama only while its server is reachable', () => {
-    expect(configuredProviders([], true)).toEqual(['ollama'])
-    expect(configuredProviders(['gemini'], true)).toEqual(['gemini', 'ollama'])
+  it('never lists Ollama, which is not offered for now', () => {
+    expect(configuredProviders(['gemini', 'ollama'])).toEqual(['gemini'])
   })
 })
 
@@ -19,14 +18,16 @@ describe('fallbackRoute', () => {
   })
 
   it('picks the first configured provider with its default model', () => {
-    expect(fallbackRoute(['gemini', 'ollama'])).toEqual({
+    expect(fallbackRoute(['gemini', 'anthropic'])).toEqual({
       provider: 'gemini',
       model: 'gemini-flash-latest',
     })
   })
 
   it('prefers the given provider when it is configured', () => {
-    expect(fallbackRoute(['gemini', 'ollama'], 'ollama')?.provider).toBe('ollama')
-    expect(fallbackRoute(['gemini'], 'ollama')?.provider).toBe('gemini')
+    expect(fallbackRoute(['gemini', 'anthropic'], 'anthropic')?.provider).toBe(
+      'anthropic',
+    )
+    expect(fallbackRoute(['gemini'], 'anthropic')?.provider).toBe('gemini')
   })
 })

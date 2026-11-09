@@ -13,10 +13,10 @@ export interface Route {
 }
 export type Routes = Record<Stage, Route>
 
-/** PLAN wants a large context; EXECUTE is many small edits, so a light or local model fits. */
+/** PLAN wants a large context; EXECUTE is many small edits, so a light model fits. */
 export const DEFAULT_ROUTES: Routes = {
   plan: { provider: 'gemini', model: 'gemini-flash-latest' },
-  execute: { provider: 'ollama', model: 'qwen2.5-coder' },
+  execute: { provider: 'gemini', model: 'gemini-flash-latest' },
 }
 
 const SETTINGS_KEY = 'ai:routes'

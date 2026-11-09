@@ -9,16 +9,15 @@ import AiPanel from './AiPanel'
 
 const sse = (text: string) =>
   `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] })}\n\n`
-const ndjson = (text: string) => `${JSON.stringify({ message: { content: text } })}\n`
 
-/** Gemini plans; Ollama writes the edits (the default routes). */
+/** Both default routes are Gemini: the first request is the plan, the second the edits. */
 function mockFetch(plan: string, edits: string) {
   const calls: { url: string; body: string }[] = []
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, body: String(init?.body ?? '') })
-      const text = url.includes('generativelanguage') ? sse(plan) : ndjson(edits)
+      const text = sse(calls.length === 1 ? plan : edits)
       return new Response(text)
     }),
   )

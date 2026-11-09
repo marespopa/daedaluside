@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProviderAdapter, StreamRequest } from '../providers/types'
+import { MissingKeyError } from '../router/router'
 import { cleanCompletion, requestCompletion } from './inlineComplete'
 
 function fake(chunks: string[], seen: StreamRequest[] = []) {
@@ -55,6 +56,38 @@ describe('requestCompletion', () => {
         (async () => {
           throw new Error('vault is locked')
         }) as never,
+      ),
+    ).rejects.toThrow('locked')
+  })
+})
+
+describe('requestCompletion fallback', () => {
+  it('uses the Plan model when the Edit model has no key', async () => {
+    const asked: string[] = []
+    const plan = fake(['ok'])
+    const resolve = (async (stage: string) => {
+      asked.push(stage)
+      if (stage === 'execute') throw new MissingKeyError('gemini')
+      return (plan as unknown as () => Promise<unknown>)()
+    }) as never
+    const out = await requestCompletion(
+      { prefix: 'x', suffix: '' },
+      new AbortController().signal,
+      resolve,
+    )
+    expect(out).toBe('ok')
+    expect(asked).toEqual(['execute', 'plan'])
+  })
+
+  it('does not hide other errors such as a locked vault', async () => {
+    const resolve = (async () => {
+      throw new Error('vault is locked')
+    }) as never
+    await expect(
+      requestCompletion(
+        { prefix: 'x', suffix: '' },
+        new AbortController().signal,
+        resolve,
       ),
     ).rejects.toThrow('locked')
   })

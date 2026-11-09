@@ -46,25 +46,24 @@ describe('routes', () => {
   it('falls back per stage when the stored record is corrupt', async () => {
     await putRaw({
       plan: { provider: 'bogus', model: 'm' },
-      execute: { provider: 'ollama', model: 'llama' },
+      execute: { provider: 'anthropic', model: 'claude-haiku-5-5' },
     })
     const routes = await loadRoutes()
     expect(routes.plan).toEqual(DEFAULT_ROUTES.plan)
-    expect(routes.execute).toEqual({ provider: 'ollama', model: 'llama' })
+    expect(routes.execute).toEqual({ provider: 'anthropic', model: 'claude-haiku-5-5' })
   })
 
   it('resets to defaults', async () => {
-    await saveRoute('plan', { provider: 'ollama', model: 'big' })
+    await saveRoute('plan', { provider: 'anthropic', model: 'big' })
     await resetRoutes()
     expect(await loadRoutes()).toEqual(DEFAULT_ROUTES)
   })
 })
 
 describe('resolveStage', () => {
-  it('needs no key for Ollama, even with the vault locked', async () => {
-    const { adapter, route } = await resolveStage('execute')
-    expect(adapter.id).toBe('ollama')
-    expect(route.model).toBe(DEFAULT_ROUTES.execute.model)
+  it('ignores a saved Ollama route, which is not offered for now', async () => {
+    await putRaw({ execute: { provider: 'ollama', model: 'llama' } })
+    expect((await loadRoutes()).execute).toEqual(DEFAULT_ROUTES.execute)
   })
 
   it('throws VaultLockedError when a keyed provider is used while locked', async () => {

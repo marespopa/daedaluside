@@ -212,8 +212,14 @@ describe('error mapping', () => {
 })
 
 describe('factory', () => {
-  it('builds every provider and only Ollama is keyless', () => {
+  it('builds every offered provider, all of which need a key', () => {
     for (const id of PROVIDER_IDS) expect(createProvider(id).id).toBe(id)
-    expect(PROVIDER_IDS.filter((id) => !needsKey(id))).toEqual(['ollama'])
+    expect(PROVIDER_IDS).toEqual(['gemini', 'anthropic'])
+    expect(PROVIDER_IDS.filter((id) => !needsKey(id))).toEqual([])
+  })
+
+  it('still builds the Ollama adapter, which is not offered for now', () => {
+    expect(createProvider('ollama').id).toBe('ollama')
+    expect(needsKey('ollama')).toBe(false)
   })
 })

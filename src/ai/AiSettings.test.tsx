@@ -15,16 +15,13 @@ import AiSettings from './AiSettings'
 beforeEach(() => resetVaultForTests())
 afterEach(() => vi.unstubAllGlobals())
 
-/** Makes `fetch` answer like a local Ollama, or fail like one that is not running. */
-function stubOllama(
-  up: boolean,
-  models: { name: string }[] = [{ name: 'qwen2.5-coder' }],
-) {
+/** Makes `fetch` list models like Anthropic's API, or fail like a network that is down. */
+function stubModels(up: boolean, ids: string[] = ['claude-sonnet-5-5']) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => {
       if (!up) throw new TypeError('offline')
-      return Response.json({ models })
+      return Response.json({ data: ids.map((id) => ({ id })) })
     }),
   )
 }
@@ -91,14 +88,14 @@ describe('AiSettings', () => {
   })
 
   it('lists only configured providers, and says so when there are none', async () => {
-    stubOllama(false)
+    stubModels(false)
     render(<AiSettings />)
     expect(await screen.findByText(/No providers configured/)).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Plan model provider' })).toBeNull()
   })
 
-  it('lists a provider once its key is saved, and not Ollama when it is down', async () => {
-    stubOllama(false)
+  it('lists a provider once its key is saved, and never Ollama', async () => {
+    stubModels(false)
     await unlockedVault()
     await setKey('anthropic', 'k')
     const user = userEvent.setup()
@@ -114,7 +111,7 @@ describe('AiSettings', () => {
   })
 
   it('moves a stage to a configured provider with its default model', async () => {
-    stubOllama(false)
+    stubModels(false)
     await unlockedVault()
     await setKey('anthropic', 'k')
     render(<AiSettings />)
@@ -126,63 +123,72 @@ describe('AiSettings', () => {
   })
 
   it('saves the model name for a stage when the field loses focus', async () => {
-    stubOllama(true)
+    stubModels(true)
+    await unlockedVault()
+    await setKey('gemini', 'k')
     const user = userEvent.setup()
     render(<AiSettings />)
     const field = await screen.findByLabelText('Edit model name')
     await user.clear(field)
-    await user.type(field, 'llama3')
+    await user.type(field, 'gemini-pro-latest')
     await user.tab()
-    await waitFor(async () => expect((await loadRoutes()).execute.model).toBe('llama3'))
+    await waitFor(async () =>
+      expect((await loadRoutes()).execute.model).toBe('gemini-pro-latest'),
+    )
   })
 
   it('saves the provider for a stage', async () => {
-    stubOllama(true)
+    stubModels(true)
     await unlockedVault()
     await setKey('gemini', 'k')
+    await setKey('anthropic', 'k')
     const user = userEvent.setup()
     render(<AiSettings />)
     await user.click(await screen.findByRole('combobox', { name: 'Plan model provider' }))
-    await user.click(await screen.findByRole('option', { name: 'Ollama (local)' }))
-    await waitFor(async () => expect((await loadRoutes()).plan.provider).toBe('ollama'))
+    await user.click(await screen.findByRole('option', { name: 'Anthropic' }))
+    await waitFor(async () =>
+      expect((await loadRoutes()).plan.provider).toBe('anthropic'),
+    )
   })
 
   it("switches to the new provider's default model, not the old one", async () => {
-    stubOllama(true)
+    stubModels(true)
     await unlockedVault()
     await setKey('gemini', 'k')
+    await setKey('anthropic', 'k')
     const user = userEvent.setup()
     render(<AiSettings />)
     await user.click(await screen.findByRole('combobox', { name: 'Edit model provider' }))
-    await user.click(await screen.findByRole('option', { name: 'Gemini' }))
+    await user.click(await screen.findByRole('option', { name: 'Anthropic' }))
     await waitFor(async () => {
       const r = (await loadRoutes()).execute
-      expect(r).toEqual({ provider: 'gemini', model: 'gemini-flash-latest' })
+      expect(r).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5-5' })
     })
-    expect(screen.getByLabelText('Edit model name')).toHaveValue('gemini-flash-latest')
+    expect(screen.getByLabelText('Edit model name')).toHaveValue('claude-sonnet-5-5')
   })
 
   it("lists the provider's real models and picks one", async () => {
-    stubOllama(true, [{ name: 'qwen3-coder:30b' }, { name: 'llama3.2' }])
+    stubModels(true, ['claude-opus-5-5', 'beta-model'])
     await unlockedVault()
     await setKey('gemini', 'k')
+    await setKey('anthropic', 'k')
     const user = userEvent.setup()
     render(<AiSettings />)
     await user.click(await screen.findByRole('combobox', { name: 'Plan model provider' }))
-    await user.click(await screen.findByRole('option', { name: 'Ollama (local)' }))
+    await user.click(await screen.findByRole('option', { name: 'Anthropic' }))
     const field = screen.getByRole('combobox', { name: 'Plan model name' })
     await user.click(field)
-    expect(await screen.findByRole('option', { name: 'qwen3-coder:30b' })).toBeVisible()
+    expect(await screen.findByRole('option', { name: 'claude-opus-5-5' })).toBeVisible()
     await user.clear(field)
-    await user.type(field, 'llama')
-    expect(field).toHaveValue('llama3.2')
-    expect(screen.queryByRole('option', { name: 'qwen3-coder:30b' })).toBeNull()
-    await user.click(screen.getByRole('option', { name: 'llama3.2' }))
-    await waitFor(async () => expect((await loadRoutes()).plan.model).toBe('llama3.2'))
+    await user.type(field, 'beta')
+    expect(await screen.findByRole('option', { name: 'beta-model' })).toBeVisible()
+    expect(screen.queryByRole('option', { name: 'claude-opus-5-5' })).toBeNull()
+    await user.click(screen.getByRole('option', { name: 'beta-model' }))
+    await waitFor(async () => expect((await loadRoutes()).plan.model).toBe('beta-model'))
   })
 
   it('says why the list is empty when the request fails', async () => {
-    stubOllama(false)
+    stubModels(false)
     await unlockedVault()
     await setKey('anthropic', 'k')
     const user = userEvent.setup()

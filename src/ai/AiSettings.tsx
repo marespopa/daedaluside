@@ -18,7 +18,6 @@ import {
   WrongPassphraseError,
 } from '../vault/vault'
 import type { VaultStatus } from '../vault/vault'
-
 const STAGE_LABEL: Record<Stage, string> = { plan: 'Plan model', execute: 'Edit model' }
 const PROVIDER_LABEL: Record<ProviderId, string> = {
   gemini: 'Gemini',
@@ -27,7 +26,7 @@ const PROVIDER_LABEL: Record<ProviderId, string> = {
 }
 const KEYED = PROVIDER_IDS.filter(needsKey)
 
-/** The provider's real model ids, fetched once a key is saved (Ollama needs none). */
+/** The provider's real model ids, fetched once a key is saved. */
 function useModels(provider: ProviderId, ready: boolean) {
   const [state, setState] = useState<{
     provider: ProviderId
@@ -62,16 +61,12 @@ export default function AiSettings() {
   const [status, setStatus] = useState<VaultStatus | null>(null)
   const [saved, setSaved] = useState<string[]>([])
   const [routes, setRoutes] = useState<Routes | null>(null)
-  /** Whether a local Ollama answers; null until the first check finishes. */
-  const [ollamaUp, setOllamaUp] = useState<boolean | null>(null)
-  const configured = configuredProviders(saved, ollamaUp === true)
-
+  const configured = configuredProviders(saved)
   const refresh = useCallback(async () => {
     const s = await vaultStatus()
     setStatus(s)
     setSaved(s === 'unlocked' ? listProviders() : [])
   }, [])
-
   useEffect(() => {
     let live = true
     void vaultStatus().then((s) => {
@@ -80,23 +75,17 @@ export default function AiSettings() {
       setSaved(s === 'unlocked' ? listProviders() : [])
     })
     void loadRoutes().then((r) => live && setRoutes(r))
-    const ctl = new AbortController()
-    createProvider('ollama', {})
-      .listModels(ctl.signal)
-      .then(() => live && setOllamaUp(true))
-      .catch(() => live && setOllamaUp(false))
     return () => {
       live = false
-      ctl.abort()
     }
   }, [])
 
   // A stage whose provider is not configured (a key was removed, or none was ever saved)
   // moves to a configured one with that provider's default model. Only once the vault is
-  // unlocked and Ollama is checked, so a locked vault never rewrites the saved routes.
+  // unlocked, so a locked vault never rewrites the saved routes.
   const stageProviders = routes ? STAGES.map((s) => routes[s].provider).join() : ''
   useEffect(() => {
-    if (!routes || status !== 'unlocked' || ollamaUp === null) return
+    if (!routes || status !== 'unlocked') return
     const fallback = fallbackRoute(configured)
     if (!fallback) return
     const stale = STAGES.filter((s) => !configured.includes(routes[s].provider))
@@ -107,7 +96,7 @@ export default function AiSettings() {
       setRoutes(next)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, ollamaUp, saved, stageProviders])
+  }, [status, saved, stageProviders])
 
   const changeRoute = async (stage: Stage, provider: ProviderId, model: string) => {
     if (!model.trim()) return
@@ -123,7 +112,7 @@ export default function AiSettings() {
         <p className="text-muted">
           To use AI you add an API key from Gemini or Anthropic. Keys are stored only in
           this browser, locked by a vault passphrase that you choose. Requests go straight
-          to the provider. Ollama runs on your machine and needs no key.
+          to the provider.
         </p>
       </div>
 
@@ -183,13 +172,11 @@ export default function AiSettings() {
         </p>
         {routes && status !== null && configured.length === 0 && (
           <p className="text-muted">
-            {ollamaUp === null
-              ? 'Checking for a local Ollama…'
-              : status === 'unlocked'
-                ? 'No providers configured. Add an API key in step 2, or start Ollama on this machine.'
-                : status === 'locked'
-                  ? 'No providers available. Unlock the vault in step 1 to use your saved keys, or start Ollama on this machine.'
-                  : 'No providers configured. Create the vault in step 1 and add an API key, or start Ollama on this machine.'}
+            {status === 'unlocked'
+              ? 'No providers configured. Add an API key in step 2.'
+              : status === 'locked'
+                ? 'No providers available. Unlock the vault in step 1 to use your saved keys.'
+                : 'No providers configured. Create the vault in step 1 and add an API key.'}
           </p>
         )}
         {routes &&
