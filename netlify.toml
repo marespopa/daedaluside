@@ -2,9 +2,6 @@
   publish = "dist"
   command = "npm run build"
 
-[build.environment]
-  NODE_VERSION = "22"
-
 # A missing hashed chunk must be a real 404, not the SPA fallback: HTML served for a
 # script URL (and cached as immutable) would break the tab until a hard reload.
 [[redirects]]

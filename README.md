@@ -126,6 +126,16 @@ graph TD
 - **Security:** Web Crypto API (`SubtleCrypto`)
 - **Hosting:** Netlify CDN
 
+## Workflow
+
+1. Branch from `main` (`feat/*`, `fix/*`). The pre-commit hook (`git config core.hooksPath .githooks`) runs the production build.
+2. Open a pull request and fill in the template.
+3. GitHub Actions runs the `check` job (typecheck, lint, format, tests, build, audit). Netlify builds a deploy preview and comments the URL.
+4. Merge (squash) once `check` and the deploy preview are green. Netlify deploys `main` to production.
+5. To roll back, open the Netlify site's Deploys tab and publish a previous deploy.
+
+Node is pinned in `.nvmrc`, which both CI and Netlify read.
+
 ## License
 
 MIT © [Mares Popa](https://marespopa.com)
