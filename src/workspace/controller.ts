@@ -50,6 +50,7 @@ import {
 } from '../review/stage'
 import { DiffService } from '../review/diffService'
 import {
+  branchSwitchAtom,
   fileDiffEnabledAtom,
   fileDiffMapAtom,
   branchPrefetchCountAtom,
@@ -707,6 +708,95 @@ export class WorkspaceController {
         // starting a worker that scans the whole tree again.
         savedPaths !== undefined,
       )
+    }
+  }
+
+  /** Local branches and the checked-out one, for the branch picker. Null without a repository. */
+  async listBranches(): Promise<{ current: string; branches: string[] } | null> {
+    const svc = this.gitSvc
+    if (!svc) return null
+    const [branches, current] = await Promise.all([
+      svc.listBranches(),
+      svc.currentBranch(),
+    ])
+    return { current, branches }
+  }
+
+  /**
+   * Checks out a local branch. Open files are saved first. It refuses, changing nothing,
+   * while tracked files have uncommitted changes (untracked files are fine), so a switch
+   * can never lose work. Tabs are closed for the checkout, because a buffer would
+   * otherwise autosave the old branch's text over the new files, then reopened where the
+   * file still exists. Returns whether the branch was switched.
+   */
+  async switchBranch(branch: string): Promise<boolean> {
+    const svc = this.gitSvc
+    const handle = this.linkHandle
+    if (!svc || !handle || handle.kind === 'file') return false
+    if (this.store.get(branchSwitchAtom) !== null) return false
+    if (this.store.get(gitBranchAtom) === branch) return true
+    // Show the switch at once; the work below can take a while on a large tree.
+    this.store.set(branchSwitchAtom, branch)
+    const epoch = this.epoch
+    const tabs = this.tabs.map((t) => ({ path: t.path, pinned: t.pinned }))
+    const active = this.active
+    let closed = false
+    let switched = false
+    try {
+      if (!(await this.ensureGitWritable())) return false
+      await this.flushAll()
+      svc.invalidateStatus()
+      const changed = [...(await svc.listChanged()).values()].filter(
+        (s) => s !== 'untracked',
+      ).length
+      if (changed > 0) {
+        this.notify(
+          'error',
+          `Cannot switch to ${branch}: ${changed} ${changed === 1 ? 'file has' : 'files have'} uncommitted changes. Commit or discard them first.`,
+        )
+        return false
+      }
+      await this.closeTabs(tabs.map((t) => t.path))
+      if (this.tabs.length > 0) {
+        this.notify('error', `Cannot switch to ${branch}: a file could not be saved.`)
+        return false
+      }
+      closed = true
+      await svc.checkout(branch)
+      switched = true
+      this.notify('info', `Switched to ${branch}.`)
+      return true
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'NotAllowedError')
+        this.requestGitWrite()
+      else this.fail(e)
+      return false
+    } finally {
+      try {
+        if (epoch === this.epoch) {
+          if (closed) await this.refreshTree({ silent: true })
+          const fs = this.fs
+          if (closed && fs) {
+            for (const t of tabs) {
+              if (epoch !== this.epoch) break
+              if (!(await fs.stat(t.path).catch(() => null))) continue
+              await this.openFile(t.path)
+              if (t.pinned) this.togglePin(t.path)
+            }
+            // Opening a file leaves the home page; a switch started there returns to it.
+            if (active === null) this.commit({ tabs: this.tabs, active: null })
+            else if (this.buffers.has(active)) await this.openFile(active)
+          }
+          if (switched || closed) {
+            this.gitFull = true
+            this.store.set(gitBranchAtom, await svc.currentBranch())
+            this.startBranchPrefetch(handle as FileSystemDirectoryHandle)
+            void this.refreshGitStatus()
+          }
+        }
+      } finally {
+        this.store.set(branchSwitchAtom, null)
+      }
     }
   }
 
