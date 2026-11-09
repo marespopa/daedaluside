@@ -5,6 +5,7 @@ import { getController } from '../workspace/controller'
 import type { GrepHit } from '../workspace/grep'
 import type { Entry } from '../workspace/types'
 import { checkPath } from '../workflow/patches'
+import { ActionError, describeActions, runAction } from '../actions/registry'
 
 type Store = ReturnType<typeof createStore>
 
@@ -17,6 +18,11 @@ export interface ToolHost {
   search(query: string): Promise<{ hits: GrepHit[]; truncated: boolean }>
   /** Writes through the editor buffers, so Ctrl-Z undoes it. `base` is null for a new file. */
   write(path: string, base: string | null, content: string): Promise<boolean>
+  /** Editor actions the user can also run from the palette. Absent where there is no editor. */
+  actions?: {
+    list(): string
+    run(id: string, args: Record<string, string>): Promise<string>
+  }
 }
 
 export function controllerHost(store: Store): ToolHost {
@@ -37,6 +43,16 @@ export function controllerHost(store: Store): ToolHost {
         )
       }),
     write: (path, base, content) => c.applyPatches([{ path, base, content }]),
+    actions: {
+      list: describeActions,
+      run: async (id, args) => {
+        try {
+          return await runAction(store, id, args)
+        } catch (e) {
+          throw e instanceof ActionError ? new ToolError(e.message) : e
+        }
+      },
+    },
   }
 }
 
@@ -46,60 +62,6 @@ const MAX_FILES = 300
 const MAX_HITS = 50
 
 const str = { type: 'string' }
-
-export const COMPANION_TOOLS: ToolDef[] = [
-  {
-    name: 'list_files',
-    description:
-      'List files in the open workspace, optionally under one folder. Returns workspace-relative paths.',
-    parameters: {
-      type: 'object',
-      properties: {
-        dir: { ...str, description: 'Folder to list under; omit for the root.' },
-      },
-    },
-  },
-  {
-    name: 'read_file',
-    description:
-      'Read a text file from the workspace. Reflects unsaved edits in open tabs.',
-    parameters: {
-      type: 'object',
-      properties: { path: { ...str, description: 'Workspace-relative path.' } },
-      required: ['path'],
-    },
-  },
-  {
-    name: 'search_text',
-    description:
-      'Search every file for a text string. Returns path:line: text for each match.',
-    parameters: {
-      type: 'object',
-      properties: { query: str },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'edit_file',
-    description:
-      'Replace one exact piece of text in an existing file. `search` must match exactly once; include enough surrounding lines to make it unique. Prefer this over write_file for changes.',
-    parameters: {
-      type: 'object',
-      properties: { path: str, search: str, replace: str },
-      required: ['path', 'search', 'replace'],
-    },
-  },
-  {
-    name: 'write_file',
-    description:
-      'Create a file, or replace a whole existing file with new content. The user can undo with Ctrl-Z.',
-    parameters: {
-      type: 'object',
-      properties: { path: str, content: str },
-      required: ['path', 'content'],
-    },
-  },
-]
 
 class ToolError extends Error {}
 
@@ -128,9 +90,30 @@ function count(text: string, needle: string): number {
   return n
 }
 
-async function run(host: ToolHost, call: ToolCall): Promise<string> {
-  switch (call.name) {
-    case 'list_files': {
+/** One tool: its schema, what it does, and how the chat log labels a call. Add a tool here only. */
+export interface Tool {
+  def: ToolDef
+  run(host: ToolHost, call: ToolCall): Promise<string>
+  describe(call: ToolCall): string
+}
+
+const s = (call: ToolCall, k: string) =>
+  typeof call.args[k] === 'string' ? (call.args[k] as string) : ''
+
+const TOOLS: Tool[] = [
+  {
+    def: {
+      name: 'list_files',
+      description:
+        'List files in the open workspace, optionally under one folder. Returns workspace-relative paths.',
+      parameters: {
+        type: 'object',
+        properties: {
+          dir: { ...str, description: 'Folder to list under; omit for the root.' },
+        },
+      },
+    },
+    async run(host, call) {
       const raw = call.args.dir
       const dir =
         typeof raw === 'string' && raw.trim() ? safePath(raw).replace(/\/$/, '') : ''
@@ -139,7 +122,7 @@ async function run(host: ToolHost, call: ToolCall): Promise<string> {
           (e) =>
             e.kind === 'file' &&
             (dir === '' || e.path.startsWith(`${dir}/`)) &&
-            !e.path.split('/').some((s) => s.toLowerCase() === '.git'),
+            !e.path.split('/').some((seg) => seg.toLowerCase() === '.git'),
         )
         .map((e) => e.path)
         .sort()
@@ -147,16 +130,42 @@ async function run(host: ToolHost, call: ToolCall): Promise<string> {
       return files.length > MAX_FILES
         ? `${shown}\n… ${files.length - MAX_FILES} more; list a subfolder to see them.`
         : shown || 'No files.'
-    }
-    case 'read_file': {
+    },
+    describe: (call) => `List files${s(call, 'dir') ? ` in ${s(call, 'dir')}` : ''}`,
+  },
+  {
+    def: {
+      name: 'read_file',
+      description:
+        'Read a text file from the workspace. Reflects unsaved edits in open tabs.',
+      parameters: {
+        type: 'object',
+        properties: { path: { ...str, description: 'Workspace-relative path.' } },
+        required: ['path'],
+      },
+    },
+    async run(host, call) {
       const path = safePath(arg(call, 'path'))
       const text = await host.read(path)
       if (text === null) throw new ToolError(`Cannot read ${path}`)
       return text.length > MAX_READ
         ? `${text.slice(0, MAX_READ)}\n… truncated; the file has ${text.length} characters.`
         : text
-    }
-    case 'search_text': {
+    },
+    describe: (call) => `Read ${s(call, 'path')}`,
+  },
+  {
+    def: {
+      name: 'search_text',
+      description:
+        'Search every file for a text string. Returns path:line: text for each match.',
+      parameters: {
+        type: 'object',
+        properties: { query: str },
+        required: ['query'],
+      },
+    },
+    async run(host, call) {
       const query = arg(call, 'query')
       if (!query.trim()) throw new ToolError('"query" is empty')
       const { hits, truncated } = await host.search(query)
@@ -167,8 +176,21 @@ async function run(host: ToolHost, call: ToolCall): Promise<string> {
       const more =
         hits.length > MAX_HITS || truncated ? '\n… more matches; narrow the query.' : ''
       return lines.join('\n') + more
-    }
-    case 'edit_file': {
+    },
+    describe: (call) => `Search for “${s(call, 'query')}”`,
+  },
+  {
+    def: {
+      name: 'edit_file',
+      description:
+        'Replace one exact piece of text in an existing file. `search` must match exactly once; include enough surrounding lines to make it unique. Prefer this over write_file for changes.',
+      parameters: {
+        type: 'object',
+        properties: { path: str, search: str, replace: str },
+        required: ['path', 'search', 'replace'],
+      },
+    },
+    async run(host, call) {
       const path = safePath(arg(call, 'path'))
       const search = arg(call, 'search')
       const replace = arg(call, 'replace')
@@ -187,8 +209,21 @@ async function run(host: ToolHost, call: ToolCall): Promise<string> {
       if (!(await host.write(path, base, next)))
         throw new ToolError(`Could not edit ${path}`)
       return `Edited ${path}.`
-    }
-    case 'write_file': {
+    },
+    describe: (call) => `Edit ${s(call, 'path')}`,
+  },
+  {
+    def: {
+      name: 'write_file',
+      description:
+        'Create a file, or replace a whole existing file with new content. The user can undo with Ctrl-Z.',
+      parameters: {
+        type: 'object',
+        properties: { path: str, content: str },
+        required: ['path', 'content'],
+      },
+    },
+    async run(host, call) {
       const path = safePath(arg(call, 'path'))
       const content = arg(call, 'content')
       if (content.length > MAX_WRITE) throw new ToolError('Content is too large')
@@ -197,16 +232,63 @@ async function run(host: ToolHost, call: ToolCall): Promise<string> {
       if (!(await host.write(path, base, content)))
         throw new ToolError(`Could not write ${path}`)
       return base === null ? `Created ${path}.` : `Replaced ${path}.`
-    }
-    default:
-      throw new ToolError(`Unknown tool: ${call.name}`)
-  }
-}
+    },
+    describe: (call) => `Write ${s(call, 'path')}`,
+  },
+  {
+    def: {
+      name: 'list_actions',
+      description:
+        'List editor actions you can run with run_action: the same ones the user has in the command palette (tabs, theme, Vim mode, branch switching and more).',
+      parameters: { type: 'object', properties: {} },
+    },
+    async run(host) {
+      if (!host.actions) throw new ToolError('Editor actions are not available here')
+      return host.actions.list()
+    },
+    describe: () => 'List actions',
+  },
+  {
+    def: {
+      name: 'run_action',
+      description:
+        'Run one editor action by id (see list_actions). Some ask the user to confirm first; if they decline, do not retry.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: str,
+          args: {
+            type: 'object',
+            description: 'Named string arguments the action lists, if any.',
+            additionalProperties: str,
+          },
+        },
+        required: ['id'],
+      },
+    },
+    async run(host, call) {
+      if (!host.actions) throw new ToolError('Editor actions are not available here')
+      const raw = call.args.args
+      const args: Record<string, string> = {}
+      if (raw && typeof raw === 'object') {
+        for (const [k, v] of Object.entries(raw)) if (typeof v === 'string') args[k] = v
+      }
+      return host.actions.run(arg(call, 'id'), args)
+    },
+    describe: (call) => `Run action ${s(call, 'id')}`,
+  },
+]
+
+const BY_NAME = new Map(TOOLS.map((t) => [t.def.name, t]))
+
+export const COMPANION_TOOLS: ToolDef[] = TOOLS.map((t) => t.def)
 
 /** Runs one tool call. A failure becomes an error result the model can read and recover from. */
 export async function runTool(host: ToolHost, call: ToolCall): Promise<ToolResult> {
   try {
-    return { id: call.id, name: call.name, content: await run(host, call) }
+    const tool = BY_NAME.get(call.name)
+    if (!tool) throw new ToolError(`Unknown tool: ${call.name}`)
+    return { id: call.id, name: call.name, content: await tool.run(host, call) }
   } catch (e) {
     const content = e instanceof Error ? e.message : 'The tool failed'
     return { id: call.id, name: call.name, content, isError: true }
@@ -215,20 +297,9 @@ export async function runTool(host: ToolHost, call: ToolCall): Promise<ToolResul
 
 /** Short label for the chat log, e.g. `Edit src/a.ts`. */
 export function describeCall(call: ToolCall): string {
-  const a = call.args
-  const s = (k: string) => (typeof a[k] === 'string' ? (a[k] as string) : '')
-  switch (call.name) {
-    case 'list_files':
-      return `List files${s('dir') ? ` in ${s('dir')}` : ''}`
-    case 'read_file':
-      return `Read ${s('path')}`
-    case 'search_text':
-      return `Search for “${s('query')}”`
-    case 'edit_file':
-      return `Edit ${s('path')}`
-    case 'write_file':
-      return `Write ${s('path')}`
-    default:
-      return call.name
+  if (call.name === 'run_agent') {
+    const task = s(call, 'task').replace(/\s+/g, ' ')
+    return `Agent ${s(call, 'agent')}: ${task.length > 60 ? `${task.slice(0, 60)}…` : task}`
   }
+  return BY_NAME.get(call.name)?.describe(call) ?? call.name
 }

@@ -1,32 +1,27 @@
-import { sidecarOpenAtom } from '../state/companionAtoms'
 import { aiOpenAtom } from '../state/aiAtoms'
 import { openSearchPanel } from '@codemirror/search'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { runAction } from '../actions/registry'
 import { createDoubleShift } from '../lib/doubleShift'
 import { themeAtom } from '../lib/theme'
 import { THEMES, type ThemeId, type ThemeMode } from '../lib/themes'
 import {
   activeBufferAtom,
   editorHandleAtom,
-  editorWidthAtom,
   grepOpenAtom,
   grepQueryAtom,
   paletteOpenAtom,
   paletteQueryAtom,
-  vimEnabledAtom,
 } from '../state/editorAtoms'
 import {
   activePathAtom,
   currentWorkspaceIdAtom,
-  settingsOpenAtom,
-  sidebarOpenAtom,
   treeAtom,
   treeCompleteAtom,
   treeProgressAtom,
   workspacesAtom,
 } from '../state/workspaceAtoms'
-import { fileDiffEnabledAtom } from '../state/gitAtoms'
 import { GlassPopover, Input } from '../ui'
 import { joinPath } from '../workspace/path'
 import { focusEditor, useController } from '../workspace/useWorkspace'
@@ -55,11 +50,7 @@ export default function CommandPalette() {
   const [themeSetting, setTheme] = useAtom(themeAtom)
   const setBuffer = useSetAtom(activeBufferAtom)
   const controller = useController()
-  const setSettings = useSetAtom(settingsOpenAtom)
   const setAi = useSetAtom(aiOpenAtom)
-  const setSidecar = useSetAtom(sidecarOpenAtom)
-  const setSidebar = useSetAtom(sidebarOpenAtom)
-  const setWidth = useSetAtom(editorWidthAtom)
   const tree = useAtomValue(treeAtom)
   const activePath = useAtomValue(activePathAtom)
   const workspaces = useAtomValue(workspacesAtom)
@@ -137,74 +128,46 @@ export default function CommandPalette() {
           ?.setLanguage(l.name)
           .then((language) => setBuffer((b) => ({ ...b, language }))),
     }))
+    // These run through the action registry, so the AI companion can do exactly the same.
+    // The user picked the command, so a confirmation would only repeat the click.
+    const act = (id: string) => () =>
+      void runAction(store, id, {}, () => true).catch(() => undefined)
     return [
-      { id: 'save', label: 'File: Save', run: () => void controller.saveActive() },
+      { id: 'save', label: 'File: Save', run: act('file.save') },
       {
         id: 'copy-text',
         label: 'File: Copy Contents',
         run: () => void controller.copyActiveText(),
       },
-      {
-        id: 'close',
-        label: 'File: Close Buffer',
-        run: () => activePath && void controller.closeBuffer(activePath),
-      },
-      {
-        id: 'tree',
-        label: 'View: Open File Tree (:Explore)',
-        run: () => setSidebar(true),
-      },
-      {
-        id: 'width',
-        label: 'View: Toggle Full Width',
-        run: () => setWidth(store.get(editorWidthAtom) === 'full' ? 'measured' : 'full'),
-      },
-      {
-        id: 'vim',
-        label: 'Editor: Toggle Vim Mode',
-        run: () => store.set(vimEnabledAtom, !store.get(vimEnabledAtom)),
-      },
+      { id: 'close', label: 'File: Close Buffer', run: act('file.close') },
+      { id: 'tree', label: 'View: Open File Tree (:Explore)', run: act('view.sidebar') },
+      { id: 'width', label: 'View: Toggle Full Width', run: act('view.toggle-width') },
+      { id: 'vim', label: 'Editor: Toggle Vim Mode', run: act('editor.toggle-vim') },
       {
         id: 'file-diff',
         label: 'Editor: Toggle Git Diff Marks',
-        run: () => controller.setFileDiff(!store.get(fileDiffEnabledAtom)),
+        run: act('editor.toggle-diff'),
       },
       {
         id: 'tab-close-others',
         label: 'Tab: Close Others',
-        run: () => activePath && void controller.closeOthers(activePath),
+        run: act('tab.close-others'),
       },
       {
         id: 'tab-close-right',
         label: 'Tab: Close to the Right',
-        run: () => activePath && void controller.closeToRight(activePath),
+        run: act('tab.close-right'),
       },
-      {
-        id: 'tab-close-all',
-        label: 'Tab: Close All',
-        run: () => void controller.closeAll(),
-      },
-      {
-        id: 'tab-pin',
-        label: 'Tab: Pin or Unpin',
-        run: () => activePath && controller.togglePin(activePath),
-      },
-      {
-        id: 'tab-move-left',
-        label: 'Tab: Move Left',
-        run: () => activePath && controller.moveTab(activePath, -1),
-      },
-      {
-        id: 'tab-move-right',
-        label: 'Tab: Move Right',
-        run: () => activePath && controller.moveTab(activePath, 1),
-      },
+      { id: 'tab-close-all', label: 'Tab: Close All', run: act('tab.close-all') },
+      { id: 'tab-pin', label: 'Tab: Pin or Unpin', run: act('tab.pin') },
+      { id: 'tab-move-left', label: 'Tab: Move Left', run: act('tab.move-left') },
+      { id: 'tab-move-right', label: 'Tab: Move Right', run: act('tab.move-right') },
       {
         id: 'tab-copy-path',
         label: 'Tab: Copy Relative Path',
         run: () => activePath && void controller.copyPath(activePath),
       },
-      { id: 'settings', label: 'Settings', run: () => setSettings(true) },
+      { id: 'settings', label: 'Settings', run: act('view.settings') },
       {
         id: 'ai-companion',
         label: 'AI Companion: Chat',
@@ -213,13 +176,9 @@ export default function CommandPalette() {
       {
         id: 'ai-sidecar',
         label: 'AI Companion: Toggle Chat Sidecar',
-        run: () => setSidecar((o) => !o),
+        run: act('ai.toggle-sidecar'),
       },
-      {
-        id: 'ai-config',
-        label: 'AI Companion: Configure',
-        run: () => controller.openCompanion('config'),
-      },
+      { id: 'ai-config', label: 'AI Companion: Configure', run: act('ai.open-config') },
       { id: 'ai-plan', label: 'AI: Plan change', run: () => setAi(true) },
       { id: 'new-file', label: 'File: New File', enter: { kind: 'file' } },
       { id: 'new-folder', label: 'File: New Folder', enter: { kind: 'folder' } },
@@ -303,11 +262,7 @@ export default function CommandPalette() {
     setBuffer,
     controller,
     activePath,
-    setSettings,
     setAi,
-    setSidecar,
-    setSidebar,
-    setWidth,
     store,
     workspaces,
     currentId,

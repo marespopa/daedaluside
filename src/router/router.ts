@@ -85,7 +85,14 @@ export async function resolveStage(
   stage: Stage,
   options: { fetch?: typeof fetch } = {},
 ): Promise<{ adapter: ProviderAdapter; route: Route }> {
-  const route = (await loadRoutes())[stage]
+  return resolveRoute((await loadRoutes())[stage], options)
+}
+
+/** The adapter for one route, with its key read from the vault (see `resolveStage`). */
+export function resolveRoute(
+  route: Route,
+  options: { fetch?: typeof fetch } = {},
+): { adapter: ProviderAdapter; route: Route } {
   let apiKey: string | undefined
   if (needsKey(route.provider)) {
     apiKey = getKey(route.provider)

@@ -18,6 +18,8 @@ interface OllamaLine {
     tool_calls?: { function?: { name?: string; arguments?: Record<string, unknown> } }[]
   }
   error?: string
+  prompt_eval_count?: number
+  eval_count?: number
 }
 
 interface OllamaMessage {
@@ -129,6 +131,13 @@ export function createOllama({
               name: c.function.name,
               args: c.function.arguments ?? {},
             },
+          }
+        }
+        if (msg.prompt_eval_count || msg.eval_count) {
+          yield {
+            type: 'usage',
+            inputTokens: msg.prompt_eval_count ?? 0,
+            outputTokens: msg.eval_count ?? 0,
           }
         }
       }

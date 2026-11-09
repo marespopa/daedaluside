@@ -23,6 +23,7 @@ interface GeminiPart {
 }
 interface GeminiChunk {
   candidates?: { content?: { parts?: GeminiPart[] } }[]
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
 }
 
 function toGemini(m: AgentMessage) {
@@ -124,8 +125,11 @@ export function createGemini({
         signal,
       })
       let n = 0
+      let usage: GeminiChunk['usageMetadata']
       for await (const data of sseData(res.body)) {
         const chunk = parseJson(data) as GeminiChunk
+        // Gemini repeats the running totals on every chunk, so report only the last one below.
+        if (chunk.usageMetadata) usage = chunk.usageMetadata
         for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
           if (part.functionCall) {
             yield {
@@ -140,6 +144,13 @@ export function createGemini({
           } else if (part.text) {
             yield { type: 'text', text: part.text }
           }
+        }
+      }
+      if (usage) {
+        yield {
+          type: 'usage',
+          inputTokens: usage.promptTokenCount ?? 0,
+          outputTokens: usage.candidatesTokenCount ?? 0,
         }
       }
     },

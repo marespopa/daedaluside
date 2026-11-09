@@ -18,6 +18,8 @@ interface AnthropicEvent {
   content_block?: { type?: string; id?: string; name?: string }
   delta?: { type?: string; text?: string; partial_json?: string }
   error?: { message?: string }
+  message?: { usage?: { input_tokens?: number } }
+  usage?: { output_tokens?: number }
 }
 
 function toAnthropic(m: AgentMessage) {
@@ -130,6 +132,15 @@ export function createAnthropic({
         const ev = parseJson(data) as AnthropicEvent
         if (ev.type === 'error') {
           throw new ProviderError('http', ev.error?.message ?? 'Provider stream error')
+        }
+        if (ev.type === 'message_start' && ev.message?.usage?.input_tokens) {
+          yield {
+            type: 'usage',
+            inputTokens: ev.message.usage.input_tokens,
+            outputTokens: 0,
+          }
+        } else if (ev.type === 'message_delta' && ev.usage?.output_tokens) {
+          yield { type: 'usage', inputTokens: 0, outputTokens: ev.usage.output_tokens }
         }
         const at = ev.index ?? -1
         if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {

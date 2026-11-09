@@ -56,7 +56,16 @@ export interface AgentRequest {
   temperature?: number
 }
 
-export type AgentEvent = { type: 'text'; text: string } | { type: 'call'; call: ToolCall }
+/** Tokens a model call used. Providers report it when they can; a call may report it in parts. */
+export interface Usage {
+  inputTokens: number
+  outputTokens: number
+}
+
+export type AgentEvent =
+  | { type: 'text'; text: string }
+  | { type: 'call'; call: ToolCall }
+  | ({ type: 'usage' } & Usage)
 
 /** The standard interface from ARCHITECTURE.md: every provider lists models and streams text. */
 export interface ProviderAdapter {
