@@ -78,6 +78,30 @@ export const vimEnabledAtom = atom(
   },
 )
 
+export const AI_COMPLETE_KEY = 'daedalus.aiComplete'
+
+/** Off unless the user has turned it on: it sends the code around the cursor to a provider. */
+export function loadAiCompleteEnabled(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(AI_COMPLETE_KEY) === 'on'
+  } catch {
+    return false
+  }
+}
+
+const aiCompleteBase = atom<boolean>(loadAiCompleteEnabled())
+export const aiCompleteEnabledAtom = atom(
+  (get) => get(aiCompleteBase),
+  (_get, set, next: boolean) => {
+    set(aiCompleteBase, next)
+    try {
+      globalThis.localStorage?.setItem(AI_COMPLETE_KEY, next ? 'on' : 'off')
+    } catch {
+      /* storage unavailable: the choice still applies for this session */
+    }
+  },
+)
+
 export type VimModeLabel =
   'NORMAL' | 'INSERT' | 'REPLACE' | 'VISUAL' | 'V-LINE' | 'V-BLOCK'
 

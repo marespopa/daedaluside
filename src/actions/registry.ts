@@ -4,7 +4,12 @@ import { themeAtom } from '../lib/theme'
 import { THEMES } from '../lib/themes'
 import type { ThemeId } from '../lib/themes'
 import { sidecarOpenAtom } from '../state/companionAtoms'
-import { editorHandleAtom, editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
+import {
+  aiCompleteEnabledAtom,
+  editorHandleAtom,
+  editorWidthAtom,
+  vimEnabledAtom,
+} from '../state/editorAtoms'
 import { fileDiffEnabledAtom } from '../state/gitAtoms'
 import {
   activePathAtom,
@@ -122,6 +127,12 @@ export const ACTIONS: Action[] = [
     id: 'editor.toggle-vim',
     description: 'Turn Vim mode on or off.',
     run: (s) => s.set(vimEnabledAtom, !s.get(vimEnabledAtom)),
+  },
+  {
+    id: 'editor.toggle-ai-complete',
+    description:
+      'Turn inline AI suggestions on or off. When on, the code around the cursor is sent to the Edit model.',
+    run: (s) => s.set(aiCompleteEnabledAtom, !s.get(aiCompleteEnabledAtom)),
   },
   {
     id: 'editor.fold-all',

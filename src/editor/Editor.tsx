@@ -2,7 +2,13 @@ import { useAtomValue, useStore } from 'jotai'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { branchReviewAtom, branchTabActiveAtom } from '../state/branchReviewAtoms'
 import { companionOpenAtom } from '../state/companionAtoms'
-import { activeImageAtom, editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
+import { requestCompletion } from '../ai/inlineComplete'
+import {
+  activeImageAtom,
+  aiCompleteEnabledAtom,
+  editorWidthAtom,
+  vimEnabledAtom,
+} from '../state/editorAtoms'
 import { reviewOpenAtom } from '../state/gitAtoms'
 import {
   activePathAtom,
@@ -12,6 +18,7 @@ import {
 } from '../state/workspaceAtoms'
 import WorkspaceOpener from '../workspace/WorkspaceOpener'
 import { useController } from '../workspace/useWorkspace'
+import { aiComplete } from './aiComplete'
 import { createEditor } from './createEditor'
 import EditorSkeleton from './EditorSkeleton'
 import { pathLinks } from './pathLinks'
@@ -79,6 +86,11 @@ export default function Editor() {
           enabled: () => store.get(activePathAtom) !== null,
           onOpen: (ref) => void controller.openReference(ref),
           exists: (ref) => controller.mayOpenReference(ref),
+        }),
+        aiComplete({
+          enabled: () =>
+            store.get(aiCompleteEnabledAtom) && store.get(activePathAtom) !== null,
+          complete: (ctx, signal) => requestCompletion(ctx, signal),
         }),
         symbolTriggers({
           enabled: () => store.get(activePathAtom) !== null,

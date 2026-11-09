@@ -1,6 +1,10 @@
 import { createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'
-import { editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
+import {
+  aiCompleteEnabledAtom,
+  editorWidthAtom,
+  vimEnabledAtom,
+} from '../state/editorAtoms'
 import { runTool } from '../ai/companionTools'
 import type { ToolHost } from '../ai/companionTools'
 import { ACTIONS, ActionError, describeActions, runAction } from './registry'
@@ -19,6 +23,13 @@ describe('action registry', () => {
     expect(store.get(vimEnabledAtom)).toBe(!before)
     await runAction(store, 'view.toggle-width')
     expect(store.get(editorWidthAtom)).toBe('full')
+  })
+
+  it('toggles AI suggestions, off by default', async () => {
+    const store = createStore()
+    expect(store.get(aiCompleteEnabledAtom)).toBe(false)
+    await runAction(store, 'editor.toggle-ai-complete')
+    expect(store.get(aiCompleteEnabledAtom)).toBe(true)
   })
 
   it('fold actions need an open editor', async () => {
