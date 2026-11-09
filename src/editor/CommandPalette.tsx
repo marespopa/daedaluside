@@ -143,6 +143,12 @@ export default function CommandPalette() {
       { id: 'tree', label: 'View: Open File Tree (:Explore)', run: act('view.sidebar') },
       { id: 'width', label: 'View: Toggle Full Width', run: act('view.toggle-width') },
       { id: 'vim', label: 'Editor: Toggle Vim Mode', run: act('editor.toggle-vim') },
+      { id: 'fold-all', label: 'Editor: Fold All Sections', run: act('editor.fold-all') },
+      {
+        id: 'unfold-all',
+        label: 'Editor: Unfold All Sections',
+        run: act('editor.unfold-all'),
+      },
       {
         id: 'file-diff',
         label: 'Editor: Toggle Git Diff Marks',

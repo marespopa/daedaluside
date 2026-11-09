@@ -1,9 +1,10 @@
+import { foldAll, unfoldAll } from '@codemirror/language'
 import type { createStore } from 'jotai'
 import { themeAtom } from '../lib/theme'
 import { THEMES } from '../lib/themes'
 import type { ThemeId } from '../lib/themes'
 import { sidecarOpenAtom } from '../state/companionAtoms'
-import { editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
+import { editorHandleAtom, editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
 import { fileDiffEnabledAtom } from '../state/gitAtoms'
 import {
   activePathAtom,
@@ -121,6 +122,24 @@ export const ACTIONS: Action[] = [
     id: 'editor.toggle-vim',
     description: 'Turn Vim mode on or off.',
     run: (s) => s.set(vimEnabledAtom, !s.get(vimEnabledAtom)),
+  },
+  {
+    id: 'editor.fold-all',
+    description: 'Collapse every foldable section in the active file.',
+    run: (s) => {
+      const view = s.get(editorHandleAtom)?.view
+      if (!view) throw new ActionError('No file is open')
+      foldAll(view)
+    },
+  },
+  {
+    id: 'editor.unfold-all',
+    description: 'Expand every collapsed section in the active file.',
+    run: (s) => {
+      const view = s.get(editorHandleAtom)?.view
+      if (!view) throw new ActionError('No file is open')
+      unfoldAll(view)
+    },
   },
   {
     id: 'editor.toggle-diff',

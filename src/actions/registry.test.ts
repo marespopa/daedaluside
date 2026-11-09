@@ -21,6 +21,12 @@ describe('action registry', () => {
     expect(store.get(editorWidthAtom)).toBe('full')
   })
 
+  it('fold actions need an open editor', async () => {
+    const store = createStore()
+    await expect(runAction(store, 'editor.fold-all')).rejects.toThrow('No file is open')
+    await expect(runAction(store, 'editor.unfold-all')).rejects.toThrow('No file is open')
+  })
+
   it('rejects unknown actions, missing args and unknown themes', async () => {
     const store = createStore()
     await expect(runAction(store, 'nope')).rejects.toThrow(ActionError)
