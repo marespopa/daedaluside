@@ -10,6 +10,7 @@ import {
   sendChat,
   stopChat,
 } from './chat'
+import { describeCall } from './companionTools'
 
 /** Chat with the Plan model. History lives in atoms, so a sidecar can show the same thread. */
 export default function CompanionChat({
@@ -44,8 +45,9 @@ export default function CompanionChat({
       >
         {messages.length === 0 && (
           <p className="text-muted">
-            Ask anything about code. Replies come from your Plan model. Change the model
-            or add a key under Configure.
+            Ask anything about code. The AI can read your workspace files, and edit them
+            when you ask (undo with Ctrl-Z). Replies come from your Plan model. Change the
+            model or add a key under Configure.
           </p>
         )}
         {messages.map((m) => (
@@ -53,9 +55,23 @@ export default function CompanionChat({
             <p className="text-xs font-medium tracking-wide text-muted uppercase">
               {m.role === 'user' ? 'You' : 'AI'}
             </p>
-            <p className="break-words whitespace-pre-wrap">
-              {m.content || (m.error ? '' : '…')}
-            </p>
+            {(m.content || (!m.error && !m.calls?.length)) && (
+              <p className="break-words whitespace-pre-wrap">{m.content || '…'}</p>
+            )}
+            {m.calls && m.calls.length > 0 && (
+              <ul aria-label="Tool calls" className="space-y-0.5 text-xs text-muted">
+                {m.calls.map(({ call, result }) => (
+                  <li key={call.id} className="break-words">
+                    {describeCall(call)} ·{' '}
+                    {!result
+                      ? 'running…'
+                      : result.isError
+                        ? `failed: ${result.content}`
+                        : 'done'}
+                  </li>
+                ))}
+              </ul>
+            )}
             {m.error && (
               <div role="alert" className="space-y-1">
                 <p className="text-diff-remove-fg">Error: {m.error}</p>
