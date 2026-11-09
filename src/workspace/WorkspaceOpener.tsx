@@ -211,7 +211,9 @@ export default function WorkspaceOpener() {
                   : 'Open a folder to start editing.'}
             </p>
           )}
-          {ready && hasWorkspace && <BranchStatus className="justify-center" link={false} />}
+          {ready && hasWorkspace && (
+            <BranchStatus className="justify-center" link={false} />
+          )}
         </header>
 
         {loadingTree && (
