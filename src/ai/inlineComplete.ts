@@ -3,8 +3,8 @@ import { MissingKeyError, resolveStage } from '../router/router'
 /** How much of the file around the cursor goes to the model. Keeps the request small and fast. */
 const PREFIX_CHARS = 4000
 const SUFFIX_CHARS = 1000
-const MAX_LINES = 3
-const MAX_CHARS = 300
+const MAX_LINES = 6
+const MAX_CHARS = 600
 
 export interface CompletionContext {
   prefix: string
@@ -17,7 +17,7 @@ type Resolve = typeof resolveStage
 const SYSTEM =
   'You complete code at the cursor, marked <CURSOR>. Reply with only the text to insert at ' +
   'the cursor: no explanation, no code fences, and do not repeat the text before the cursor. ' +
-  'Keep it short, a few lines at most. Reply with nothing if no completion is useful.'
+  'Keep it short: finish the line or the block being written. Reply with nothing if no completion is useful.'
 
 /** Drops code fences and trims a reply to a short insertion. Returns null when nothing is left. */
 export function cleanCompletion(raw: string): string | null {
@@ -54,7 +54,7 @@ export async function requestCompletion(
         model: route.model,
         system: SYSTEM,
         messages: [{ role: 'user', content: `${file}${prefix}<CURSOR>${suffix}` }],
-        maxTokens: 96,
+        maxTokens: 160,
         temperature: 0,
       },
       signal,

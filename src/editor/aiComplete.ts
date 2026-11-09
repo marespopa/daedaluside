@@ -5,6 +5,7 @@ import {
   StateEffect,
   StateField,
   type EditorState,
+  type Transaction,
 } from '@codemirror/state'
 import {
   Decoration,
@@ -59,12 +60,32 @@ class GhostWidget extends WidgetType {
   }
 }
 
+/**
+ * Typing the next characters of the suggestion keeps the rest of it, as Copilot does, instead of
+ * dropping it. Anything else (another character, a deletion, an edit elsewhere) clears it.
+ */
+function typedThrough(ghost: Ghost, tr: Transaction): Ghost | null {
+  if (!tr.isUserEvent('input.type')) return null
+  let typed: string | null = null
+  let ok = true
+  tr.changes.iterChanges((from, to, _f, _t, inserted) => {
+    if (from !== ghost.pos || to !== from || typed !== null) ok = false
+    else typed = inserted.toString()
+  })
+  const t = typed as string | null
+  if (!ok || !t || !ghost.text.startsWith(t)) return null
+  const rest = ghost.text.slice(t.length)
+  return rest ? { pos: ghost.pos + t.length, text: rest } : null
+}
+
 const ghostField = StateField.define<Ghost | null>({
   create: () => null,
   update(ghost, tr) {
     for (const e of tr.effects) if (e.is(setGhost)) return e.value
-    // Any edit or cursor move makes the suggestion stale.
-    return tr.docChanged || tr.selection ? null : ghost
+    if (!ghost) return null
+    if (tr.docChanged) return typedThrough(ghost, tr)
+    // A cursor move makes the suggestion stale.
+    return tr.selection ? null : ghost
   },
   provide: (f) =>
     EditorView.decorations.from(f, (g): DecorationSet =>
@@ -86,15 +107,24 @@ const ghostTheme = EditorView.baseTheme({
   },
 })
 
-/** Where a suggestion is worth asking for: an empty selection at the end of a non-blank line. */
+/** Characters that may follow the cursor and still leave room to suggest: closers from auto-pairing. */
+const TRAILING_OK = /^[\s)\]}>"'`;,]*$/
+
+/**
+ * Where a suggestion is worth asking for: an empty selection with nothing but closing brackets or
+ * quotes after it, on a non-blank line or on a fresh line below some code (as after Enter).
+ */
 function cursorContext(
   state: EditorState,
 ): { prefix: string; suffix: string; pos: number } | null {
   const sel = state.selection.main
   if (!sel.empty) return null
   const line = state.doc.lineAt(sel.head)
-  if (line.text.slice(sel.head - line.from).trim() !== '') return null
-  if (line.text.trim() === '') return null
+  if (!TRAILING_OK.test(line.text.slice(sel.head - line.from))) return null
+  if (line.text.trim() === '') {
+    const before = state.doc.sliceString(Math.max(0, line.from - 200), line.from)
+    if (before.trim() === '') return null
+  }
   return {
     pos: sel.head,
     prefix: state.doc.sliceString(Math.max(0, sel.head - 4000), sel.head),
@@ -113,6 +143,22 @@ function accept(view: EditorView): boolean {
   return true
 }
 
+/** Accepts just the next word of the suggestion, and keeps showing the rest. */
+function acceptWord(view: EditorView): boolean {
+  const g = view.state.field(ghostField, false)
+  if (!g) return false
+  const word = /^\s*\S+/.exec(g.text)?.[0] ?? g.text
+  const rest = g.text.slice(word.length)
+  const pos = g.pos + word.length
+  view.dispatch({
+    changes: { from: g.pos, insert: word },
+    selection: { anchor: pos },
+    effects: setGhost.of(rest ? { pos, text: rest } : null),
+    userEvent: 'input.complete',
+  })
+  return true
+}
+
 function dismiss(view: EditorView): boolean {
   if (!view.state.field(ghostField, false)) return false
   view.dispatch({ effects: setGhost.of(null) })
@@ -120,15 +166,16 @@ function dismiss(view: EditorView): boolean {
 }
 
 /**
- * Inline ghost-text suggestions. After typing pauses at the end of a line, asks `complete` for text
- * and shows it dimmed after the cursor. Tab accepts it, Escape or any other edit drops it. A failed
- * or empty request shows nothing.
+ * Inline ghost-text suggestions, in the Copilot style. After typing pauses (or after Enter), asks
+ * `complete` for text and shows it dimmed after the cursor. Tab accepts all of it, Ctrl or Alt plus
+ * Right accepts a word, Escape drops it. Typing the suggestion's own next characters keeps the rest.
+ * A failed or empty request shows nothing.
  */
 export function aiComplete({
   enabled,
   complete,
   onError,
-  delay = 700,
+  delay = 400,
 }: AiCompleteOptions): Extension {
   const plugin = ViewPlugin.fromClass(
     class {
@@ -138,11 +185,15 @@ export function aiComplete({
       update(u: ViewUpdate) {
         if (!u.docChanged) return
         this.cancel()
-        // Only typing and deleting ask; accepting a suggestion or undoing does not.
+        // Typing, Enter, paste and deleting ask; accepting a suggestion or undoing does not.
         const typed = u.transactions.some(
-          (t) => t.isUserEvent('input.type') || t.isUserEvent('delete'),
+          (t) =>
+            (t.isUserEvent('input') && !t.isUserEvent('input.complete')) ||
+            t.isUserEvent('delete'),
         )
         if (!typed || !enabled() || isLargeDoc(u.state.doc)) return
+        // Typed through a suggestion that is still showing: no new request needed.
+        if (u.state.field(ghostField, false)) return
         this.timer = setTimeout(() => this.ask(u.view), delay)
       }
 
@@ -188,6 +239,8 @@ export function aiComplete({
     Prec.highest(
       keymap.of([
         { key: 'Tab', run: accept },
+        { key: 'Ctrl-ArrowRight', run: acceptWord },
+        { key: 'Alt-ArrowRight', run: acceptWord },
         { key: 'Escape', run: dismiss },
       ]),
     ),

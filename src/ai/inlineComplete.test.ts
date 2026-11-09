@@ -26,7 +26,7 @@ describe('cleanCompletion', () => {
   })
   it('returns null for an empty reply and caps the lines', () => {
     expect(cleanCompletion('  \n ')).toBeNull()
-    expect(cleanCompletion('a\nb\nc\nd\ne')).toBe('a\nb\nc')
+    expect(cleanCompletion('1\n2\n3\n4\n5\n6\n7\n8')).toBe('1\n2\n3\n4\n5\n6')
   })
 })
 
