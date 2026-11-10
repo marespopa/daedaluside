@@ -11,7 +11,11 @@ import {
   clampLineHeight,
 } from '../lib/fonts'
 import { typographyAtom } from '../lib/typography'
-import { editorWidthAtom, vimEnabledAtom } from '../state/editorAtoms'
+import {
+  aiCompleteEnabledAtom,
+  editorWidthAtom,
+  vimEnabledAtom,
+} from '../state/editorAtoms'
 import { settingsOpenAtom } from '../state/workspaceAtoms'
 import { Button, Select, Tabs } from '../ui'
 import { focusEditor, useController } from './useWorkspace'
@@ -78,6 +82,7 @@ function Dialog({ onClose }: { onClose: () => void }) {
 
 function General() {
   const [vim, setVim] = useAtom(vimEnabledAtom)
+  const [aiComplete, setAiComplete] = useAtom(aiCompleteEnabledAtom)
   const [theme, setTheme] = useAtom(themeAtom)
   const [width, setWidth] = useAtom(editorWidthAtom)
   const [ty, setTy] = useAtom(typographyAtom)
@@ -228,6 +233,22 @@ function General() {
         <p className="text-muted">
           Modal editing with motions, text objects and : commands. :Explore opens the file
           tree.
+        </p>
+        <div className="flex items-center justify-between gap-3">
+          <p>AI suggestions</p>
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-label="AI suggestions"
+            aria-pressed={aiComplete}
+            onClick={() => setAiComplete(!aiComplete)}
+          >
+            {aiComplete ? 'On' : 'Off'}
+          </Button>
+        </div>
+        <p className="text-muted">
+          Dimmed text after the cursor when you pause typing. Tab accepts, Esc dismisses.
+          Sends the code around the cursor to your Edit model.
         </p>
       </section>
     </>

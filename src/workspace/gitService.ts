@@ -274,6 +274,34 @@ export class GitService {
     }
   }
 
+  /** Local branch names, sorted. Empty when there is no repository. */
+  async listBranches(): Promise<string[]> {
+    try {
+      return (await git.listBranches({ fs: this.fs, dir: DIR })).sort((a, b) =>
+        a.localeCompare(b),
+      )
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Checks out a local branch, rewriting the working tree. Not forced: isomorphic-git
+   * refuses (CheckoutConflictError) rather than overwrite a file with local changes.
+   * Drops every cache that named the old commit or the old files.
+   */
+  async checkout(branch: string): Promise<void> {
+    try {
+      await git.checkout({ fs: this.fs, dir: DIR, ref: branch, cache: this.cache })
+    } finally {
+      // Even a failed checkout may have written some files.
+      this.blobs.clear()
+      this.invalidateStatus()
+      this.oid = undefined
+      await this.refreshHead()
+    }
+  }
+
   /**
    * The cumulative changeset `merge-base(base, HEAD)..HEAD`, by walking both trees and
    * pruning every directory whose oid is equal. Renames are not detected (A plus D).

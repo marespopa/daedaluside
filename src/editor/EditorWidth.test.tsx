@@ -54,7 +54,7 @@ describe('full width toggle', () => {
     mount()
     await screen.findByRole('button', { name: 'Full width' })
     await user.keyboard('{Control>}{Shift>}p{/Shift}{/Control}')
-    await user.click(screen.getByRole('option', { name: 'View: Toggle Full Width' }))
+    await user.click(screen.getByRole('option', { name: 'View: Enable Full Width' }))
     expect(pane()).toHaveAttribute('data-editor-width', 'full')
   })
 })

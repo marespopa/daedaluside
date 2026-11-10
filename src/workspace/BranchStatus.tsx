@@ -7,6 +7,7 @@ import {
 } from '../state/gitAtoms'
 import { Button } from '../ui/Button'
 import { Icon } from '../ui/Icon'
+import BranchPicker from './BranchPicker'
 import { useController } from './useWorkspace'
 
 /**
@@ -35,9 +36,14 @@ export default function BranchStatus({
       className={`anim-fade flex items-center gap-1.5 text-xs text-muted ${className}`}
     >
       <Icon name="git-branch" className="size-3" />
-      <span className={branch ? 'text-text' : 'motion-safe:animate-pulse'}>
-        {branch ?? '···'}
-      </span>
+      {branch && !link ? (
+        // The opener: the branch name is the way to switch branches.
+        <BranchPicker branch={branch} />
+      ) : (
+        <span className={branch ? 'text-text' : 'motion-safe:animate-pulse'}>
+          {branch ?? '···'}
+        </span>
+      )}
       {branch && (
         <>
           <span aria-hidden>·</span>

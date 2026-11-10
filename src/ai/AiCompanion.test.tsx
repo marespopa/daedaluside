@@ -61,12 +61,16 @@ describe('AiCompanion', () => {
     expect(screen.getByLabelText('Message')).toHaveValue('a\nb')
   })
 
-  it('sends Configure when the vault is locked', async () => {
+  it('unlocks the vault in the chat, then offers Configure when no key is saved', async () => {
     await createVault('p')
     resetVaultForTests() // locks it again
     const { store, user } = mount()
     await user.type(screen.getByLabelText('Message'), 'hi{Enter}')
     expect(await screen.findByRole('alert')).toHaveTextContent(/Vault is locked/)
+    const fields = await screen.findAllByLabelText('Vault passphrase')
+    await user.type(fields.at(-1)!, 'p{Enter}')
+    // The message is sent again; the vault holds no Gemini key, so setup is the next step.
+    expect(await screen.findByText(/No API key/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Open Configure' }))
     expect(store.get(companionViewAtom)).toBe('config')
     expect(await screen.findByText(/1\. Vault passphrase/)).toBeInTheDocument()

@@ -74,6 +74,19 @@ const base = EditorView.theme({
   },
   '.cm-gutterElement': { padding: '0 0.75rem 0 0.5rem' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--text)' },
+  '.cm-foldGutter .cm-gutterElement': {
+    cursor: 'pointer',
+    padding: '0 0.25rem',
+    color: 'var(--muted)',
+  },
+  '.cm-foldGutter .cm-gutterElement:hover': { color: 'var(--text)' },
+  '.cm-foldPlaceholder': {
+    backgroundColor: 'transparent',
+    border: '1px solid var(--muted)',
+    color: 'var(--muted)',
+    borderRadius: '2px',
+    padding: '0 0.4em',
+  },
   '.cm-line': { padding: '0' },
   '.cm-cursor, .cm-dropCursor': {
     borderLeftColor: 'var(--accent)',

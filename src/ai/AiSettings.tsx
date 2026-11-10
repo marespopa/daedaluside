@@ -4,6 +4,7 @@ import type { ProviderId } from '../providers'
 import { loadRoutes, saveRoute, STAGES } from '../router/router'
 import type { Routes, Stage } from '../router/router'
 import { Button, Combobox, PasswordInput, Select } from '../ui'
+import { configuredProviders, DEFAULT_MODEL, fallbackRoute } from './providerChoices'
 import {
   createVault,
   getKey,
@@ -17,26 +18,15 @@ import {
   WrongPassphraseError,
 } from '../vault/vault'
 import type { VaultStatus } from '../vault/vault'
-
 const STAGE_LABEL: Record<Stage, string> = { plan: 'Plan model', execute: 'Edit model' }
 const PROVIDER_LABEL: Record<ProviderId, string> = {
   gemini: 'Gemini',
   anthropic: 'Anthropic',
   ollama: 'Ollama (local)',
 }
-const PROVIDER_OPTIONS = PROVIDER_IDS.map((id) => ({
-  value: id,
-  label: PROVIDER_LABEL[id],
-}))
 const KEYED = PROVIDER_IDS.filter(needsKey)
-/** What a stage switches to when its provider changes, so it never keeps another provider's model. */
-const DEFAULT_MODEL: Record<ProviderId, string> = {
-  gemini: 'gemini-flash-latest',
-  anthropic: 'claude-sonnet-5-5',
-  ollama: 'qwen2.5-coder',
-}
 
-/** The provider's real model ids, fetched once a key is saved (Ollama needs none). */
+/** The provider's real model ids, fetched once a key is saved. */
 function useModels(provider: ProviderId, ready: boolean) {
   const [state, setState] = useState<{
     provider: ProviderId
@@ -71,13 +61,12 @@ export default function AiSettings() {
   const [status, setStatus] = useState<VaultStatus | null>(null)
   const [saved, setSaved] = useState<string[]>([])
   const [routes, setRoutes] = useState<Routes | null>(null)
-
+  const configured = configuredProviders(saved)
   const refresh = useCallback(async () => {
     const s = await vaultStatus()
     setStatus(s)
     setSaved(s === 'unlocked' ? listProviders() : [])
   }, [])
-
   useEffect(() => {
     let live = true
     void vaultStatus().then((s) => {
@@ -90,6 +79,24 @@ export default function AiSettings() {
       live = false
     }
   }, [])
+
+  // A stage whose provider is not configured (a key was removed, or none was ever saved)
+  // moves to a configured one with that provider's default model. Only once the vault is
+  // unlocked, so a locked vault never rewrites the saved routes.
+  const stageProviders = routes ? STAGES.map((s) => routes[s].provider).join() : ''
+  useEffect(() => {
+    if (!routes || status !== 'unlocked') return
+    const fallback = fallbackRoute(configured)
+    if (!fallback) return
+    const stale = STAGES.filter((s) => !configured.includes(routes[s].provider))
+    if (!stale.length) return
+    void (async () => {
+      let next = routes
+      for (const stage of stale) next = await saveRoute(stage, fallback)
+      setRoutes(next)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, saved, stageProviders])
 
   const changeRoute = async (stage: Stage, provider: ProviderId, model: string) => {
     if (!model.trim()) return
@@ -105,7 +112,7 @@ export default function AiSettings() {
         <p className="text-muted">
           To use AI you add an API key from Gemini or Anthropic. Keys are stored only in
           this browser, locked by a vault passphrase that you choose. Requests go straight
-          to the provider. Ollama runs on your machine and needs no key.
+          to the provider.
         </p>
       </div>
 
@@ -163,12 +170,23 @@ export default function AiSettings() {
           Plan drafts the change; Edit writes the patch. Pick a provider and model for
           each.
         </p>
+        {routes && status !== null && configured.length === 0 && (
+          <p className="text-muted">
+            {status === 'unlocked'
+              ? 'No providers configured. Add an API key in step 2.'
+              : status === 'locked'
+                ? 'No providers available. Unlock the vault in step 1 to use your saved keys.'
+                : 'No providers configured. Create the vault in step 1 and add an API key.'}
+          </p>
+        )}
         {routes &&
+          configured.length > 0 &&
           STAGES.map((stage) => (
             <RouteRow
               key={stage}
               stage={stage}
               route={routes[stage]}
+              providers={configured}
               ready={
                 !needsKey(routes[stage].provider) ||
                 saved.includes(routes[stage].provider)
@@ -375,16 +393,23 @@ function KeyRow({
 function RouteRow({
   stage,
   route,
+  providers,
   ready,
   onChange,
 }: {
   stage: Stage
   route: { provider: ProviderId; model: string }
+  providers: ProviderId[]
   ready: boolean
   onChange: (provider: ProviderId, model: string) => void
 }) {
   const models = useModels(route.provider, ready)
   const label = STAGE_LABEL[stage]
+  // Keep the saved provider selectable even if it is not configured, so the control never
+  // shows a blank value while the fallback is being saved.
+  const options = (
+    providers.includes(route.provider) ? providers : [...providers, route.provider]
+  ).map((id) => ({ value: id, label: PROVIDER_LABEL[id] }))
   return (
     <div className="flex items-center justify-between gap-2">
       <span id={`route-${stage}`}>{label}</span>
@@ -392,7 +417,7 @@ function RouteRow({
         <Select
           aria-label={`${label} provider`}
           value={route.provider}
-          options={PROVIDER_OPTIONS}
+          options={options}
           onChange={(p) => onChange(p as ProviderId, DEFAULT_MODEL[p as ProviderId])}
         />
         <Combobox

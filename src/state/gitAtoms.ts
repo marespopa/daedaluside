@@ -13,6 +13,8 @@ export const gitHeadAtom = atom<{
 })
 /** Checked-out branch of the open folder ("HEAD" when detached); null when not a repo or unread. */
 export const gitBranchAtom = atom<string | null>(null)
+/** The branch being checked out, set the moment a switch starts so the UI can show it; null otherwise. */
+export const branchSwitchAtom = atom<string | null>(null)
 /** True when the open folder has a `.git` entry: a branch name is on its way. */
 export const gitRepoAtom = atom(false)
 /** True once the default-base branch review has been read in the background, so opening it is instant. */

@@ -328,3 +328,54 @@ describe('GitService branch review', () => {
     expect((await svc.readBlobAt(byPath['lock.json']!.headOid!)).kind).toBe('text')
   })
 })
+
+describe('GitService checkout', () => {
+  const text = (disk: MemDisk, p: string) =>
+    new TextDecoder().decode(disk.files.get(p) ?? new Uint8Array())
+
+  /** Two branches: the original (a.txt "one…") and `feature` (a.txt "feature"), left on the original. */
+  async function twoBranches() {
+    const f = await fixture()
+    const main = await f.svc.currentBranch()
+    await git.branch({ fs: f.fs, dir: '/', ref: 'feature', checkout: true })
+    f.disk.setFile('a.txt', enc('feature\n'))
+    await git.add({ fs: f.fs, dir: '/', filepath: 'a.txt' })
+    await git.commit({ fs: f.fs, dir: '/', message: 'feature', author })
+    await git.checkout({ fs: f.fs, dir: '/', ref: main })
+    return { ...f, main }
+  }
+
+  it('lists local branches sorted, and none without a repository', async () => {
+    const { svc, fs, main } = await fixture().then(async (f) => {
+      const m = await f.svc.currentBranch()
+      await git.branch({ fs: f.fs, dir: '/', ref: 'zeta' })
+      await git.branch({ fs: f.fs, dir: '/', ref: 'alpha' })
+      return { ...f, main: m }
+    })
+    void fs
+    expect(await svc.listBranches()).toEqual(['alpha', main, 'zeta'].sort())
+    const bare = new GitService(
+      new MemDisk().handle() as unknown as FileSystemDirectoryHandle,
+    )
+    expect(await bare.listBranches()).toEqual([])
+  })
+
+  it('switches branch: moves HEAD and rewrites the working files', async () => {
+    const { svc, disk, main } = await twoBranches()
+    expect(text(disk, 'a.txt')).toBe('one\ntwo\nthree\n')
+    await svc.checkout('feature')
+    expect(await svc.currentBranch()).toBe('feature')
+    expect(text(disk, 'a.txt')).toBe('feature\n')
+    expect(await svc.getHeadBlob('a.txt')).toBe('feature\n')
+    expect((await svc.listChanged()).size).toBe(0)
+    await svc.checkout(main)
+    expect(text(disk, 'a.txt')).toBe('one\ntwo\nthree\n')
+  })
+
+  it('refuses to overwrite a file with local changes', async () => {
+    const { svc, disk } = await twoBranches()
+    disk.setFile('a.txt', enc('mine\n'))
+    await expect(svc.checkout('feature')).rejects.toThrow()
+    expect(text(disk, 'a.txt')).toBe('mine\n')
+  })
+})

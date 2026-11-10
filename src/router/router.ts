@@ -13,10 +13,10 @@ export interface Route {
 }
 export type Routes = Record<Stage, Route>
 
-/** PLAN wants a large context; EXECUTE is many small edits, so a light or local model fits. */
+/** PLAN wants a large context; EXECUTE is many small edits, so a light model fits. */
 export const DEFAULT_ROUTES: Routes = {
   plan: { provider: 'gemini', model: 'gemini-flash-latest' },
-  execute: { provider: 'ollama', model: 'qwen2.5-coder' },
+  execute: { provider: 'gemini', model: 'gemini-flash-latest' },
 }
 
 const SETTINGS_KEY = 'ai:routes'
@@ -85,7 +85,14 @@ export async function resolveStage(
   stage: Stage,
   options: { fetch?: typeof fetch } = {},
 ): Promise<{ adapter: ProviderAdapter; route: Route }> {
-  const route = (await loadRoutes())[stage]
+  return resolveRoute((await loadRoutes())[stage], options)
+}
+
+/** The adapter for one route, with its key read from the vault (see `resolveStage`). */
+export function resolveRoute(
+  route: Route,
+  options: { fetch?: typeof fetch } = {},
+): { adapter: ProviderAdapter; route: Route } {
   let apiKey: string | undefined
   if (needsKey(route.provider)) {
     apiKey = getKey(route.provider)

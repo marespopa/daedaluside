@@ -10,7 +10,12 @@ import {
   historyKeymap,
   indentWithTab,
 } from '@codemirror/commands'
-import { bracketMatching, foldKeymap, indentOnInput } from '@codemirror/language'
+import {
+  bracketMatching,
+  foldGutter,
+  foldKeymap,
+  indentOnInput,
+} from '@codemirror/language'
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import {
@@ -32,7 +37,7 @@ export const LARGE_FILE_CHARS = 1_000_000
 
 /**
  * Large-file mode turns off line wrapping (which forces measuring every wrapped line),
- * the diff gutter and selection-match highlighting. Each document keeps the setting it was
+ * the diff and fold gutters and selection-match highlighting. Each document keeps the setting it was
  * created with, in compartments, so stashed buffer states stay consistent.
  */
 export function isLargeDoc(doc: string | { length: number }): boolean {
@@ -87,7 +92,7 @@ export function createEditor({
     history(),
     drawSelection(),
     lineNumbers(),
-    heavy.of(large ? [] : [diffGutter, highlightSelectionMatches()]),
+    heavy.of(large ? [] : [diffGutter, foldGutter(), highlightSelectionMatches()]),
     highlightActiveLine(),
     highlightActiveLineGutter(),
     indentOnInput(),
