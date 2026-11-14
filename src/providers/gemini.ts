@@ -51,6 +51,10 @@ function toGemini(m: AgentMessage) {
   }
 }
 
+/** Models that answer `generateContent` but are not for chat or code (images, speech, ...). */
+const NOT_CHAT =
+  /image|tts|audio|embedding|live|aqa|veo|imagen|lyria|robotics|computer-use/i
+
 export function createGemini({
   apiKey = '',
   baseUrl = GEMINI_BASE,
@@ -67,7 +71,11 @@ export function createGemini({
       })
       const body = (await res.json()) as { models?: GeminiModel[] }
       return (body.models ?? [])
-        .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
+        .filter(
+          (m) =>
+            m.supportedGenerationMethods?.includes('generateContent') &&
+            !NOT_CHAT.test(m.name),
+        )
         .map((m): ModelInfo => ({
           id: m.name.replace(/^models\//, ''),
           label: m.displayName ?? m.name,

@@ -8,6 +8,7 @@ import {
   companionViewAtom,
 } from '../state/companionAtoms'
 import { createVault, resetVaultForTests, setKey } from '../vault/vault'
+import { saveRoute } from '../router/router'
 import AiCompanion from './AiCompanion'
 import { chatMessagesAtom } from './chat'
 
@@ -26,7 +27,12 @@ function mount() {
   return { store, user: userEvent.setup() }
 }
 
-beforeEach(() => resetVaultForTests())
+// No model is chosen by default, so each test starts with one picked.
+beforeEach(async () => {
+  resetVaultForTests()
+  await saveRoute('plan', { provider: 'gemini', model: 'gemini-test' })
+  await saveRoute('execute', { provider: 'gemini', model: 'gemini-test' })
+})
 afterEach(() => vi.unstubAllGlobals())
 
 describe('AiCompanion', () => {

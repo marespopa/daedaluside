@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { loadRoutes } from '../router/router'
+import { loadRoutes, saveRoute } from '../router/router'
 import {
   createVault,
   getKey,
@@ -100,26 +100,36 @@ describe('AiSettings', () => {
     await setKey('anthropic', 'k')
     const user = userEvent.setup()
     render(<AiSettings />)
-    // A route saved for an unconfigured provider stays listed until it falls back.
-    await waitFor(async () =>
-      expect((await loadRoutes()).plan.provider).toBe('anthropic'),
-    )
     await user.click(await screen.findByRole('combobox', { name: 'Plan model provider' }))
     expect(await screen.findByRole('option', { name: 'Anthropic' })).toBeVisible()
     expect(screen.queryByRole('option', { name: 'Gemini' })).toBeNull()
     expect(screen.queryByRole('option', { name: 'Ollama (local)' })).toBeNull()
   })
 
-  it('moves a stage to a configured provider with its default model', async () => {
-    stubModels(false)
+  it('picks no model for the user', async () => {
+    stubModels(true)
     await unlockedVault()
     await setKey('anthropic', 'k')
     render(<AiSettings />)
-    await waitFor(async () => {
-      const r = await loadRoutes()
-      expect(r.plan).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5-5' })
-      expect(r.execute).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5-5' })
-    })
+    expect(await screen.findByLabelText('Plan model name')).toHaveValue('')
+    expect(screen.getByLabelText('Edit model name')).toHaveValue('')
+    expect(screen.getAllByText(/No model selected/)).toHaveLength(2)
+    expect(await loadRoutes()).toEqual({ plan: null, execute: null })
+  })
+
+  it('accepts only a model the provider lists', async () => {
+    stubModels(true, ['claude-opus-5-5'])
+    await unlockedVault()
+    await setKey('anthropic', 'k')
+    const user = userEvent.setup()
+    render(<AiSettings />)
+    const field = await screen.findByLabelText('Plan model name')
+    await user.click(field)
+    await screen.findByRole('option', { name: 'claude-opus-5-5' })
+    await user.type(field, 'made-up-model')
+    await user.tab()
+    expect(field).toHaveValue('')
+    expect((await loadRoutes()).plan).toBeNull()
   })
 
   it('saves the model name for a stage when the field loses focus', async () => {
@@ -133,11 +143,11 @@ describe('AiSettings', () => {
     await user.type(field, 'gemini-pro-latest')
     await user.tab()
     await waitFor(async () =>
-      expect((await loadRoutes()).execute.model).toBe('gemini-pro-latest'),
+      expect((await loadRoutes()).execute?.model).toBe('gemini-pro-latest'),
     )
   })
 
-  it('saves the provider for a stage', async () => {
+  it('saves the provider together with the model picked for it', async () => {
     stubModels(true)
     await unlockedVault()
     await setKey('gemini', 'k')
@@ -146,25 +156,31 @@ describe('AiSettings', () => {
     render(<AiSettings />)
     await user.click(await screen.findByRole('combobox', { name: 'Plan model provider' }))
     await user.click(await screen.findByRole('option', { name: 'Anthropic' }))
+    await user.click(screen.getByRole('combobox', { name: 'Plan model name' }))
+    await user.click(await screen.findByRole('option', { name: 'claude-sonnet-5-5' }))
     await waitFor(async () =>
-      expect((await loadRoutes()).plan.provider).toBe('anthropic'),
+      expect((await loadRoutes()).plan).toEqual({
+        provider: 'anthropic',
+        model: 'claude-sonnet-5-5',
+      }),
     )
   })
 
-  it("switches to the new provider's default model, not the old one", async () => {
+  it('clears the model when the provider changes, so one must be picked again', async () => {
     stubModels(true)
+    await saveRoute('execute', { provider: 'gemini', model: 'gemini-x' })
     await unlockedVault()
     await setKey('gemini', 'k')
     await setKey('anthropic', 'k')
     const user = userEvent.setup()
     render(<AiSettings />)
-    await user.click(await screen.findByRole('combobox', { name: 'Edit model provider' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Edit model name')).toHaveValue('gemini-x'),
+    )
+    await user.click(screen.getByRole('combobox', { name: 'Edit model provider' }))
     await user.click(await screen.findByRole('option', { name: 'Anthropic' }))
-    await waitFor(async () => {
-      const r = (await loadRoutes()).execute
-      expect(r).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5-5' })
-    })
-    expect(screen.getByLabelText('Edit model name')).toHaveValue('claude-sonnet-5-5')
+    await waitFor(async () => expect((await loadRoutes()).execute).toBeNull())
+    expect(screen.getByLabelText('Edit model name')).toHaveValue('')
   })
 
   it("lists the provider's real models and picks one", async () => {
@@ -184,7 +200,7 @@ describe('AiSettings', () => {
     expect(await screen.findByRole('option', { name: 'beta-model' })).toBeVisible()
     expect(screen.queryByRole('option', { name: 'claude-opus-5-5' })).toBeNull()
     await user.click(screen.getByRole('option', { name: 'beta-model' }))
-    await waitFor(async () => expect((await loadRoutes()).plan.model).toBe('beta-model'))
+    await waitFor(async () => expect((await loadRoutes()).plan?.model).toBe('beta-model'))
   })
 
   it('says why the list is empty when the request fails', async () => {

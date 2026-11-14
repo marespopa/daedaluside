@@ -5,12 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { aiOpenAtom } from '../state/aiAtoms'
 import { companionOpenAtom, companionViewAtom } from '../state/companionAtoms'
 import { createVault, resetVaultForTests, setKey } from '../vault/vault'
+import { saveRoute } from '../router/router'
 import AiPanel from './AiPanel'
 
 const sse = (text: string) =>
   `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] })}\n\n`
 
-/** Both default routes are Gemini: the first request is the plan, the second the edits. */
+/** Both routes are Gemini: the first request is the plan, the second the edits. */
 function mockFetch(plan: string, edits: string) {
   const calls: { url: string; body: string }[] = []
   vi.stubGlobal(
@@ -35,7 +36,12 @@ function mount() {
   return store
 }
 
-beforeEach(() => resetVaultForTests())
+// No model is chosen by default, so each test starts with one picked.
+beforeEach(async () => {
+  resetVaultForTests()
+  await saveRoute('plan', { provider: 'gemini', model: 'gemini-test' })
+  await saveRoute('execute', { provider: 'gemini', model: 'gemini-test' })
+})
 afterEach(() => vi.unstubAllGlobals())
 
 describe('AiPanel', () => {

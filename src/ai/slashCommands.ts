@@ -2,6 +2,7 @@ import type { createStore } from 'jotai'
 import {
   addNotice,
   chatBusyAtom,
+  chatModeAtom,
   clearChat,
   sendChat,
   stopChat,
@@ -36,6 +37,27 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: 'summarize',
     description: 'Replace the history with a short summary',
     run: (store) => summarizeChat(store),
+  },
+  {
+    name: 'plan',
+    description: 'Plan first: research and propose, change nothing',
+    run: (store, args) => {
+      store.set(chatModeAtom, 'plan')
+      if (args.trim()) return sendChat(store, args)
+      return addNotice(
+        store,
+        'Plan mode is on. Describe the change; no files will be touched.',
+      )
+    },
+  },
+  {
+    name: 'agent',
+    description: 'Do the work: read, edit and write files (the default)',
+    run: (store, args) => {
+      store.set(chatModeAtom, 'agent')
+      if (args.trim()) return sendChat(store, args)
+      return addNotice(store, 'Agent mode is on. Requests are carried out in your files.')
+    },
   },
   {
     name: 'help',

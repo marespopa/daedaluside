@@ -11,12 +11,14 @@ export interface Route {
   provider: ProviderId
   model: string
 }
-export type Routes = Record<Stage, Route>
+/** A stage has no route until the user picks a model for it. Nothing is chosen for them. */
+export type Routes = Record<Stage, Route | null>
 
-/** PLAN wants a large context; EXECUTE is many small edits, so a light model fits. */
-export const DEFAULT_ROUTES: Routes = {
-  plan: { provider: 'gemini', model: 'gemini-flash-latest' },
-  execute: { provider: 'gemini', model: 'gemini-flash-latest' },
+export const EMPTY_ROUTES: Routes = { plan: null, execute: null }
+
+export const STAGE_LABEL: Record<Stage, string> = {
+  plan: 'Plan model',
+  execute: 'Edit model',
 }
 
 const SETTINGS_KEY = 'ai:routes'
@@ -27,6 +29,16 @@ export class MissingKeyError extends Error {
     super(`No API key stored for ${provider}`)
     this.name = 'MissingKeyError'
     this.provider = provider
+  }
+}
+
+/** The user has not picked a model for this stage yet. */
+export class MissingModelError extends Error {
+  readonly stage: Stage
+  constructor(stage: Stage) {
+    super(`No model selected for the ${STAGE_LABEL[stage]}. Pick one in Configure.`)
+    this.name = 'MissingModelError'
+    this.stage = stage
   }
 }
 
@@ -49,15 +61,12 @@ async function withDb<T>(fn: (db: IDBDatabase) => Promise<T>): Promise<T> {
   }
 }
 
-/** Saved routes merged over the defaults. A corrupt or partial record falls back per stage. */
+/** The saved routes. A stage that was never set, or whose record is corrupt, is null. */
 export async function loadRoutes(): Promise<Routes> {
   const saved = await withDb((db) =>
     idbGet<Partial<Record<Stage, unknown>>>(db, SETTINGS, SETTINGS_KEY),
   )
-  const out: Routes = {
-    plan: { ...DEFAULT_ROUTES.plan },
-    execute: { ...DEFAULT_ROUTES.execute },
-  }
+  const out: Routes = { ...EMPTY_ROUTES }
   for (const stage of STAGES) {
     const r = saved?.[stage]
     if (isRoute(r)) out[stage] = { provider: r.provider, model: r.model.trim() }
@@ -73,19 +82,30 @@ export async function saveRoute(stage: Stage, route: Route): Promise<Routes> {
   return routes
 }
 
+/** Forgets a stage's model, so the user has to pick one again. */
+export async function clearRoute(stage: Stage): Promise<Routes> {
+  const routes = await loadRoutes()
+  routes[stage] = null
+  await withDb((db) => idbPut(db, SETTINGS, SETTINGS_KEY, routes))
+  return routes
+}
+
 export async function resetRoutes(): Promise<void> {
-  await withDb((db) => idbPut(db, SETTINGS, SETTINGS_KEY, DEFAULT_ROUTES))
+  await withDb((db) => idbPut(db, SETTINGS, SETTINGS_KEY, EMPTY_ROUTES))
 }
 
 /**
  * The adapter and model for a stage. Reads the key from the unlocked vault at call time, so it is
- * never held anywhere else. Throws VaultLockedError if locked and MissingKeyError if no key is stored.
+ * never held anywhere else. Throws MissingModelError if no model was picked, VaultLockedError if
+ * locked and MissingKeyError if no key is stored.
  */
 export async function resolveStage(
   stage: Stage,
   options: { fetch?: typeof fetch } = {},
 ): Promise<{ adapter: ProviderAdapter; route: Route }> {
-  return resolveRoute((await loadRoutes())[stage], options)
+  const route = (await loadRoutes())[stage]
+  if (!route) throw new MissingModelError(stage)
+  return resolveRoute(route, options)
 }
 
 /** The adapter for one route, with its key read from the vault (see `resolveStage`). */
