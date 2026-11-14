@@ -15,7 +15,7 @@ export default function AiPanel() {
   return open ? <Panel onClose={() => setOpen(false)} /> : null
 }
 
-const NEEDS_SETTINGS = /vault is locked|no api key|no vault/i
+const NEEDS_SETTINGS = /vault is locked|no api key|no vault|no model/i
 
 function Panel({ onClose }: { onClose: () => void }) {
   const store = useStore()

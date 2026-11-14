@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createProvider, needsKey, PROVIDER_IDS } from '../providers'
 import type { ProviderId } from '../providers'
-import { loadRoutes, saveRoute, STAGES } from '../router/router'
-import type { Routes, Stage } from '../router/router'
+import { clearRoute, loadRoutes, saveRoute, STAGE_LABEL, STAGES } from '../router/router'
+import type { Route, Routes, Stage } from '../router/router'
 import { Button, Combobox, PasswordInput, Select } from '../ui'
-import { configuredProviders, DEFAULT_MODEL, fallbackRoute } from './providerChoices'
+import { configuredProviders } from './providerChoices'
 import {
   createVault,
   getKey,
@@ -18,7 +18,6 @@ import {
   WrongPassphraseError,
 } from '../vault/vault'
 import type { VaultStatus } from '../vault/vault'
-const STAGE_LABEL: Record<Stage, string> = { plan: 'Plan model', execute: 'Edit model' }
 const PROVIDER_LABEL: Record<ProviderId, string> = {
   gemini: 'Gemini',
   anthropic: 'Anthropic',
@@ -80,24 +79,8 @@ export default function AiSettings() {
     }
   }, [])
 
-  // A stage whose provider is not configured (a key was removed, or none was ever saved)
-  // moves to a configured one with that provider's default model. Only once the vault is
-  // unlocked, so a locked vault never rewrites the saved routes.
-  const stageProviders = routes ? STAGES.map((s) => routes[s].provider).join() : ''
-  useEffect(() => {
-    if (!routes || status !== 'unlocked') return
-    const fallback = fallbackRoute(configured)
-    if (!fallback) return
-    const stale = STAGES.filter((s) => !configured.includes(routes[s].provider))
-    if (!stale.length) return
-    void (async () => {
-      let next = routes
-      for (const stage of stale) next = await saveRoute(stage, fallback)
-      setRoutes(next)
-    })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, saved, stageProviders])
-
+  // Nothing is picked for the user: a stage stays unset until they choose a model, and
+  // changing its provider clears the model, since it belongs to the old provider.
   const changeRoute = async (stage: Stage, provider: ProviderId, model: string) => {
     if (!model.trim()) return
     setRoutes(await saveRoute(stage, { provider, model }))
@@ -167,8 +150,9 @@ export default function AiSettings() {
       <div className="space-y-2">
         <p className="font-medium">3. Models</p>
         <p className="text-muted">
-          Plan drafts the change; Edit writes the patch. Pick a provider and model for
-          each.
+          The Plan model runs the chat and its agent. The Edit model writes patches and
+          inline suggestions. Pick a provider and a model for each; the list comes from
+          the provider.
         </p>
         {routes && status !== null && configured.length === 0 && (
           <p className="text-muted">
@@ -187,11 +171,9 @@ export default function AiSettings() {
               stage={stage}
               route={routes[stage]}
               providers={configured}
-              ready={
-                !needsKey(routes[stage].provider) ||
-                saved.includes(routes[stage].provider)
-              }
+              saved={saved}
               onChange={(provider, model) => void changeRoute(stage, provider, model)}
+              onClear={() => void clearRoute(stage).then(setRoutes)}
             />
           ))}
       </div>
@@ -394,41 +376,58 @@ function RouteRow({
   stage,
   route,
   providers,
-  ready,
+  saved,
   onChange,
+  onClear,
 }: {
   stage: Stage
-  route: { provider: ProviderId; model: string }
+  route: Route | null
   providers: ProviderId[]
-  ready: boolean
+  saved: string[]
   onChange: (provider: ProviderId, model: string) => void
+  onClear: () => void
 }) {
-  const models = useModels(route.provider, ready)
+  // The provider being browsed. It is only saved together with a model.
+  const [picked, setPicked] = useState<ProviderId | null>(null)
+  const provider = picked ?? route?.provider ?? providers[0]!
+  const model = route && route.provider === provider ? route.model : ''
+  const models = useModels(provider, !needsKey(provider) || saved.includes(provider))
   const label = STAGE_LABEL[stage]
-  // Keep the saved provider selectable even if it is not configured, so the control never
-  // shows a blank value while the fallback is being saved.
+  // Keep the saved provider selectable even if its key was removed, so the control never
+  // shows a blank value.
   const options = (
-    providers.includes(route.provider) ? providers : [...providers, route.provider]
+    providers.includes(provider) ? providers : [...providers, provider]
   ).map((id) => ({ value: id, label: PROVIDER_LABEL[id] }))
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span id={`route-${stage}`}>{label}</span>
-      <div className="flex min-w-0 items-center gap-2">
-        <Select
-          aria-label={`${label} provider`}
-          value={route.provider}
-          options={options}
-          onChange={(p) => onChange(p as ProviderId, DEFAULT_MODEL[p as ProviderId])}
-        />
-        <Combobox
-          aria-label={`${label} name`}
-          value={route.model}
-          options={models.ids}
-          empty={models.empty}
-          onCommit={(m) => onChange(route.provider, m)}
-          className="w-40"
-        />
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <span id={`route-${stage}`}>{label}</span>
+        <div className="flex min-w-0 items-center gap-2">
+          <Select
+            aria-label={`${label} provider`}
+            value={provider}
+            options={options}
+            onChange={(p) => {
+              if (p === provider) return
+              setPicked(p as ProviderId)
+              if (route) onClear()
+            }}
+          />
+          <Combobox
+            aria-label={`${label} name`}
+            value={model}
+            options={models.ids}
+            empty={models.empty}
+            placeholder="Select a model"
+            strict
+            onCommit={(m) => onChange(provider, m)}
+            className="w-40"
+          />
+        </div>
       </div>
+      {!model && (
+        <p className="text-xs text-muted">No model selected. Choose one to use it.</p>
+      )}
     </div>
   )
 }

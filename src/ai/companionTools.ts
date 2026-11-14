@@ -279,6 +279,13 @@ const TOOLS: Tool[] = [
   },
 ]
 
+/** Tools that only look at the workspace. Plan mode and plain sub-agents get just these. */
+export const READ_ONLY_TOOLS: readonly string[] = [
+  'list_files',
+  'read_file',
+  'search_text',
+]
+
 const BY_NAME = new Map(TOOLS.map((t) => [t.def.name, t]))
 
 export const COMPANION_TOOLS: ToolDef[] = TOOLS.map((t) => t.def)

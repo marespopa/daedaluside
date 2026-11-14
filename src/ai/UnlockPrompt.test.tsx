@@ -4,10 +4,16 @@ import { createStore, Provider } from 'jotai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createVault, isUnlocked, lock, resetVaultForTests } from '../vault/vault'
 import { chatMessagesAtom, retryChat } from './chat'
+import { resetRoutes, saveRoute } from '../router/router'
 import CompanionChat from './CompanionChat'
 
-// Real vault, but the default Plan route (Gemini) needs a key, so a locked vault matters.
-beforeEach(() => resetVaultForTests())
+// Real vault, and the Plan route (Gemini) needs a key, so a locked vault matters.
+// No model is chosen by default, so each test starts with one picked.
+beforeEach(async () => {
+  resetVaultForTests()
+  await saveRoute('plan', { provider: 'gemini', model: 'gemini-test' })
+  await saveRoute('execute', { provider: 'gemini', model: 'gemini-test' })
+})
 
 describe('inline vault unlock', () => {
   it('asks for the passphrase in the chat before the first send, and hides once unlocked', async () => {
@@ -76,5 +82,40 @@ describe('retryChat', () => {
     expect(all.map((m) => m.content)).toEqual(['first', 'ok', 'again please', 'sure'])
     expect(seen[0]).toBe('["first","ok","again please"]')
     vi.restoreAllMocks()
+  })
+})
+
+describe('no model selected', () => {
+  it('asks the user to choose a model instead of picking one', async () => {
+    await resetRoutes()
+    const user = userEvent.setup()
+    const onConfigure = vi.fn()
+    render(
+      <Provider store={createStore()}>
+        <CompanionChat onConfigure={onConfigure} />
+      </Provider>,
+    )
+    await user.click(await screen.findByRole('button', { name: 'Choose a model' }))
+    expect(onConfigure).toHaveBeenCalled()
+  })
+
+  it('switches plan mode on and off from the Plan button', async () => {
+    const user = userEvent.setup()
+    render(
+      <Provider store={createStore()}>
+        <CompanionChat />
+      </Provider>,
+    )
+    const plan = screen.getByRole('button', { name: 'Plan' })
+    expect(plan).toHaveAttribute('aria-pressed', 'false')
+    await user.click(plan)
+    expect(screen.getByRole('button', { name: '✓ Plan' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.getByLabelText('Message')).toHaveAttribute(
+      'placeholder',
+      'Describe what to plan',
+    )
   })
 })

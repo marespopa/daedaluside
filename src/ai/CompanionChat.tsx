@@ -1,11 +1,13 @@
-import { useAtomValue, useSetAtom, useStore } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { companionViewAtom } from '../state/companionAtoms'
 import { Button, Textarea } from '../ui'
 import {
   chatBusyAtom,
   chatMessagesAtom,
+  chatModeAtom,
   clearChat,
+  implementPlan,
   NEEDS_CONFIG,
   NEEDS_UNLOCK,
   retryChat,
@@ -18,7 +20,10 @@ import { vaultStatus } from '../vault/vault'
 import { matchCommands, submitChatInput } from './slashCommands'
 import { describeCall } from './companionTools'
 
-/** Chat with the Plan model. History lives in atoms, so a sidecar can show the same thread. */
+/**
+ * Chat with the Plan model. It acts as an agent (edits files) unless plan mode is on, where it
+ * only proposes. History lives in atoms, so a sidecar can show the same thread.
+ */
 export default function CompanionChat({
   onConfigure,
   autoFocus,
@@ -26,19 +31,25 @@ export default function CompanionChat({
   const store = useStore()
   const messages = useAtomValue(chatMessagesAtom)
   const busy = useAtomValue(chatBusyAtom)
+  const [mode, setMode] = useAtom(chatModeAtom)
   const setView = useSetAtom(companionViewAtom)
+  const configure = () => (onConfigure ? onConfigure() : setView('config'))
   const [draft, setDraft] = useState('')
   const end = useRef<HTMLDivElement>(null)
   // True when the chat's model needs a key and the vault is locked: ask before the first send.
   const [locked, setLocked] = useState(false)
   const [lockedHint, setLockedHint] = useState(0)
+  // No model picked yet: say so before the first send rather than fail it.
+  const [noModel, setNoModel] = useState(false)
 
   useEffect(() => {
     let live = true
     void (async () => {
       try {
         const [status, routes] = await Promise.all([vaultStatus(), loadRoutes()])
-        if (live) setLocked(status === 'locked' && needsKey(routes.plan.provider))
+        if (!live) return
+        setNoModel(!routes.plan)
+        setLocked(status === 'locked' && !!routes.plan && needsKey(routes.plan.provider))
       } catch {
         if (live) setLocked(false)
       }
@@ -82,13 +93,30 @@ export default function CompanionChat({
             }}
           />
         )}
-        {messages.length === 0 && (
-          <p className="text-muted">Ask about your code. Type / for commands.</p>
+        {noModel && (
+          <div className="anim-fade space-y-1">
+            <p>No model selected. Choose the model the chat should use.</p>
+            <Button size="sm" onClick={configure}>
+              Choose a model
+            </Button>
+          </div>
         )}
-        {messages.map((m) => (
+        {messages.length === 0 && (
+          <p className="text-muted">
+            Ask about your code, or ask for a change and the AI makes it. Type /plan to
+            get a plan first, / for all commands.
+          </p>
+        )}
+        {messages.map((m, i) => (
           <div key={m.id} className="anim-fade space-y-1">
             <p className="text-xs font-medium tracking-wide text-muted uppercase">
-              {m.role === 'user' ? 'You' : m.notice ? 'Note' : 'AI'}
+              {m.role === 'user'
+                ? 'You'
+                : m.notice
+                  ? 'Note'
+                  : m.plan
+                    ? 'AI · Plan'
+                    : 'AI'}
             </p>
             {(m.content || (!m.error && !m.calls?.length)) && (
               <p className="break-words whitespace-pre-wrap">{m.content || '…'}</p>
@@ -115,6 +143,14 @@ export default function CompanionChat({
                 ))}
               </ul>
             )}
+            {m.plan && i === messages.length - 1 && !busy && (
+              <div className="anim-fade flex flex-wrap items-center gap-2 pt-1">
+                <Button size="sm" onClick={() => void implementPlan(store)}>
+                  Implement plan
+                </Button>
+                <span className="text-xs text-muted">or reply to revise it</span>
+              </div>
+            )}
             {m.error && (
               <div role="alert" className="space-y-1">
                 <p className="text-diff-remove-fg">Error: {m.error}</p>
@@ -128,10 +164,7 @@ export default function CompanionChat({
                   />
                 )}
                 {NEEDS_CONFIG.test(m.error) && !NEEDS_UNLOCK.test(m.error) && (
-                  <Button
-                    size="sm"
-                    onClick={() => (onConfigure ? onConfigure() : setView('config'))}
-                  >
+                  <Button size="sm" onClick={configure}>
                     Open Configure
                   </Button>
                 )}
@@ -175,7 +208,7 @@ export default function CompanionChat({
           <Textarea
             aria-label="Message"
             autoFocus={autoFocus}
-            placeholder="Message the AI"
+            placeholder={mode === 'plan' ? 'Describe what to plan' : 'Message the AI'}
             rows={2}
             value={draft}
             onChange={(e) => setDraft(e.currentTarget.value)}
@@ -203,6 +236,16 @@ export default function CompanionChat({
               Send
             </Button>
           )}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            aria-pressed={mode === 'plan'}
+            title="Plan mode: research and propose a plan without changing files"
+            onClick={() => setMode(mode === 'plan' ? 'agent' : 'plan')}
+          >
+            {mode === 'plan' ? '✓ Plan' : 'Plan'}
+          </Button>
           <Button
             type="button"
             size="sm"

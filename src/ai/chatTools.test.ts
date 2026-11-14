@@ -1,7 +1,15 @@
 import { createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'
 import type { AgentEvent, AgentRequest, ProviderAdapter } from '../providers'
-import { chatMessagesAtom, MAX_STEPS, sendChat, toAgentMessages } from './chat'
+import {
+  chatMessagesAtom,
+  chatModeAtom,
+  implementPlan,
+  IMPLEMENT_PROMPT,
+  MAX_STEPS,
+  sendChat,
+  toAgentMessages,
+} from './chat'
 import type { ToolHost } from './companionTools'
 
 /** A model that plays back one scripted reply per call and records each request. */
@@ -119,5 +127,65 @@ describe('toAgentMessages', () => {
         { id: 3, role: 'assistant', content: 'oops', error: 'x' },
       ]),
     ).toEqual([{ role: 'user', content: 'hi' }])
+  })
+})
+
+describe('plan mode', () => {
+  it('offers only read tools, refuses an edit, and marks the reply as a plan', async () => {
+    const store = createStore()
+    store.set(chatModeAtom, 'plan')
+    const { h, writes } = host({ 'a.ts': 'let a' })
+    const { resolve, requests } = scripted([
+      [call('1', 'edit_file', { path: 'a.ts', search: 'let a', replace: 'const a' })],
+      [{ type: 'text', text: '1. Change a.ts' }],
+    ])
+    await sendChat(store, 'make a const', resolve, h)
+
+    expect(requests[0]?.tools.map((t) => t.name)).toEqual([
+      'list_files',
+      'read_file',
+      'search_text',
+    ])
+    expect(requests[0]?.system).toMatch(/plan mode is on/i)
+    expect(writes).toEqual([])
+    expect(requests[1]?.messages.at(-1)).toMatchObject({
+      role: 'tool',
+      results: [{ isError: true }],
+    })
+    expect(store.get(chatMessagesAtom).at(-1)).toMatchObject({
+      content: '1. Change a.ts',
+      plan: true,
+    })
+  })
+
+  it('implements an approved plan in agent mode, with the edit tools', async () => {
+    const store = createStore()
+    store.set(chatModeAtom, 'plan')
+    const { h, writes } = host({ 'a.ts': 'let a' })
+    const { resolve, requests } = scripted([
+      [{ type: 'text', text: '1. Change a.ts' }],
+      [call('1', 'edit_file', { path: 'a.ts', search: 'let a', replace: 'const a' })],
+      [{ type: 'text', text: 'Done.' }],
+    ])
+    await sendChat(store, 'make a const', resolve, h)
+    await implementPlan(store, resolve, h)
+
+    expect(store.get(chatModeAtom)).toBe('agent')
+    expect(requests[1]?.tools.map((t) => t.name)).toContain('edit_file')
+    expect(requests[1]?.messages.at(-1)).toEqual({
+      role: 'user',
+      content: IMPLEMENT_PROMPT,
+    })
+    expect(writes).toEqual(['a.ts=const a'])
+    expect(store.get(chatMessagesAtom).at(-1)?.plan).toBeUndefined()
+  })
+
+  it('edits straight away by default, without a plan', async () => {
+    const store = createStore()
+    const { h } = host({})
+    const { resolve, requests } = scripted([[{ type: 'text', text: 'Hi.' }]])
+    await sendChat(store, 'hello', resolve, h)
+    expect(requests[0]?.tools.map((t) => t.name)).toContain('write_file')
+    expect(store.get(chatMessagesAtom).at(-1)?.plan).toBeUndefined()
   })
 })

@@ -9,6 +9,9 @@ export interface ComboboxProps {
   onCommit: (value: string) => void
   /** Shown in the list when there is nothing to suggest, e.g. "Loading models…". */
   empty?: string
+  /** Only a listed option can be committed (once there are options); other text is dropped. */
+  strict?: boolean
+  placeholder?: string
   'aria-label': string
   className?: string
 }
@@ -16,13 +19,15 @@ export interface ComboboxProps {
 /**
  * A text field with our own suggestion list (the platform datalist is missing or
  * unreliable on mobile browsers). The full list shows on focus; it narrows once the user
- * types. Any text is allowed, so a model that is not listed can still be entered.
+ * types. Any text is allowed unless `strict` is set.
  */
 export function Combobox({
   value,
   options,
   onCommit,
   empty = 'No suggestions',
+  strict = false,
+  placeholder,
   className = '',
   ...aria
 }: ComboboxProps) {
@@ -56,7 +61,9 @@ export function Combobox({
     setDraft(null)
     setOpen(false)
     setActive(-1)
-    if (next.trim() && next !== value) onCommit(next.trim())
+    const picked = next.trim()
+    if (strict && options.length > 0 && !options.includes(picked)) return
+    if (picked && picked !== value) onCommit(picked)
   }
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -97,6 +104,7 @@ export function Combobox({
         aria-activedescendant={open && active >= 0 ? `${listId}-${active}` : undefined}
         aria-label={aria['aria-label']}
         value={text}
+        placeholder={placeholder}
         className="w-full"
         onFocus={() => setOpen(true)}
         onClick={() => setOpen(true)}

@@ -9,7 +9,12 @@ import { PROVIDER_IDS } from '../../providers'
 import type { Route } from '../../router/router'
 import { runLoop, stopMessage } from '../agentLoop'
 import type { RunBudget } from '../agentLoop'
-import { COMPANION_TOOLS, describeCall, runTool } from '../companionTools'
+import {
+  COMPANION_TOOLS,
+  describeCall,
+  READ_ONLY_TOOLS,
+  runTool,
+} from '../companionTools'
 import type { ToolHost } from '../companionTools'
 import type { AgentDef } from './parseAgent'
 
@@ -45,14 +50,13 @@ const TOOL_MAP: Record<string, string> = {
   edit: 'edit_file',
   write: 'write_file',
 }
-const READ_ONLY = ['list_files', 'read_file', 'search_text']
 
 /** The workspace tools an agent may use. With no (usable) `tools` line it is read-only. */
 export function toolsFor(agent: AgentDef): ToolDef[] {
   const wanted = new Set(
     (agent.tools ?? []).flatMap((t) => TOOL_MAP[t.toLowerCase()] ?? []),
   )
-  const names = wanted.size ? wanted : new Set(READ_ONLY)
+  const names = wanted.size ? wanted : new Set(READ_ONLY_TOOLS)
   return COMPANION_TOOLS.filter((t) => names.has(t.name))
 }
 

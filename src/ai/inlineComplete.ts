@@ -1,4 +1,4 @@
-import { MissingKeyError, resolveStage } from '../router/router'
+import { MissingKeyError, MissingModelError, resolveStage } from '../router/router'
 
 /** How much of the file around the cursor goes to the model. Keeps the request small and fast. */
 const PREFIX_CHARS = 4000
@@ -28,19 +28,20 @@ export function cleanCompletion(raw: string): string | null {
 }
 
 /**
- * Asks the Edit model (or the Plan model when the Edit model has no key) for text to insert at the cursor. Resolves to null when there is nothing to
- * offer or the request was aborted. Throws if the vault is locked or no key is saved, so the caller
- * can stay quiet.
+ * Asks the Edit model (or the Plan model when the Edit model is not set or has no key) for text
+ * to insert at the cursor. Resolves to null when there is nothing to offer or the request was
+ * aborted. Throws if the vault is locked or neither model is usable, so the caller can stay quiet.
  */
 export async function requestCompletion(
   ctx: CompletionContext,
   signal: AbortSignal,
   resolve: Resolve = resolveStage,
 ): Promise<string | null> {
-  // The Edit model may point at a provider with no key (only one key is saved, say). The Plan
-  // model is the one the chat already uses, so fall back to it rather than show nothing.
+  // The Edit model may be unset or point at a provider with no key. The Plan model is the one
+  // the user picked for the chat, so use it rather than show nothing.
   const { adapter, route } = await resolve('execute').catch((e: unknown) => {
-    if (e instanceof MissingKeyError) return resolve('plan')
+    if (e instanceof MissingKeyError || e instanceof MissingModelError)
+      return resolve('plan')
     throw e
   })
   if (signal.aborted) return null
